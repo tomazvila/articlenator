@@ -724,6 +724,7 @@ source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "flask" },
+    { name = "httpx" },
     { name = "lxml" },
     { name = "orjson" },
     { name = "playwright" },
@@ -756,6 +757,7 @@ dev = [
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "flask", specifier = ">=3.1" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
     { name = "lxml", specifier = ">=5.3" },
     { name = "orjson", specifier = ">=3.10" },

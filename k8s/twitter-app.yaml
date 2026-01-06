@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: twitter-articlenator-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: twitter-articlenator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: twitter-articlenator
+  template:
+    metadata:
+      labels:
+        app: twitter-articlenator
+    spec:
+      nodeSelector:
+        workload: enabled
+      containers:
+        - name: twitter-articlenator
+          image: twitter-articlenator:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 5000
+              name: http
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: twitter-articlenator-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: twitter-articlenator
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 5000
+  selector:
+    app: twitter-articlenator
