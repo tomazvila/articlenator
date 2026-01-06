@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+
+{% block title %}Article to PDF Converter{% endblock %}
+
+{% block content %}
+<h1>Article to PDF</h1>
+<p>Paste article links below (one per line) to convert them to e-reader friendly PDFs.</p>
+<p class="supported-sources">Supported: Twitter/X, Blog articles (Bear Blog, Substack, etc.)</p>
+
+<form id="convert-form" method="post" action="/api/convert">
+    <div class="form-group">
+        <label for="links-input">Article Links:</label>
+        <textarea
+            id="links-input"
+            name="links"
+            rows="10"
+            placeholder="https://x.com/user/status/123456789
+https://example.bearblog.dev/my-article/
+https://substack.com/@author/post-title"
+        ></textarea>
+    </div>
+    <div class="button-group">
+        <button type="submit" id="convert-btn">Convert to PDF</button>
+        <button type="button" id="clear-btn" class="secondary">Clear</button>
+    </div>
+</form>
+
+<div id="status" class="status-message" style="display: none;">
+    <span class="spinner"></span>
+    <span id="status-text">Processing...</span>
+</div>
+
+<div id="results" class="results-section" style="display: none;">
+    <h2>Generated PDFs</h2>
+    <ul id="download-list"></ul>
+</div>
+
+<div id="error" class="error-message" style="display: none;">
+    <strong>Error:</strong>
+    <pre id="error-text"></pre>
+</div>
+
+<p class="setup-hint">
+    For Twitter/X content: <a href="/setup">Set up your Twitter cookies</a> to access protected content.
+</p>
+
+<script>
+// Persist textarea content to localStorage
+const linksInput = document.getElementById('links-input');
+const STORAGE_KEY = 'articlenator_links';
+
+// Restore saved content on page load
+const savedLinks = localStorage.getItem(STORAGE_KEY);
+if (savedLinks) {
+    linksInput.value = savedLinks;
+}
+
+// Save on every input change
+linksInput.addEventListener('input', () => {
+    localStorage.setItem(STORAGE_KEY, linksInput.value);
+});
+
+// Also save on blur (when leaving the field)
+linksInput.addEventListener('blur', () => {
+    localStorage.setItem(STORAGE_KEY, linksInput.value);
+});
+
+// Clear button
+document.getElementById('clear-btn').addEventListener('click', () => {
+    linksInput.value = '';
+    localStorage.removeItem(STORAGE_KEY);
+    document.getElementById('results').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+});
+
+document.getElementById('convert-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const resultsDiv = document.getElementById('results');
+    const errorDiv = document.getElementById('error');
+    const errorText = document.getElementById('error-text');
+    const statusDiv = document.getElementById('status');
+    const statusText = document.getElementById('status-text');
+    const downloadList = document.getElementById('download-list');
+    const submitBtn = document.getElementById('convert-btn');
+
+    // Reset UI
+    resultsDiv.style.display = 'none';
+    errorDiv.style.display = 'none';
+    downloadList.innerHTML = '';
+    submitBtn.disabled = true;
+    statusDiv.style.display = 'block';
+    statusText.textContent = 'Processing links...';
+
+    try {
+        const response = await fetch('/api/convert', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams(new FormData(form))
+        });
+
+        const data = await response.json();
+        console.log('API Response:', data);  // Debug logging
+
+        if (response.ok && data.files && data.files.length > 0) {
+            resultsDiv.style.display = 'block';
+            data.files.forEach(file => {
+                const li = document.createElement('li');
+                const a = document.createElement('a');
+                a.href = `/download/${file.filename}`;
+                a.textContent = `Download: ${file.title}`;
+                li.appendChild(a);
+                downloadList.appendChild(li);
+            });
+        } else if (data.error) {
+            errorDiv.style.display = 'block';
+            errorText.textContent = data.error;
+            if (data.setup_url) {
+                const link = document.createElement('a');
+                link.href = data.setup_url;
+                link.textContent = ' Go to setup →';
+                errorText.appendChild(link);
+            }
+        } else if (data.message) {
+            // Status message (processing)
+            errorDiv.style.display = 'block';
+            errorText.textContent = data.message + '\n\nNote: Full conversion not yet implemented. This is a placeholder response.';
+        } else {
+            errorDiv.style.display = 'block';
+            errorText.textContent = 'Unexpected response: ' + JSON.stringify(data, null, 2);
+        }
+    } catch (err) {
+        console.error('Fetch error:', err);
+        errorDiv.style.display = 'block';
+        errorText.textContent = 'Failed to connect to server: ' + err.message;
+    } finally {
+        submitBtn.disabled = false;
+        statusDiv.style.display = 'none';
+    }
+});
+</script>
+{% endblock %}

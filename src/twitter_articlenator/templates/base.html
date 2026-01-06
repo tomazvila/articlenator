@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Twitter Article to PDF{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/">Home</a>
+            <a href="/setup">Setup</a>
+            <span id="cookie-status" class="cookie-status loading" title="Checking cookie status...">
+                <span class="status-dot"></span>
+                <span class="status-text">Checking...</span>
+            </span>
+        </nav>
+    </header>
+    <script>
+    // Check cookie status on every page load
+    (async function checkCookieStatus() {
+        const statusEl = document.getElementById('cookie-status');
+        const dotEl = statusEl.querySelector('.status-dot');
+        const textEl = statusEl.querySelector('.status-text');
+
+        try {
+            const response = await fetch('/api/cookies/status');
+            const data = await response.json();
+
+            statusEl.classList.remove('loading');
+
+            if (data.status === 'not_configured') {
+                statusEl.classList.add('not-configured');
+                statusEl.title = 'Twitter cookies not configured';
+                textEl.textContent = 'No cookies';
+            } else if (data.status === 'locked') {
+                statusEl.classList.add('invalid');
+                statusEl.title = data.message;
+                textEl.textContent = `Locked ${Math.floor(data.remaining_seconds / 60)}m`;
+            } else if (data.status === 'configured') {
+                statusEl.classList.add('configured');
+                statusEl.title = 'Cookies configured (click Setup to test)';
+                textEl.textContent = 'Cookies set';
+            } else if (data.status === 'working') {
+                statusEl.classList.add('working');
+                statusEl.title = 'Twitter cookies are working';
+                textEl.textContent = 'Cookies OK';
+            } else if (data.status === 'invalid') {
+                statusEl.classList.add('invalid');
+                statusEl.title = data.message;
+                textEl.textContent = 'Invalid';
+            }
+        } catch (err) {
+            statusEl.classList.remove('loading');
+            statusEl.classList.add('error');
+            statusEl.title = 'Could not check cookie status';
+            textEl.textContent = 'Error';
+        }
+    })();
+    </script>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+    <footer>
+        <p>Twitter Article to PDF Converter</p>
+    </footer>
+</body>
+</html>

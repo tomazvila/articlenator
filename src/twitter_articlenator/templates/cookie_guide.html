@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+
+{% block title %}Setup Twitter Cookies{% endblock %}
+
+{% block content %}
+<h1>Setup Twitter Cookies</h1>
+<p>To fetch content from Twitter/X, you need to provide your browser cookies.</p>
+
+<section class="instructions">
+    <h2>How to Get Your Cookies</h2>
+
+    <h3>Option 1: Chrome / Edge / Brave</h3>
+    <ol>
+        <li>Log in to <a href="https://x.com" target="_blank">x.com</a> in your browser</li>
+        <li>Open Developer Tools (<code>F12</code> or <code>Cmd+Option+I</code>)</li>
+        <li>Go to the <strong>Application</strong> tab</li>
+        <li>In the left sidebar, expand <strong>Cookies</strong> and click <code>https://x.com</code></li>
+        <li>Find and copy these cookie values:
+            <ul>
+                <li><code>auth_token</code> - your authentication token</li>
+                <li><code>ct0</code> - CSRF token</li>
+            </ul>
+        </li>
+        <li>Format them as: <code>auth_token=YOUR_VALUE; ct0=YOUR_VALUE</code></li>
+    </ol>
+
+    <h3>Option 2: Firefox</h3>
+    <ol>
+        <li>Log in to <a href="https://x.com" target="_blank">x.com</a></li>
+        <li>Open Developer Tools (<code>F12</code> or <code>Cmd+Option+I</code>)</li>
+        <li>Go to the <strong>Storage</strong> tab</li>
+        <li>Expand <strong>Cookies</strong> and click <code>https://x.com</code></li>
+        <li>Find <code>auth_token</code> and <code>ct0</code>, copy their values</li>
+    </ol>
+
+    <h3>Option 3: Safari</h3>
+    <ol>
+        <li>First, enable Developer Tools: <strong>Safari → Settings → Advanced → Show Develop menu</strong></li>
+        <li>Log in to <a href="https://x.com" target="_blank">x.com</a></li>
+        <li>Open Developer Tools (<code>Cmd+Option+I</code>) or <strong>Develop → Show Web Inspector</strong></li>
+        <li>Go to the <strong>Storage</strong> tab</li>
+        <li>In the left sidebar, expand <strong>Cookies</strong> and click <code>x.com</code></li>
+        <li>Find <code>auth_token</code> and <code>ct0</code> in the list</li>
+        <li>Double-click each value to select it, then copy (<code>Cmd+C</code>)</li>
+        <li>Format them as: <code>auth_token=YOUR_VALUE; ct0=YOUR_VALUE</code></li>
+    </ol>
+
+    <h3>Option 4: Browser Extension (Any Browser)</h3>
+    <ol>
+        <li>Install <a href="https://chrome.google.com/webstore/detail/editthiscookie" target="_blank">EditThisCookie</a> (Chrome) or <a href="https://addons.mozilla.org/firefox/addon/cookie-editor/" target="_blank">Cookie-Editor</a> (Firefox)</li>
+        <li>Navigate to x.com while logged in</li>
+        <li>Click the extension icon and find <code>auth_token</code> and <code>ct0</code></li>
+        <li>Copy the values</li>
+    </ol>
+</section>
+
+<section class="current-cookies">
+    <h2>Current Cookies</h2>
+    <div id="cookies-display" class="cookies-table">
+        <p class="loading-text">Loading...</p>
+    </div>
+</section>
+
+<section class="cookie-form">
+    <h2>Enter New Cookies</h2>
+    <form id="cookie-form" method="post" action="/api/cookies">
+        <div class="form-group">
+            <label for="cookie-input">Cookies:</label>
+            <textarea
+                id="cookie-input"
+                name="cookies"
+                rows="4"
+                placeholder="auth_token=abc123...; ct0=xyz789..."
+            ></textarea>
+        </div>
+        <div class="button-group">
+            <button type="submit" id="save-cookies-btn">Save Cookies</button>
+            <button type="button" id="test-cookies-btn" class="secondary">Test Cookies</button>
+        </div>
+    </form>
+
+    <div id="save-success" class="success-message" style="display: none;">
+        Cookies saved successfully! You can now <a href="/">convert articles</a>.
+    </div>
+    <div id="save-error" class="error-message" style="display: none;"></div>
+
+    <div id="test-status" class="status-message" style="display: none;">
+        <span class="spinner"></span>
+        <span id="test-status-text">Testing cookies...</span>
+    </div>
+    <div id="test-success" class="success-message" style="display: none;"></div>
+    <div id="test-error" class="error-message" style="display: none;"></div>
+</section>
+
+<script>
+// Helper to hide all result divs
+function hideAllResults() {
+    document.getElementById('save-success').style.display = 'none';
+    document.getElementById('save-error').style.display = 'none';
+    document.getElementById('test-status').style.display = 'none';
+    document.getElementById('test-success').style.display = 'none';
+    document.getElementById('test-error').style.display = 'none';
+}
+
+// Save cookies handler
+document.getElementById('cookie-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const successDiv = document.getElementById('save-success');
+    const errorDiv = document.getElementById('save-error');
+
+    hideAllResults();
+
+    try {
+        const response = await fetch('/api/cookies', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams(new FormData(form))
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            successDiv.style.display = 'block';
+            // Refresh the cookie status in the nav and cookie display
+            refreshCookieStatus();
+            loadCurrentCookies();
+        } else {
+            errorDiv.style.display = 'block';
+            errorDiv.textContent = data.error || 'Failed to save cookies';
+        }
+    } catch (err) {
+        errorDiv.style.display = 'block';
+        errorDiv.textContent = 'Failed to connect to server';
+    }
+});
+
+// Test cookies handler
+document.getElementById('test-cookies-btn').addEventListener('click', async () => {
+    const statusDiv = document.getElementById('test-status');
+    const successDiv = document.getElementById('test-success');
+    const errorDiv = document.getElementById('test-error');
+    const testBtn = document.getElementById('test-cookies-btn');
+
+    hideAllResults();
+    statusDiv.style.display = 'flex';
+    testBtn.disabled = true;
+
+    try {
+        const response = await fetch('/api/cookies/status?test=true');
+        const data = await response.json();
+
+        statusDiv.style.display = 'none';
+
+        if (data.status === 'working') {
+            successDiv.textContent = 'Cookies are valid and working! You can now convert Twitter articles.';
+            successDiv.style.display = 'block';
+        } else if (data.status === 'not_configured') {
+            errorDiv.textContent = 'No cookies configured. Please save your cookies first.';
+            errorDiv.style.display = 'block';
+        } else {
+            errorDiv.textContent = data.message || 'Cookie test failed';
+            errorDiv.style.display = 'block';
+        }
+
+        // Refresh the cookie status in the nav
+        refreshCookieStatus();
+    } catch (err) {
+        statusDiv.style.display = 'none';
+        errorDiv.textContent = 'Failed to connect to server';
+        errorDiv.style.display = 'block';
+    } finally {
+        testBtn.disabled = false;
+    }
+});
+
+// Function to refresh cookie status in nav
+async function refreshCookieStatus() {
+    const statusEl = document.getElementById('cookie-status');
+    const textEl = statusEl.querySelector('.status-text');
+
+    // Remove all status classes
+    statusEl.classList.remove('loading', 'not-configured', 'configured', 'working', 'invalid', 'error');
+    statusEl.classList.add('loading');
+    textEl.textContent = 'Checking...';
+
+    try {
+        const response = await fetch('/api/cookies/status');
+        const data = await response.json();
+
+        statusEl.classList.remove('loading');
+
+        if (data.status === 'not_configured') {
+            statusEl.classList.add('not-configured');
+            statusEl.title = 'Twitter cookies not configured';
+            textEl.textContent = 'No cookies';
+        } else if (data.status === 'configured') {
+            statusEl.classList.add('configured');
+            statusEl.title = 'Cookies configured (click Test to verify)';
+            textEl.textContent = 'Cookies set';
+        } else if (data.status === 'working') {
+            statusEl.classList.add('working');
+            statusEl.title = 'Twitter cookies are working';
+            textEl.textContent = 'Cookies OK';
+        } else if (data.status === 'invalid') {
+            statusEl.classList.add('invalid');
+            statusEl.title = data.message;
+            textEl.textContent = 'Invalid';
+        }
+    } catch (err) {
+        statusEl.classList.remove('loading');
+        statusEl.classList.add('error');
+        textEl.textContent = 'Error';
+    }
+}
+
+// Check cookie status on page load
+refreshCookieStatus();
+
+// Load and display current cookies
+async function loadCurrentCookies() {
+    const display = document.getElementById('cookies-display');
+
+    try {
+        const response = await fetch('/api/cookies/current');
+        const data = await response.json();
+
+        if (!data.configured || data.cookies.length === 0) {
+            display.innerHTML = `
+                <p class="no-cookies">No cookies configured yet.</p>
+            `;
+            return;
+        }
+
+        // Check for required cookies
+        const cookieNames = data.cookies.map(c => c.name);
+        const hasAuthToken = cookieNames.includes('auth_token');
+        const hasCt0 = cookieNames.includes('ct0');
+
+        let html = '<table><thead><tr><th>Name</th><th>Value</th><th>Length</th><th>Status</th></tr></thead><tbody>';
+
+        for (const cookie of data.cookies) {
+            const isRequired = cookie.name === 'auth_token' || cookie.name === 'ct0';
+            const statusClass = isRequired ? 'status-ok' : 'status-extra';
+            const statusText = isRequired ? 'Required' : 'Extra';
+
+            html += `
+                <tr>
+                    <td><code>${cookie.name}</code></td>
+                    <td><code class="masked-value">${cookie.value_masked}</code></td>
+                    <td>${cookie.length} chars</td>
+                    <td><span class="${statusClass}">${statusText}</span></td>
+                </tr>
+            `;
+        }
+
+        html += '</tbody></table>';
+
+        // Add warning if missing required cookies
+        if (!hasAuthToken || !hasCt0) {
+            const missing = [];
+            if (!hasAuthToken) missing.push('auth_token');
+            if (!hasCt0) missing.push('ct0');
+            html += `<p class="cookie-warning">Missing required cookies: <code>${missing.join('</code>, <code>')}</code></p>`;
+        } else {
+            html += `<p class="cookie-complete">All required cookies are set.</p>`;
+        }
+
+        display.innerHTML = html;
+    } catch (err) {
+        display.innerHTML = `<p class="error-text">Failed to load cookies</p>`;
+    }
+}
+
+// Load cookies on page load
+loadCurrentCookies();
+</script>
+{% endblock %}
