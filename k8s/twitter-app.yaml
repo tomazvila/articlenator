@@ -30,7 +30,7 @@ spec:
           image: twitter-articlenator:latest
           imagePullPolicy: Never
           ports:
-            - containerPort: 5000
+            - containerPort: 5001
               name: http
           volumeMounts:
             - name: data
@@ -48,6 +48,6 @@ spec:
   type: ClusterIP
   ports:
     - port: 80
-      targetPort: 5000
+      targetPort: 5001
   selector:
     app: twitter-articlenator
