@@ -34,9 +34,7 @@ class AsyncRunner:
             if self._loop is None or not self._loop.is_running():
                 self._loop = asyncio.new_event_loop()
                 self._thread = threading.Thread(
-                    target=self._run_loop,
-                    daemon=True,
-                    name="async-runner"
+                    target=self._run_loop, daemon=True, name="async-runner"
                 )
                 self._thread.start()
                 # Wait for loop to start
@@ -120,11 +118,13 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.after_request
     def add_security_headers(response):
         """Add security headers to all responses."""
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['X-Frame-Options'] = 'DENY'
-        response.headers['X-XSS-Protection'] = '1; mode=block'
-        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-        response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=()"
+        )
         return response
 
     # Store run_async in app config for blueprints to access

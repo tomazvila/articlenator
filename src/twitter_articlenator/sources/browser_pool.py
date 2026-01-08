@@ -140,7 +140,7 @@ class BrowserPool:
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
                 "--no-sandbox",
-            ]
+            ],
         )
         self._browser_count += 1
         log.info("browser_created", total_browsers=self._browser_count)
@@ -206,8 +206,7 @@ class BrowserPool:
 
     @asynccontextmanager
     async def get_context(
-        self,
-        cookies: list[SetCookieParam] | None = None
+        self, cookies: list[SetCookieParam] | None = None
     ) -> AsyncIterator[BrowserContext]:
         """Get a browser context from the pool.
 

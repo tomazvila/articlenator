@@ -56,19 +56,23 @@ class TwitterPlaywrightSource(ContentSource):
             part = part.strip()
             if "=" in part:
                 name, value = part.split("=", 1)
-                cookies.append(SetCookieParam(
-                    name=name.strip(),
-                    value=value.strip(),
-                    domain=".x.com",
-                    path="/",
-                ))
+                cookies.append(
+                    SetCookieParam(
+                        name=name.strip(),
+                        value=value.strip(),
+                        domain=".x.com",
+                        path="/",
+                    )
+                )
                 # Also add for twitter.com domain
-                cookies.append(SetCookieParam(
-                    name=name.strip(),
-                    value=value.strip(),
-                    domain=".twitter.com",
-                    path="/",
-                ))
+                cookies.append(
+                    SetCookieParam(
+                        name=name.strip(),
+                        value=value.strip(),
+                        domain=".twitter.com",
+                        path="/",
+                    )
+                )
         return cookies
 
     async def fetch(self, url: str) -> Article:
@@ -105,7 +109,9 @@ class TwitterPlaywrightSource(ContentSource):
             page = await context.new_page()
 
             # First go to home to establish session and let React app initialize
-            await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
+            await page.goto(
+                "https://x.com/home", wait_until="domcontentloaded", timeout=30000
+            )
             await asyncio.sleep(3)
 
             # Wait for home feed to load (proves we're logged in)
@@ -126,8 +132,12 @@ class TwitterPlaywrightSource(ContentSource):
             # If that didn't work, try clicking the URL in address bar style
             # by using goto but with a referrer
             if page.url != url:
-                await page.goto(url, wait_until="domcontentloaded", timeout=60000,
-                               referer="https://x.com/home")
+                await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=60000,
+                    referer="https://x.com/home",
+                )
                 await asyncio.sleep(3)
 
             # Take screenshot for debugging
@@ -139,7 +149,7 @@ class TwitterPlaywrightSource(ContentSource):
                 # Try to find either a regular tweet or an article
                 await page.wait_for_selector(
                     '[data-testid="tweetText"], [data-testid="longformRichTextComponent"]',
-                    timeout=30000
+                    timeout=30000,
                 )
             except Exception as wait_error:
                 # Save screenshot for debugging
@@ -149,19 +159,23 @@ class TwitterPlaywrightSource(ContentSource):
                 html_path = "/tmp/twitter_debug.html"
                 with open(html_path, "w") as f:
                     f.write(await page.content())
-                log.error("tweet_not_found",
-                         screenshot=screenshot_path,
-                         html_path=html_path,
-                         page_url=page.url,
-                         page_title=await page.title())
+                log.error(
+                    "tweet_not_found",
+                    screenshot=screenshot_path,
+                    html_path=html_path,
+                    page_url=page.url,
+                    page_title=await page.title(),
+                )
                 raise wait_error
 
             # Extract tweet data
             tweet_data = await self._extract_tweet_data(page, username)
 
-            log.info("tweet_extracted_playwright",
-                    author=tweet_data["author"],
-                    has_content=bool(tweet_data["content"]))
+            log.info(
+                "tweet_extracted_playwright",
+                author=tweet_data["author"],
+                has_content=bool(tweet_data["content"]),
+            )
 
             return self._create_article(tweet_data, url)
 
@@ -176,7 +190,9 @@ class TwitterPlaywrightSource(ContentSource):
             Dict with tweet data.
         """
         # Check if this is an article (long-form content)
-        article_element = await page.query_selector('[data-testid="longformRichTextComponent"]')
+        article_element = await page.query_selector(
+            '[data-testid="longformRichTextComponent"]'
+        )
         is_article = article_element is not None
 
         content = ""
@@ -190,7 +206,9 @@ class TwitterPlaywrightSource(ContentSource):
             # Try to get article title from the article header or cover
             try:
                 # Look for article title in the page - usually in a heading
-                title_element = await page.query_selector('article h1, [data-testid="article-cover-image"] + div h1')
+                title_element = await page.query_selector(
+                    'article h1, [data-testid="article-cover-image"] + div h1'
+                )
                 if title_element:
                     title = await title_element.inner_text()
             except Exception:
@@ -203,7 +221,9 @@ class TwitterPlaywrightSource(ContentSource):
                     title = page_title.replace(" / X", "").strip()
         else:
             # Regular tweet - get tweet text
-            tweet_text_elements = await page.query_selector_all('[data-testid="tweetText"]')
+            tweet_text_elements = await page.query_selector_all(
+                '[data-testid="tweetText"]'
+            )
 
             content_parts = []
             for element in tweet_text_elements:
@@ -226,11 +246,13 @@ class TwitterPlaywrightSource(ContentSource):
         # Get timestamp
         timestamp = None
         try:
-            time_element = await page.query_selector('time')
+            time_element = await page.query_selector("time")
             if time_element:
-                datetime_attr = await time_element.get_attribute('datetime')
+                datetime_attr = await time_element.get_attribute("datetime")
                 if datetime_attr:
-                    timestamp = datetime.fromisoformat(datetime_attr.replace('Z', '+00:00'))
+                    timestamp = datetime.fromisoformat(
+                        datetime_attr.replace("Z", "+00:00")
+                    )
         except Exception:
             pass
 
@@ -238,7 +260,9 @@ class TwitterPlaywrightSource(ContentSource):
         quoted_tweets = []
         if not is_article:
             try:
-                quoted_elements = await page.query_selector_all('[data-testid="tweet"] [data-testid="tweetText"]')
+                quoted_elements = await page.query_selector_all(
+                    '[data-testid="tweet"] [data-testid="tweetText"]'
+                )
                 # Skip the first one (main tweet) if there are multiple
                 if len(quoted_elements) > 1:
                     for elem in quoted_elements[1:]:

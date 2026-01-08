@@ -2,8 +2,6 @@
 
 import structlog
 from flask import Blueprint, jsonify, request, current_app
-from werkzeug.utils import secure_filename
-
 from ..config import get_config
 from ..pdf.generator import generate_pdf
 from ..sources import get_source_for_url
@@ -37,7 +35,7 @@ def convert():
     else:
         # Form data - links comes as newline-separated text
         links_text = request.form.get("links", "")
-        links = [l.strip() for l in links_text.split("\n") if l.strip()]
+        links = [line.strip() for line in links_text.split("\n") if line.strip()]
 
     if not links:
         return jsonify({"error": "No links provided"}), 400
@@ -63,7 +61,9 @@ def convert():
         )
 
     # Check if Twitter URLs need cookies
-    twitter_urls = [url for url, src in sources_for_urls if isinstance(src, TwitterPlaywrightSource)]
+    twitter_urls = [
+        url for url, src in sources_for_urls if isinstance(src, TwitterPlaywrightSource)
+    ]
     if twitter_urls and not cookies:
         return (
             jsonify(
@@ -128,21 +128,25 @@ def cookies_status():
     cookies = config.load_cookies()
 
     if not cookies:
-        return jsonify({
-            "configured": False,
-            "status": "not_configured",
-            "message": "No cookies configured"
-        })
+        return jsonify(
+            {
+                "configured": False,
+                "status": "not_configured",
+                "message": "No cookies configured",
+            }
+        )
 
     # Check if test parameter is set
     test_cookies = request.args.get("test", "").lower() == "true"
 
     if not test_cookies:
-        return jsonify({
-            "configured": True,
-            "status": "configured",
-            "message": "Cookies are configured (not tested)"
-        })
+        return jsonify(
+            {
+                "configured": True,
+                "status": "configured",
+                "message": "Cookies are configured (not tested)",
+            }
+        )
 
     # Validate cookie format (required cookies present with reasonable length)
     cookie_dict = {}
@@ -156,12 +160,18 @@ def cookies_status():
     has_ct0 = "ct0" in cookie_dict and len(cookie_dict["ct0"]) > 20
 
     if has_auth_token and has_ct0:
-        log.info("cookies_validated", auth_token_len=len(cookie_dict["auth_token"]), ct0_len=len(cookie_dict["ct0"]))
-        return jsonify({
-            "configured": True,
-            "status": "working",
-            "message": "Cookies validated (auth_token and ct0 present)."
-        })
+        log.info(
+            "cookies_validated",
+            auth_token_len=len(cookie_dict["auth_token"]),
+            ct0_len=len(cookie_dict["ct0"]),
+        )
+        return jsonify(
+            {
+                "configured": True,
+                "status": "working",
+                "message": "Cookies validated (auth_token and ct0 present).",
+            }
+        )
     else:
         missing = []
         if not has_auth_token:
@@ -169,11 +179,13 @@ def cookies_status():
         if not has_ct0:
             missing.append("ct0 (missing or too short)")
         log.warning("cookies_invalid", missing=missing)
-        return jsonify({
-            "configured": True,
-            "status": "invalid",
-            "message": f"Invalid cookies: {', '.join(missing)}"
-        })
+        return jsonify(
+            {
+                "configured": True,
+                "status": "invalid",
+                "message": f"Invalid cookies: {', '.join(missing)}",
+            }
+        )
 
 
 @api_bp.route("/cookies/current")
@@ -183,10 +195,7 @@ def get_cookies():
     cookies = config.load_cookies()
 
     if not cookies:
-        return jsonify({
-            "configured": False,
-            "cookies": []
-        })
+        return jsonify({"configured": False, "cookies": []})
 
     # Parse cookies and mask values for security
     parsed = []
@@ -203,16 +212,9 @@ def get_cookies():
                 masked = value[:2] + "..." + value[-2:]
             else:
                 masked = "****"
-            parsed.append({
-                "name": name,
-                "value_masked": masked,
-                "length": len(value)
-            })
+            parsed.append({"name": name, "value_masked": masked, "length": len(value)})
 
-    return jsonify({
-        "configured": True,
-        "cookies": parsed
-    })
+    return jsonify({"configured": True, "cookies": parsed})
 
 
 @api_bp.route("/cookies", methods=["POST"])

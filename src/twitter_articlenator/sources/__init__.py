@@ -7,7 +7,14 @@ from .web import WebArticleSource
 # Keep old import for backwards compatibility but prefer Playwright version
 TwitterSource = TwitterPlaywrightSource
 
-__all__ = ["Article", "ContentSource", "TwitterSource", "TwitterPlaywrightSource", "WebArticleSource", "get_source_for_url"]
+__all__ = [
+    "Article",
+    "ContentSource",
+    "TwitterSource",
+    "TwitterPlaywrightSource",
+    "WebArticleSource",
+    "get_source_for_url",
+]
 
 # Registered sources in priority order
 _SOURCES: list[type[ContentSource]] = [
@@ -28,7 +35,9 @@ def get_source_for_url(url: str, **kwargs) -> ContentSource | None:
     """
     for source_cls in _SOURCES:
         # Create instance to check if it can handle the URL
-        source = source_cls(**{k: v for k, v in kwargs.items() if k in _get_init_params(source_cls)})
+        source = source_cls(
+            **{k: v for k, v in kwargs.items() if k in _get_init_params(source_cls)}
+        )
         if source.can_handle(url):
             return source
     return None

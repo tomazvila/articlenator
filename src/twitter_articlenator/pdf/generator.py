@@ -46,7 +46,7 @@ def generate_pdf(article: Article, output_dir: Path | None = None) -> Path:
         ContentTooLargeError: If the article content exceeds MAX_CONTENT_SIZE.
     """
     # Check content size to prevent memory issues
-    content_size = len(article.content.encode('utf-8'))
+    content_size = len(article.content.encode("utf-8"))
     if content_size > MAX_CONTENT_SIZE:
         log.warning(
             "content_too_large",
