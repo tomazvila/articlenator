@@ -190,6 +190,7 @@
             pkgs.harfbuzz
             pkgs.freetype
             pkgs.zlib
+            pkgs.stdenv.cc.cc.lib  # provides libstdc++.so.6
           ];
         in {
           default = pkgs.mkShell {

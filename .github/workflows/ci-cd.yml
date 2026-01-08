@@ -1,9 +1,11 @@
-name: Build & Deploy
+name: CI/CD
 
 on:
   push:
     branches: [main]
     tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 env:
@@ -11,7 +13,67 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Setup Nix cache
+        uses: cachix/cachix-action@v15
+        with:
+          name: nix-community
+
+      - name: Run tests
+        run: |
+          nix develop --command bash -c "
+            uv sync
+            uv run playwright install chromium
+            uv run pytest tests/unit -v --cov=twitter_articlenator --cov-report=xml
+          "
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Run linting
+        run: |
+          nix develop --command bash -c "
+            uv sync
+            uv run ruff check src/
+            uv run ruff format --check src/
+          "
+
+  build-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Check Nix flake
+        run: nix flake check
+
+      - name: Build package
+        run: nix build .#default
+
+  # Only build images after tests pass
   build:
+    needs: [test, lint, build-check]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -61,15 +123,13 @@ jobs:
           docker tag twitter-articlenator:latest "$ARCH_TAG"
           docker push "$ARCH_TAG"
 
+  # Create multi-arch manifest after both builds complete
   manifest:
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
-    outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
 
     steps:
       - uses: actions/checkout@v4
@@ -105,10 +165,10 @@ jobs:
             docker manifest push "$TAG"
           done
 
+  # Deploy only after manifest is created
   deploy:
     needs: manifest
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     environment: production
 
     steps:
@@ -132,13 +192,8 @@ jobs:
 
       - name: Update image in deployment
         run: |
-          # Update the image tag in the deployment
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
-
-          # Apply the base manifests
           kubectl apply -f k8s/twitter-app.yaml
-
-          # Update the deployment image
           kubectl set image deployment/twitter-articlenator \
             twitter-articlenator="$IMAGE" \
             -n default
