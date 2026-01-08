@@ -79,7 +79,6 @@
                 pkgs.noto-fonts
                 # Playwright/Chromium dependencies
                 pkgs.playwright-driver.browsers
-                pkgs.chromium
                 pkgs.nss
                 pkgs.nspr
                 pkgs.atk

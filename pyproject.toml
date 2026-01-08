@@ -5,7 +5,7 @@ description = "Convert X/Twitter articles to e-reader PDFs"
 requires-python = ">=3.14"
 dependencies = [
     "flask>=3.1",
-    "playwright>=1.57",
+    "playwright==1.56.0",  # Must match nixpkgs playwright-driver.browsers version
     "weasyprint>=67.0",
     "beautifulsoup4>=4.12",
     "lxml>=5.3",
