@@ -3,7 +3,7 @@
 import structlog
 from flask import Blueprint, jsonify, request, current_app
 from ..config import get_config
-from ..pdf.generator import generate_pdf
+from ..pdf.generator import generate_combined_pdf
 from ..sources import get_source_for_url
 from ..sources.twitter_playwright import TwitterPlaywrightSource
 
@@ -77,8 +77,8 @@ def convert():
 
     log.info("convert_requested", link_count=len(links))
 
-    # Process each URL
-    results = []
+    # Fetch all articles first
+    articles = []
     errors = []
 
     for url, source in sources_for_urls:
@@ -87,38 +87,47 @@ def convert():
 
             # Fetch article (run async in sync context)
             article = run_async(source.fetch(url))
-
-            # Generate PDF
-            pdf_path = generate_pdf(article)
-
-            results.append(
-                {
-                    "url": url,
-                    "title": article.title,
-                    "filename": pdf_path.name,
-                    "author": article.author,
-                }
-            )
-            log.info("url_processed", url=url, pdf=pdf_path.name)
+            articles.append({"url": url, "article": article})
+            log.info("url_fetched", url=url, title=article.title)
 
         except Exception as e:
             log.error("url_processing_failed", url=url, error=str(e))
             errors.append({"url": url, "error": str(e)})
 
-    if not results and errors:
+    if not articles and errors:
         error_details = "\n".join([f"- {e['url']}: {e['error']}" for e in errors])
         return (
             jsonify({"error": f"All conversions failed:\n{error_details}"}),
             500,
         )
 
-    return jsonify(
-        {
-            "success": True,
-            "files": results,
-            "errors": errors if errors else None,
-        }
-    )
+    # Generate single combined PDF from all articles
+    try:
+        article_objects = [a["article"] for a in articles]
+        pdf_path = generate_combined_pdf(article_objects)
+
+        results = [
+            {
+                "url": a["url"],
+                "title": a["article"].title,
+                "author": a["article"].author,
+            }
+            for a in articles
+        ]
+
+        log.info("combined_pdf_generated", pdf=pdf_path.name, article_count=len(articles))
+
+        return jsonify(
+            {
+                "success": True,
+                "filename": pdf_path.name,
+                "articles": results,
+                "errors": errors if errors else None,
+            }
+        )
+    except Exception as e:
+        log.error("pdf_generation_failed", error=str(e))
+        return jsonify({"error": f"PDF generation failed: {str(e)}"}), 500
 
 
 @api_bp.route("/cookies/status")

@@ -75,6 +75,7 @@ class TestGeneratePdf:
 
     def test_generate_pdf_filename_contains_date(self, sample_article, tmp_path):
         """Test PDF filename contains date."""
+        import re
         from twitter_articlenator.pdf.generator import generate_pdf
 
         output_dir = tmp_path / "output"
@@ -82,8 +83,8 @@ class TestGeneratePdf:
 
         pdf_path = generate_pdf(sample_article, output_dir)
 
-        # Should contain date in some format (YYYYMMDD)
-        assert "2025" in pdf_path.stem or "12" in pdf_path.stem
+        # Should contain date in YYYYMMDD format
+        assert re.search(r"_\d{8}$", pdf_path.stem), f"Expected date suffix in {pdf_path.stem}"
 
     def test_generate_pdf_creates_output_dir_if_missing(self, sample_article, tmp_path):
         """Test generate_pdf creates output dir if it doesn't exist."""

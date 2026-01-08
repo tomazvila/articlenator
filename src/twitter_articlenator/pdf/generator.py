@@ -27,13 +27,12 @@ class ContentTooLargeError(Exception):
         self.size = size
         self.max_size = max_size
         super().__init__(
-            f"Content too large for PDF generation: {size:,} bytes "
-            f"(max: {max_size:,} bytes)"
+            f"Content too large for PDF generation: {size:,} bytes (max: {max_size:,} bytes)"
         )
 
 
 def generate_pdf(article: Article, output_dir: Path | None = None) -> Path:
-    """Generate a PDF from an article.
+    """Generate a PDF from a single article.
 
     Args:
         article: The article to convert to PDF.
@@ -45,16 +44,36 @@ def generate_pdf(article: Article, output_dir: Path | None = None) -> Path:
     Raises:
         ContentTooLargeError: If the article content exceeds MAX_CONTENT_SIZE.
     """
-    # Check content size to prevent memory issues
-    content_size = len(article.content.encode("utf-8"))
-    if content_size > MAX_CONTENT_SIZE:
+    return generate_combined_pdf([article], output_dir)
+
+
+def generate_combined_pdf(articles: list[Article], output_dir: Path | None = None) -> Path:
+    """Generate a single PDF from multiple articles.
+
+    Args:
+        articles: List of articles to combine into one PDF.
+        output_dir: Directory to save the PDF. Defaults to config output dir.
+
+    Returns:
+        Path to the generated PDF file.
+
+    Raises:
+        ContentTooLargeError: If the combined content exceeds MAX_CONTENT_SIZE.
+        ValueError: If no articles are provided.
+    """
+    if not articles:
+        raise ValueError("At least one article is required")
+
+    # Check combined content size
+    total_size = sum(len(a.content.encode("utf-8")) for a in articles)
+    if total_size > MAX_CONTENT_SIZE:
         log.warning(
             "content_too_large",
-            size=content_size,
+            size=total_size,
             max_size=MAX_CONTENT_SIZE,
-            title=article.title,
+            article_count=len(articles),
         )
-        raise ContentTooLargeError(content_size)
+        raise ContentTooLargeError(total_size)
 
     if output_dir is None:
         output_dir = get_config().output_dir
@@ -62,24 +81,23 @@ def generate_pdf(article: Article, output_dir: Path | None = None) -> Path:
     # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate filename
-    slug = _slugify_title(article.title)
-    date_str = ""
-    if article.published_at:
-        date_str = f"_{article.published_at.strftime('%Y%m%d')}"
+    # Generate filename based on first article or combined name
+    if len(articles) == 1:
+        slug = _slugify_title(articles[0].title)
     else:
-        date_str = f"_{datetime.now().strftime('%Y%m%d')}"
+        slug = _slugify_title(f"{articles[0].title}-and-{len(articles) - 1}-more")
 
+    date_str = f"_{datetime.now().strftime('%Y%m%d')}"
     filename = f"{slug}{date_str}.pdf"
     pdf_path = output_dir / filename
 
-    # Render HTML and convert to PDF
-    html_content = _render_html(article)
+    # Render combined HTML
+    html_content = _render_combined_html(articles)
 
     log.info(
-        "generating_pdf",
-        title=article.title,
-        author=article.author,
+        "generating_combined_pdf",
+        article_count=len(articles),
+        titles=[a.title for a in articles],
         output_path=str(pdf_path),
     )
 
@@ -88,6 +106,73 @@ def generate_pdf(article: Article, output_dir: Path | None = None) -> Path:
     log.info("pdf_generated", path=str(pdf_path), size=pdf_path.stat().st_size)
 
     return pdf_path
+
+
+def _render_combined_html(articles: list[Article]) -> str:
+    """Render multiple articles to a single HTML document.
+
+    Args:
+        articles: List of articles to render.
+
+    Returns:
+        Complete HTML string with all articles and page breaks between them.
+    """
+    css = _get_ereader_css()
+
+    # Build article sections
+    article_sections = []
+    for i, article in enumerate(articles):
+        date_str = ""
+        if article.published_at:
+            date_str = article.published_at.strftime("%B %d, %Y at %H:%M")
+
+        # Add page-break-before for all articles except the first
+        page_break = 'style="page-break-before: always;"' if i > 0 else ""
+
+        section = f"""
+        <article {page_break}>
+            <header>
+                <h1 class="title">{article.title}</h1>
+                <div class="meta">
+                    <span class="author">By @{article.author}</span>
+                    <span class="date">{date_str}</span>
+                    <span class="source">Source: {article.source_type}</span>
+                </div>
+            </header>
+            <main class="content">
+                {article.content}
+            </main>
+            <footer>
+                <p class="source-url">Original: <a href="{article.source_url}">{article.source_url}</a></p>
+            </footer>
+        </article>"""
+        article_sections.append(section)
+
+    # Combine all sections
+    all_articles = "\n".join(article_sections)
+
+    # Generate title for the document
+    if len(articles) == 1:
+        doc_title = articles[0].title
+    else:
+        doc_title = f"{articles[0].title} (+{len(articles) - 1} more)"
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{doc_title}</title>
+    <style>
+{css}
+    </style>
+</head>
+<body>
+    {all_articles}
+</body>
+</html>"""
+
+    return html
 
 
 def _render_html(article: Article) -> str:

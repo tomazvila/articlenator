@@ -109,9 +109,7 @@ class TwitterPlaywrightSource(ContentSource):
             page = await context.new_page()
 
             # First go to home to establish session and let React app initialize
-            await page.goto(
-                "https://x.com/home", wait_until="domcontentloaded", timeout=30000
-            )
+            await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(3)
 
             # Wait for home feed to load (proves we're logged in)
@@ -190,9 +188,7 @@ class TwitterPlaywrightSource(ContentSource):
             Dict with tweet data.
         """
         # Check if this is an article (long-form content)
-        article_element = await page.query_selector(
-            '[data-testid="longformRichTextComponent"]'
-        )
+        article_element = await page.query_selector('[data-testid="longformRichTextComponent"]')
         is_article = article_element is not None
 
         content = ""
@@ -221,9 +217,7 @@ class TwitterPlaywrightSource(ContentSource):
                     title = page_title.replace(" / X", "").strip()
         else:
             # Regular tweet - get tweet text
-            tweet_text_elements = await page.query_selector_all(
-                '[data-testid="tweetText"]'
-            )
+            tweet_text_elements = await page.query_selector_all('[data-testid="tweetText"]')
 
             content_parts = []
             for element in tweet_text_elements:
@@ -250,9 +244,7 @@ class TwitterPlaywrightSource(ContentSource):
             if time_element:
                 datetime_attr = await time_element.get_attribute("datetime")
                 if datetime_attr:
-                    timestamp = datetime.fromisoformat(
-                        datetime_attr.replace("Z", "+00:00")
-                    )
+                    timestamp = datetime.fromisoformat(datetime_attr.replace("Z", "+00:00"))
         except Exception:
             pass
 

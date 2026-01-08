@@ -3,66 +3,55 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    uv2nix.url = "github:pyproject-nix/uv2nix";
-    uv2nix.inputs.nixpkgs.follows = "nixpkgs";
-    pyproject-nix.url = "github:pyproject-nix/pyproject.nix";
-    pyproject-nix.inputs.nixpkgs.follows = "nixpkgs";
-    pyproject-build-systems.url = "github:pyproject-nix/build-system-pkgs";
-    pyproject-build-systems.inputs.nixpkgs.follows = "nixpkgs";
-    pyproject-build-systems.inputs.pyproject-nix.follows = "pyproject-nix";
-    pyproject-build-systems.inputs.uv2nix.follows = "uv2nix";
   };
 
-  outputs = { self, nixpkgs, uv2nix, pyproject-nix, pyproject-build-systems }:
+  outputs = { self, nixpkgs }:
     let
       supportedSystems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
-      # Docker images only work on Linux
       dockerSystems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-      forDockerSystems = nixpkgs.lib.genAttrs dockerSystems;
-      # Helper to check if system supports Docker
       isDockerSystem = system: builtins.elem system dockerSystems;
     in {
       packages = forAllSystems (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          python = pkgs.python314;
 
-          workspace = uv2nix.lib.workspace.loadWorkspace { workspaceRoot = ./.; };
-          overlay = workspace.mkPyprojectOverlay { sourcePreference = "wheel"; };
+          # Python with all dependencies - SINGLE SOURCE OF TRUTH
+          pythonDeps = ps: with ps; [
+            flask
+            playwright
+            weasyprint
+            beautifulsoup4
+            lxml
+            structlog
+            orjson
+            python-slugify
+            httpx
+          ];
 
-          pyprojectOverrides = final: prev: {
-            # WeasyPrint needs native libs
-            weasyprint = prev.weasyprint.overrideAttrs (old: {
-              nativeBuildInputs = (old.nativeBuildInputs or []) ++ [
-                pkgs.pkg-config
-              ];
-              buildInputs = (old.buildInputs or []) ++ [
-                pkgs.pango
-                pkgs.cairo
-                pkgs.gdk-pixbuf
-                pkgs.fontconfig
-                pkgs.gobject-introspection
-              ];
-            });
+          python = pkgs.python3.withPackages pythonDeps;
+
+          # Build the application package
+          app = pkgs.python3Packages.buildPythonApplication {
+            pname = "twitter-articlenator";
+            version = "0.1.0";
+            format = "pyproject";
+
+            src = ./.;
+
+            nativeBuildInputs = with pkgs.python3Packages; [
+              hatchling
+            ];
+
+            propagatedBuildInputs = pythonDeps pkgs.python3Packages;
+
+            # Skip tests during build (run separately)
+            doCheck = false;
           };
-
-          pythonSet = (pkgs.callPackage pyproject-nix.build.packages {
-            inherit python;
-          }).overrideScope (
-            pkgs.lib.composeManyExtensions [
-              pyproject-build-systems.overlays.default
-              overlay
-              pyprojectOverrides
-            ]
-          );
-
-          venv = pythonSet.mkVirtualEnv "twitter-articlenator-env" workspace.deps.default;
 
           # Docker-specific definitions (only for Linux)
           dockerPkgs = if isDockerSystem system then
             let
-              # Runtime dependencies for the container
               runtimeDeps = [
                 pkgs.pango
                 pkgs.cairo
@@ -73,11 +62,11 @@
                 pkgs.freetype
                 pkgs.zlib
                 pkgs.gobject-introspection
-                # Fonts for PDF rendering
+                # Fonts
                 pkgs.dejavu_fonts
                 pkgs.liberation_ttf
                 pkgs.noto-fonts
-                # Playwright/Chromium dependencies
+                # Playwright browsers (version matches python3Packages.playwright)
                 pkgs.playwright-driver.browsers
                 pkgs.nss
                 pkgs.nspr
@@ -98,13 +87,11 @@
                 pkgs.mesa
                 pkgs.expat
                 pkgs.dbus
-                # Basic utilities
                 pkgs.coreutils
                 pkgs.bash
                 pkgs.cacert
               ];
 
-              # Create fontconfig cache
               fontsConf = pkgs.makeFontsConf {
                 fontDirectories = [
                   pkgs.dejavu_fonts
@@ -113,7 +100,6 @@
                 ];
               };
 
-              # Wrapper script to run the app
               entrypoint = pkgs.writeShellScriptBin "entrypoint" ''
                 export FONTCONFIG_FILE="${fontsConf}"
                 export GI_TYPELIB_PATH="${pkgs.lib.makeSearchPath "lib/girepository-1.0" [
@@ -127,7 +113,7 @@
                 export TWITTER_ARTICLENATOR_CONFIG_DIR="/data/config"
                 export TWITTER_ARTICLENATOR_OUTPUT_DIR="/data/output"
 
-                exec ${venv}/bin/twitter-articlenator "$@"
+                exec ${app}/bin/twitter-articlenator "$@"
               '';
             in {
               docker = pkgs.dockerTools.buildLayeredImage {
@@ -135,7 +121,7 @@
                 tag = "latest";
 
                 contents = [
-                  venv
+                  app
                   entrypoint
                 ] ++ runtimeDeps;
 
@@ -157,7 +143,7 @@
                   };
                   WorkingDir = "/";
                   Labels = {
-                    "org.opencontainers.image.source" = "https://github.com/user/twitter-articlenator";
+                    "org.opencontainers.image.source" = "https://github.com/tomazvila/articlenator";
                     "org.opencontainers.image.description" = "Twitter Article to PDF Converter";
                   };
                 };
@@ -165,7 +151,7 @@
             }
           else {};
         in {
-          default = venv;
+          default = app;
         } // dockerPkgs
       );
 
@@ -180,6 +166,27 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           isDarwin = pkgs.stdenv.isDarwin;
+
+          # Dev dependencies
+          pythonWithDeps = pkgs.python3.withPackages (ps: with ps; [
+            # Runtime deps
+            flask
+            playwright
+            weasyprint
+            beautifulsoup4
+            lxml
+            structlog
+            orjson
+            python-slugify
+            httpx
+            # Dev/test deps
+            pytest
+            pytest-cov
+            pytest-asyncio
+            pytest-playwright
+            hatchling
+          ]);
+
           libPath = pkgs.lib.makeLibraryPath [
             pkgs.pango
             pkgs.cairo
@@ -189,13 +196,21 @@
             pkgs.harfbuzz
             pkgs.freetype
             pkgs.zlib
-            pkgs.stdenv.cc.cc.lib  # provides libstdc++.so.6
+            pkgs.stdenv.cc.cc.lib
           ];
+
+          fontsConf = pkgs.makeFontsConf {
+            fontDirectories = [
+              pkgs.dejavu_fonts
+              pkgs.liberation_ttf
+              pkgs.noto-fonts
+            ];
+          };
         in {
           default = pkgs.mkShell {
             packages = [
-              pkgs.uv
-              pkgs.python314
+              pythonWithDeps
+              pkgs.ruff
               # WeasyPrint native dependencies
               pkgs.pango
               pkgs.cairo
@@ -206,7 +221,14 @@
               pkgs.harfbuzz
               pkgs.freetype
               pkgs.pkg-config
+              # Fonts
+              pkgs.dejavu_fonts
+              pkgs.liberation_ttf
+              pkgs.noto-fonts
+              # Playwright browsers
+              pkgs.playwright-driver.browsers
             ];
+
             shellHook = ''
               ${if isDarwin then ''
                 export DYLD_LIBRARY_PATH="${libPath}:$DYLD_LIBRARY_PATH"
@@ -216,21 +238,17 @@
               export GI_TYPELIB_PATH="${pkgs.lib.makeSearchPath "lib/girepository-1.0" [
                 pkgs.pango pkgs.gdk-pixbuf pkgs.gobject-introspection
               ]}"
-              # Don't use Nix Playwright browsers - version mismatch with Python package
-              unset PLAYWRIGHT_BROWSERS_PATH
-              unset PYTHONPATH
+              export FONTCONFIG_FILE="${fontsConf}"
+              export PLAYWRIGHT_BROWSERS_PATH="${pkgs.playwright-driver.browsers}"
+              export PYTHONPATH="$PWD/src:$PYTHONPATH"
 
-              # Auto-sync Python dependencies
-              echo "Syncing Python dependencies..."
-              uv sync --quiet
-
-              # Install Playwright browsers if needed
-              if [ ! -d "$HOME/.cache/ms-playwright/chromium"* ]; then
-                echo "Installing Playwright browsers..."
-                uv run playwright install chromium
-              fi
-
-              echo "Ready! Run: uv run twitter-articlenator"
+              echo "Python: $(python --version)"
+              echo ""
+              echo "Commands:"
+              echo "  python -m twitter_articlenator  # Run app"
+              echo "  pytest tests/unit               # Run tests"
+              echo "  ruff check src/                 # Lint"
+              echo "  nix build .#docker              # Build Docker image"
             '';
           };
         }

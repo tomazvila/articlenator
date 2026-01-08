@@ -213,11 +213,7 @@ class WebArticleSource(ContentSource):
             element = soup.select_one(selector)
             if element:
                 content = element.get("content")
-                text = (
-                    content
-                    if isinstance(content, str)
-                    else element.get_text(strip=True)
-                )
+                text = content if isinstance(content, str) else element.get_text(strip=True)
                 if text:
                     parsed = self._parse_date(text)
                     if parsed:
@@ -256,9 +252,7 @@ class WebArticleSource(ContentSource):
     def _extract_content(self, soup: BeautifulSoup) -> str:
         """Extract article content as HTML."""
         # Remove unwanted elements
-        for tag in soup.find_all(
-            ["script", "style", "nav", "header", "footer", "aside"]
-        ):
+        for tag in soup.find_all(["script", "style", "nav", "header", "footer", "aside"]):
             tag.decompose()
 
         # Remove common non-content elements

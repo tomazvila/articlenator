@@ -30,11 +30,7 @@ jobs:
 
       - name: Run tests
         run: |
-          nix develop --command bash -c "
-            uv sync
-            uv run playwright install chromium
-            uv run pytest tests/unit -v --cov=twitter_articlenator --cov-report=xml
-          "
+          nix develop --command pytest tests/unit -v --cov=twitter_articlenator --cov-report=xml
 
   lint:
     runs-on: ubuntu-latest
@@ -49,9 +45,8 @@ jobs:
       - name: Run linting
         run: |
           nix develop --command bash -c "
-            uv sync
-            uv run ruff check src/
-            uv run ruff format --check src/
+            ruff check src/
+            ruff format --check src/
           "
 
   build-check:

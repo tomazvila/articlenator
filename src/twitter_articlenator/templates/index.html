@@ -102,16 +102,21 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
         const data = await response.json();
         console.log('API Response:', data);  // Debug logging
 
-        if (response.ok && data.files && data.files.length > 0) {
+        if (response.ok && data.success && data.filename) {
             resultsDiv.style.display = 'block';
-            data.files.forEach(file => {
-                const li = document.createElement('li');
-                const a = document.createElement('a');
-                a.href = `/download/${file.filename}`;
-                a.textContent = `Download: ${file.title}`;
-                li.appendChild(a);
-                downloadList.appendChild(li);
-            });
+            // Single combined PDF for all articles
+            const li = document.createElement('li');
+            const a = document.createElement('a');
+            a.href = `/download/${data.filename}`;
+            if (data.articles && data.articles.length > 1) {
+                a.textContent = `Download: ${data.articles.length} articles combined`;
+            } else if (data.articles && data.articles.length === 1) {
+                a.textContent = `Download: ${data.articles[0].title}`;
+            } else {
+                a.textContent = `Download PDF`;
+            }
+            li.appendChild(a);
+            downloadList.appendChild(li);
         } else if (data.error) {
             errorDiv.style.display = 'block';
             errorText.textContent = data.error;
