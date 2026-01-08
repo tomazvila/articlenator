@@ -16,6 +16,8 @@ metadata:
   name: twitter-articlenator
 spec:
   replicas: 1
+  strategy:
+    type: Recreate  # Required for RWO PVC - stops old pod before starting new
   selector:
     matchLabels:
       app: twitter-articlenator
