@@ -33,7 +33,7 @@ nix build .#packages.x86_64-linux.docker --builders 'ssh://your-linux-builder'
 # Run the container
 docker run -d \
   --name twitter-articlenator \
-  -p 5000:5000 \
+  -p 5001:5001 \
   -v twitter-articlenator-data:/data \
   twitter-articlenator:latest
 
@@ -41,7 +41,7 @@ docker run -d \
 docker logs -f twitter-articlenator
 
 # Access the web UI
-open http://localhost:5000
+open http://localhost:5001
 ```
 
 ## Kubernetes Deployment
@@ -83,7 +83,7 @@ The `/data` volume contains:
 
 - **Base**: Nix-built (no traditional base image)
 - **Size**: ~1.5GB (includes Chromium for Playwright)
-- **Exposed Port**: 5000
+- **Exposed Port**: 5001
 - **Health Check**: `GET /api/health`
 
 ## Monitoring

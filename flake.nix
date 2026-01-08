@@ -184,7 +184,7 @@
                 "TWITTER_ARTICLENATOR_JSON_LOGGING=true"
               ];
               ExposedPorts = {
-                "5000/tcp" = {};
+                "5001/tcp" = {};
               };
               Volumes = {
                 "/data" = {};

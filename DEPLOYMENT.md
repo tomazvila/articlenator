@@ -425,6 +425,176 @@ Snapshots saved to: `/var/lib/rancher/k3s/server/db/snapshots/`
 
 ---
 
+# PART 6: CI/CD Setup (GitHub Actions)
+
+Automate builds and deployments with GitHub Actions.
+
+---
+
+## Step 6.1: Architecture Overview
+
+```
+     GitHub Actions (on push to main)
+                    │
+     ┌──────────────┼──────────────┐
+     │              │              │
+     ▼              ▼              ▼
+  Run Tests    Build Image    Push to ghcr.io
+                    │
+                    ▼
+           Deploy to K8s cluster
+                    │
+        ┌───────────┴───────────┐
+        ▼                       ▼
+     nixos                  dressedpi
+   (x86_64)                (aarch64)
+```
+
+**Multi-arch support:** The CI/CD pipeline builds for both x86_64 (nixos) and ARM64 (dressedpi/Raspberry Pi) using QEMU emulation. The images are combined into a multi-arch manifest, so Kubernetes automatically pulls the correct architecture.
+
+---
+
+## Step 6.2: Get Kubeconfig from nixos
+
+```bash
+# ┌──────────────────────────────────┐
+# │  RUN ON: nixos                   │
+# └──────────────────────────────────┘
+
+# Copy the kubeconfig
+sudo cat /etc/rancher/k3s/k3s.yaml
+
+# Replace 127.0.0.1 with the Tailscale IP for remote access
+# Change: server: https://127.0.0.1:6443
+# To:     server: https://100.82.212.53:6443
+```
+
+Save this modified kubeconfig locally.
+
+---
+
+## Step 6.3: Configure GitHub Secrets
+
+1. Go to your GitHub repo → **Settings** → **Secrets and variables** → **Actions**
+2. Add these secrets:
+
+| Secret | Value | How to get it |
+|--------|-------|---------------|
+| `KUBECONFIG` | Base64-encoded kubeconfig | `cat kubeconfig.yaml \| base64` |
+
+The `GITHUB_TOKEN` is automatic and provides ghcr.io access.
+
+---
+
+## Step 6.4: Create GitHub Environment
+
+1. Go to your GitHub repo → **Settings** → **Environments**
+2. Click **New environment**
+3. Name: `production`
+4. (Optional) Add protection rules:
+   - Require reviewers for deployments
+   - Limit to `main` branch only
+
+---
+
+## Step 6.5: Building Images Locally (Alternative)
+
+If you prefer to build images locally instead of using CI/CD:
+
+### On nixos (x86_64):
+
+```bash
+# ┌──────────────────────────────────┐
+# │  RUN ON: nixos                   │
+# └──────────────────────────────────┘
+
+cd /path/to/twitter-articlenator
+
+# Pull latest code
+git pull origin main
+
+# Build the Docker image
+nix build .#docker
+
+# Load into Docker/containerd
+sudo k3s ctr images import result
+
+# Or if using Docker
+docker load < result
+docker tag twitter-articlenator:latest ghcr.io/YOUR_USERNAME/twitter-articlenator:latest
+```
+
+### On dressedpi (aarch64 - Raspberry Pi):
+
+```bash
+# ┌──────────────────────────────────┐
+# │  RUN ON: dressedpi               │
+# └──────────────────────────────────┘
+
+cd /path/to/twitter-articlenator
+
+# Pull latest code
+git pull origin main
+
+# Install Nix if not already installed
+curl -L https://nixos.org/nix/install | sh
+
+# Build ARM64 Docker image
+nix build .#docker
+
+# Load into k3s containerd
+sudo k3s ctr images import result
+```
+
+---
+
+## Step 6.6: Update Deployment for CI/CD
+
+Once CI/CD is pushing to ghcr.io, update your deployment:
+
+```bash
+# ┌──────────────────────────────────┐
+# │  RUN ON: nixos                   │
+# └──────────────────────────────────┘
+
+# Create registry secret for ghcr.io (if repo is private)
+kubectl create secret docker-registry ghcr-secret \
+  --docker-server=ghcr.io \
+  --docker-username=YOUR_GITHUB_USERNAME \
+  --docker-password=YOUR_GITHUB_PAT \
+  --docker-email=your@email.com
+
+# Apply the updated manifests
+kubectl apply -f k8s/twitter-app.yaml
+```
+
+---
+
+## Step 6.7: Verify CI/CD Pipeline
+
+After pushing to main:
+
+1. Go to GitHub repo → **Actions** tab
+2. Watch the workflow run
+3. Check deployment status:
+
+```bash
+# ┌──────────────────────────────────┐
+# │  RUN ON: nixos                   │
+# └──────────────────────────────────┘
+
+# Watch the rollout
+kubectl rollout status deployment/twitter-articlenator
+
+# Check pods are running new version
+kubectl get pods -l app=twitter-articlenator -o wide
+
+# Verify the image
+kubectl describe pod -l app=twitter-articlenator | grep Image:
+```
+
+---
+
 # Troubleshooting
 
 ## Pods stuck in Pending?
@@ -444,3 +614,21 @@ kubectl logs -l app=cloudflared
 sudo systemctl status k3s
 sudo journalctl -u k3s -f
 ```
+
+## CI/CD image pull failed?
+```bash
+# Check if secret exists
+kubectl get secret ghcr-secret
+
+# Check pod events
+kubectl describe pod <pod-name> | grep -A5 Events
+
+# Verify image exists in registry
+docker pull ghcr.io/YOUR_USERNAME/twitter-articlenator:main
+```
+
+## ARM64 / Raspberry Pi image issues?
+The CI/CD builds multi-arch images (x86_64 + ARM64). If you still have issues:
+1. Verify the manifest exists: `docker manifest inspect ghcr.io/YOUR_USERNAME/twitter-articlenator:main`
+2. Check containerd on dressedpi: `sudo k3s ctr images ls | grep twitter`
+3. Force re-pull: `kubectl rollout restart deployment/twitter-articlenator`

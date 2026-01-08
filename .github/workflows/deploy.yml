@@ -1,0 +1,146 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64-linux
+            platform: linux/amd64
+          - arch: aarch64-linux
+            platform: linux/arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (for ARM builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            extra-platforms = aarch64-linux
+
+      - name: Setup Nix cache
+        uses: cachix/cachix-action@v15
+        with:
+          name: nix-community
+
+      - name: Build Docker image with Nix (${{ matrix.arch }})
+        run: |
+          nix build .#packages.${{ matrix.arch }}.docker
+          docker load < result
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push arch-specific image
+        run: |
+          ARCH_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}-${{ matrix.arch }}"
+          docker tag twitter-articlenator:latest "$ARCH_TAG"
+          docker push "$ARCH_TAG"
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      - name: Create and push multi-arch manifest
+        run: |
+          TAGS="${{ steps.meta.outputs.tags }}"
+          AMD64="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}-x86_64-linux"
+          ARM64="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}-aarch64-linux"
+
+          for TAG in $TAGS; do
+            docker manifest create "$TAG" "$AMD64" "$ARM64"
+            docker manifest annotate "$TAG" "$AMD64" --os linux --arch amd64
+            docker manifest annotate "$TAG" "$ARM64" --os linux --arch arm64
+            docker manifest push "$TAG"
+          done
+
+  deploy:
+    needs: manifest
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Update image in deployment
+        run: |
+          # Update the image tag in the deployment
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+
+          # Apply the base manifests
+          kubectl apply -f k8s/twitter-app.yaml
+
+          # Update the deployment image
+          kubectl set image deployment/twitter-articlenator \
+            twitter-articlenator="$IMAGE" \
+            -n default
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/twitter-articlenator -n default --timeout=300s
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -l app=twitter-articlenator -n default
+          kubectl get svc twitter-articlenator -n default

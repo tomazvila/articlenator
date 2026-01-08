@@ -5,6 +5,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
+  storageClassName: longhorn
   resources:
     requests:
       storage: 1Gi
@@ -25,13 +26,44 @@ spec:
     spec:
       nodeSelector:
         workload: enabled
+      # Uncomment for private ghcr.io repos:
+      # imagePullSecrets:
+      #   - name: ghcr-secret
       containers:
         - name: twitter-articlenator
+          # For CI/CD: ghcr.io/YOUR_USERNAME/twitterarticlenator:main
+          # For local builds: twitter-articlenator:latest
           image: twitter-articlenator:latest
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5001
               name: http
+          env:
+            - name: TWITTER_ARTICLENATOR_JSON_LOGGING
+              value: "true"
+            - name: TWITTER_ARTICLENATOR_CONFIG_DIR
+              value: "/data/config"
+            - name: TWITTER_ARTICLENATOR_OUTPUT_DIR
+              value: "/data/output"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
           volumeMounts:
             - name: data
               mountPath: /data
