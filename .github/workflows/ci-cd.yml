@@ -192,7 +192,14 @@ jobs:
 
       - name: Update image in deployment
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          # Use 'main' tag for branch pushes, or version tag for releases
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            TAG="main"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+          echo "Deploying image: $IMAGE"
           kubectl apply -f k8s/twitter-app.yaml
           kubectl set image deployment/twitter-articlenator \
             twitter-articlenator="$IMAGE" \
