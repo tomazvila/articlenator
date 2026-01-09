@@ -112,8 +112,7 @@ class Config:
         # Check for known cookie names at start of lines (DevTools format indicator)
         lines = raw_input.split("\n")
         starts_with_cookie_name = any(
-            line.strip().startswith(("ct0", "auth_token", "twid", "guest_id"))
-            for line in lines
+            line.strip().startswith(("ct0", "auth_token", "twid", "guest_id")) for line in lines
         )
 
         if starts_with_cookie_name and (has_tabs or has_multi_spaces):
