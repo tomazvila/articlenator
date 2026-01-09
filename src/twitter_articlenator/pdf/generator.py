@@ -17,7 +17,7 @@ log = structlog.get_logger()
 MAX_SLUG_LENGTH = 80
 
 # Maximum content size in bytes to prevent memory issues
-MAX_CONTENT_SIZE = 50_000_000  # 50MB
+MAX_CONTENT_SIZE = 500_000_000  # 500MB
 
 
 class ContentTooLargeError(Exception):
