@@ -342,13 +342,18 @@ class TestContentSizeLimits:
         pdf_path = generate_pdf(small_article, output_dir)
         assert pdf_path.exists()
 
-    def test_generate_pdf_content_at_limit(self, tmp_path):
+    def test_generate_pdf_content_at_limit(self, tmp_path, monkeypatch):
         """Test generate_pdf allows content at exactly the limit."""
-        from twitter_articlenator.pdf.generator import generate_pdf, MAX_CONTENT_SIZE
+        from twitter_articlenator.pdf import generator
+        from twitter_articlenator.pdf.generator import generate_pdf
+
+        # Use a small limit to avoid creating huge strings
+        test_limit = 10_000
+        monkeypatch.setattr(generator, "MAX_CONTENT_SIZE", test_limit)
 
         # Create article with content at the limit (accounting for UTF-8)
         # Use slightly less to ensure we're under
-        content_size = MAX_CONTENT_SIZE - 100
+        content_size = test_limit - 100
         content = "<p>" + "a" * content_size + "</p>"
         article = Article(
             title="Boundary Article",
