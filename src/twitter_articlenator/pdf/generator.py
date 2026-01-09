@@ -317,6 +317,58 @@ def _get_ereader_css() -> str:
             margin: 0.5em 0;
         }
 
+        .tweet-images {
+            margin-top: 1em;
+        }
+
+        .tweet-images img {
+            max-width: 100%;
+            height: auto;
+            margin: 0.5em 0;
+            border-radius: 8px;
+        }
+
+        .main-tweet {
+            border-left-width: 4px;
+            background: #f0f7ff;
+        }
+
+        .replies-section {
+            margin-top: 2em;
+            padding-top: 1em;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .replies-header {
+            font-size: 1.2em;
+            color: #444444;
+            margin-bottom: 1em;
+        }
+
+        .reply {
+            margin: 1em 0;
+            padding: 0.8em;
+            border-left: 2px solid #cccccc;
+            background: #fafafa;
+            font-size: 0.95em;
+        }
+
+        .op-reply {
+            border-left-color: #1da1f2;
+            background: #f0f7ff;
+        }
+
+        .op-badge {
+            display: inline-block;
+            background: #1da1f2;
+            color: white;
+            font-size: 0.7em;
+            padding: 0.1em 0.4em;
+            border-radius: 3px;
+            margin-left: 0.5em;
+            vertical-align: middle;
+        }
+
         footer {
             margin-top: 2em;
             padding-top: 1em;

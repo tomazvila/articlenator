@@ -181,8 +181,8 @@ class TestCreateArticle:
         assert article.source_type == "twitter"
         assert "Test tweet content" in article.content
 
-    def test_create_article_with_quoted_tweet(self):
-        """Test creating article with quoted tweets."""
+    def test_create_article_with_replies(self):
+        """Test creating article with replies."""
         from twitter_articlenator.sources.twitter_playwright import TwitterPlaywrightSource
 
         source = TwitterPlaywrightSource()
@@ -191,13 +191,23 @@ class TestCreateArticle:
             "display_name": "Test User",
             "content": "Main tweet",
             "timestamp": None,
-            "quoted_tweets": ["Quoted content here"],
+            "images": [],
+            "replies": [
+                {
+                    "author": "replier",
+                    "display_name": "Reply User",
+                    "content": "Reply content here",
+                    "images": [],
+                    "is_op": False,
+                }
+            ],
         }
 
         article = source._create_article(tweet_data, "https://x.com/testuser/status/123")
 
         assert "Main tweet" in article.content
-        assert "Quoted content here" in article.content
+        assert "Reply content here" in article.content
+        assert "Reply User" in article.content
 
     def test_create_article_without_content(self):
         """Test creating article without content generates default title."""

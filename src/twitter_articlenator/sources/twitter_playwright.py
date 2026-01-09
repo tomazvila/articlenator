@@ -178,7 +178,7 @@ class TwitterPlaywrightSource(ContentSource):
             return self._create_article(tweet_data, url)
 
     async def _extract_tweet_data(self, page, expected_username: str) -> dict:
-        """Extract tweet data from the page.
+        """Extract tweet data from the page including images and replies.
 
         Args:
             page: Playwright page object.
@@ -193,6 +193,7 @@ class TwitterPlaywrightSource(ContentSource):
 
         content = ""
         title = None
+        images = []
 
         if is_article:
             # Extract article content
@@ -201,7 +202,6 @@ class TwitterPlaywrightSource(ContentSource):
 
             # Try to get article title from the article header or cover
             try:
-                # Look for article title in the page - usually in a heading
                 title_element = await page.query_selector(
                     'article h1, [data-testid="article-cover-image"] + div h1'
                 )
@@ -210,27 +210,30 @@ class TwitterPlaywrightSource(ContentSource):
             except Exception:
                 pass
 
-            # If no title found, try to extract from page title
             if not title:
                 page_title = await page.title()
                 if " / X" in page_title:
                     title = page_title.replace(" / X", "").strip()
         else:
-            # Regular tweet - get tweet text
-            tweet_text_elements = await page.query_selector_all('[data-testid="tweetText"]')
+            # Regular tweet - get the main tweet first
+            # The main/focal tweet has a larger format, find it specifically
+            main_tweet = await page.query_selector('article[data-testid="tweet"][tabindex="-1"]')
+            if not main_tweet:
+                # Fallback to first tweet
+                main_tweet = await page.query_selector('[data-testid="tweet"]')
 
-            content_parts = []
-            for element in tweet_text_elements:
-                text = await element.inner_text()
-                if text:
-                    content_parts.append(text)
+            if main_tweet:
+                # Extract text from main tweet
+                text_el = await main_tweet.query_selector('[data-testid="tweetText"]')
+                if text_el:
+                    content = await text_el.inner_text()
 
-            content = "\n\n".join(content_parts) if content_parts else ""
+                # Extract images from main tweet
+                images = await self._extract_images(main_tweet)
 
         # Get author display name
         display_name = expected_username
         try:
-            # The display name is usually in a span inside the user name link
             name_element = await page.query_selector('[data-testid="User-Name"] span')
             if name_element:
                 display_name = await name_element.inner_text()
@@ -248,31 +251,118 @@ class TwitterPlaywrightSource(ContentSource):
         except Exception:
             pass
 
-        # Get any quoted tweets or media descriptions (for regular tweets only)
-        quoted_tweets = []
+        # Extract replies/conversation thread
+        replies = []
         if not is_article:
-            try:
-                quoted_elements = await page.query_selector_all(
-                    '[data-testid="tweet"] [data-testid="tweetText"]'
-                )
-                # Skip the first one (main tweet) if there are multiple
-                if len(quoted_elements) > 1:
-                    for elem in quoted_elements[1:]:
-                        qt_text = await elem.inner_text()
-                        if qt_text and qt_text not in content.split("\n\n"):
-                            quoted_tweets.append(qt_text)
-            except Exception:
-                pass
+            replies = await self._extract_replies(page, expected_username)
 
         return {
             "author": expected_username,
             "display_name": display_name,
             "content": content,
-            "quoted_tweets": quoted_tweets,
+            "images": images,
+            "replies": replies,
             "timestamp": timestamp,
             "title": title,
             "is_article": is_article,
         }
+
+    async def _extract_images(self, container) -> list[str]:
+        """Extract image URLs from a tweet container.
+
+        Args:
+            container: Playwright element containing the tweet.
+
+        Returns:
+            List of image URLs.
+        """
+        images = []
+        try:
+            # Find all tweet photos
+            photo_elements = await container.query_selector_all('[data-testid="tweetPhoto"] img')
+            for img in photo_elements:
+                src = await img.get_attribute("src")
+                if src and "twimg.com" in src:
+                    # Get higher quality version
+                    # Twitter uses format=jpg&name=small, change to name=large
+                    if "name=" in src:
+                        src = re.sub(r"name=\w+", "name=large", src)
+                    images.append(src)
+        except Exception as e:
+            log.warning("image_extraction_failed", error=str(e))
+        return images
+
+    async def _extract_replies(self, page, main_author: str) -> list[dict]:
+        """Extract replies from the conversation thread.
+
+        Args:
+            page: Playwright page object.
+            main_author: Username of the main tweet author.
+
+        Returns:
+            List of reply dicts with author, content, images.
+        """
+        replies = []
+
+        try:
+            # Scroll down to load replies
+            for _ in range(3):
+                await page.evaluate("window.scrollBy(0, window.innerHeight)")
+                await asyncio.sleep(1)
+
+            # Get all tweet elements
+            tweet_elements = await page.query_selector_all('[data-testid="tweet"]')
+
+            # Skip the first one (main tweet) and process replies
+            for i, tweet in enumerate(tweet_elements):
+                if i == 0:
+                    continue  # Skip main tweet
+
+                try:
+                    # Get reply author
+                    author = ""
+                    author_el = await tweet.query_selector('[data-testid="User-Name"] a')
+                    if author_el:
+                        href = await author_el.get_attribute("href")
+                        if href:
+                            author = href.strip("/").split("/")[0]
+
+                    # Get reply text
+                    text = ""
+                    text_el = await tweet.query_selector('[data-testid="tweetText"]')
+                    if text_el:
+                        text = await text_el.inner_text()
+
+                    # Get reply images
+                    images = await self._extract_images(tweet)
+
+                    # Get display name
+                    display_name = author
+                    name_span = await tweet.query_selector('[data-testid="User-Name"] span')
+                    if name_span:
+                        display_name = await name_span.inner_text()
+
+                    if text or images:
+                        replies.append(
+                            {
+                                "author": author,
+                                "display_name": display_name,
+                                "content": text,
+                                "images": images,
+                                "is_op": author.lower() == main_author.lower(),
+                            }
+                        )
+
+                except Exception as e:
+                    log.warning("reply_extraction_failed", index=i, error=str(e))
+                    continue
+
+            log.info("replies_extracted", count=len(replies))
+
+        except Exception as e:
+            log.warning("replies_extraction_failed", error=str(e))
+
+        return replies
 
     def _create_article(self, tweet_data: dict, source_url: str) -> Article:
         """Create an Article from tweet data.
@@ -288,7 +378,8 @@ class TwitterPlaywrightSource(ContentSource):
         author = tweet_data["author"]
         display_name = tweet_data.get("display_name", author)
         timestamp = tweet_data.get("timestamp")
-        quoted_tweets = tweet_data.get("quoted_tweets", [])
+        images = tweet_data.get("images", [])
+        replies = tweet_data.get("replies", [])
         is_article = tweet_data.get("is_article", False)
         article_title = tweet_data.get("title")
 
@@ -304,8 +395,6 @@ class TwitterPlaywrightSource(ContentSource):
         date_str = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else ""
 
         if is_article:
-            # Format as article with proper paragraphs
-            # Split content into paragraphs
             paragraphs = content.split("\n")
             formatted_paragraphs = "\n".join(
                 f"        <p>{p.strip()}</p>" for p in paragraphs if p.strip()
@@ -325,8 +414,10 @@ class TwitterPlaywrightSource(ContentSource):
     </div>
 </article>"""
         else:
-            # Regular tweet format
-            html_content = f"""<div class="tweet">
+            # Regular tweet format with images
+            images_html = self._render_images(images)
+
+            html_content = f"""<div class="tweet main-tweet">
     <div class="tweet-header">
         <span class="displayname">{display_name}</span>
         <span class="username">@{author}</span>
@@ -335,22 +426,39 @@ class TwitterPlaywrightSource(ContentSource):
     <div class="tweet-content">
         <p>{content}</p>
     </div>
+    {images_html}
 </div>"""
 
-            # Add quoted tweets if any
-            for qt in quoted_tweets:
-                html_content += f"""
-<div class="quoted-tweet">
-    <div class="tweet-content">
-        <p>{qt}</p>
+            # Add replies section if there are any
+            if replies:
+                html_content += '\n<div class="replies-section">\n'
+                html_content += '    <h2 class="replies-header">Replies</h2>\n'
+
+                for reply in replies:
+                    reply_images_html = self._render_images(reply.get("images", []))
+                    op_class = " op-reply" if reply.get("is_op") else ""
+                    op_badge = ' <span class="op-badge">OP</span>' if reply.get("is_op") else ""
+
+                    html_content += f"""    <div class="tweet reply{op_class}">
+        <div class="tweet-header">
+            <span class="displayname">{reply.get("display_name", reply["author"])}</span>{op_badge}
+            <span class="username">@{reply["author"]}</span>
+        </div>
+        <div class="tweet-content">
+            <p>{reply["content"]}</p>
+        </div>
+        {reply_images_html}
     </div>
-</div>"""
+"""
+                html_content += "</div>"
 
         log.info(
             "tweet_converted_to_article",
             author=author,
             title=title,
             is_article=is_article,
+            image_count=len(images),
+            reply_count=len(replies),
         )
 
         return Article(
@@ -361,6 +469,24 @@ class TwitterPlaywrightSource(ContentSource):
             source_url=source_url,
             source_type="twitter_article" if is_article else "twitter",
         )
+
+    def _render_images(self, images: list[str]) -> str:
+        """Render images as HTML.
+
+        Args:
+            images: List of image URLs.
+
+        Returns:
+            HTML string with image tags.
+        """
+        if not images:
+            return ""
+
+        images_html = '<div class="tweet-images">\n'
+        for img_url in images:
+            images_html += f'        <img src="{img_url}" alt="Tweet image" loading="lazy">\n'
+        images_html += "    </div>"
+        return images_html
 
     def _truncate_title(self, text: str) -> str:
         """Truncate text to max title length.
