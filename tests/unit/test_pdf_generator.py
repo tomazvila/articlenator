@@ -281,17 +281,17 @@ class TestContentSizeLimits:
         """Test MAX_CONTENT_SIZE constant is defined."""
         from twitter_articlenator.pdf.generator import MAX_CONTENT_SIZE
 
-        assert MAX_CONTENT_SIZE == 50_000_000  # 50MB
+        assert MAX_CONTENT_SIZE == 500_000_000  # 500MB
 
     def test_content_too_large_error_exists(self):
         """Test ContentTooLargeError exception exists."""
         from twitter_articlenator.pdf.generator import ContentTooLargeError
 
-        error = ContentTooLargeError(60_000_000)
-        assert error.size == 60_000_000
-        assert error.max_size == 50_000_000
-        assert "60,000,000" in str(error)
-        assert "50,000,000" in str(error)
+        error = ContentTooLargeError(600_000_000)
+        assert error.size == 600_000_000
+        assert error.max_size == 500_000_000
+        assert "600,000,000" in str(error)
+        assert "500,000,000" in str(error)
 
     def test_generate_pdf_rejects_large_content(self, tmp_path, monkeypatch):
         """Test generate_pdf raises error for content exceeding limit."""
