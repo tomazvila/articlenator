@@ -423,6 +423,61 @@ footer {
     margin-top: 30px;
 }
 
+.form-hint {
+    color: var(--fg-dark);
+    font-size: 14px;
+    margin-bottom: 20px;
+}
+
+/* Cookie input options (side by side) */
+.cookie-input-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.input-option {
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 15px;
+}
+
+.input-option h3 {
+    margin-top: 0;
+    margin-bottom: 8px;
+    font-size: 14px;
+}
+
+.option-hint {
+    color: var(--fg-dark);
+    font-size: 12px;
+    margin-bottom: 12px;
+}
+
+.cookie-form-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.cookie-form-inner textarea {
+    min-height: 80px;
+    font-size: 12px;
+}
+
+.cookie-form-inner .save-btn {
+    font-size: 14px;
+    padding: 10px 16px;
+}
+
+@media (max-width: 700px) {
+    .cookie-input-options {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* Current cookies display */
 .current-cookies {
     margin-top: 30px;

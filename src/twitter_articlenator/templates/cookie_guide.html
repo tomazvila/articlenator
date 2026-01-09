@@ -63,21 +63,42 @@
 
 <section class="cookie-form">
     <h2>Enter New Cookies</h2>
-    <form id="cookie-form" method="post" action="/api/cookies">
-        <div class="form-group">
-            <label for="cookie-input">Cookies:</label>
-            <textarea
-                id="cookie-input"
-                name="cookies"
-                rows="4"
-                placeholder="auth_token=abc123...; ct0=xyz789..."
-            ></textarea>
+    <p class="form-hint">Choose either format below - both work the same.</p>
+
+    <div class="cookie-input-options">
+        <div class="input-option">
+            <h3>Option A: DevTools Copy-Paste</h3>
+            <p class="option-hint">Select both cookie rows in DevTools and paste directly</p>
+            <form id="cookie-form-devtools" class="cookie-form-inner">
+                <textarea
+                    id="cookie-input-devtools"
+                    name="cookies"
+                    rows="4"
+                    placeholder="ct0    abc123...    .x.com    /    2026-01-01    163 B    ✓
+auth_token    xyz789...    .x.com    /    2026-01-01    50 B    ✓    ✓"
+                ></textarea>
+                <button type="submit" class="save-btn">Save (DevTools Format)</button>
+            </form>
         </div>
-        <div class="button-group">
-            <button type="submit" id="save-cookies-btn">Save Cookies</button>
-            <button type="button" id="test-cookies-btn" class="secondary">Test Cookies</button>
+
+        <div class="input-option">
+            <h3>Option B: Traditional Format</h3>
+            <p class="option-hint">Manually format as name=value pairs</p>
+            <form id="cookie-form-traditional" class="cookie-form-inner">
+                <textarea
+                    id="cookie-input-traditional"
+                    name="cookies"
+                    rows="4"
+                    placeholder="auth_token=abc123...; ct0=xyz789..."
+                ></textarea>
+                <button type="submit" class="save-btn">Save (Traditional Format)</button>
+            </form>
         </div>
-    </form>
+    </div>
+
+    <div class="button-group">
+        <button type="button" id="test-cookies-btn" class="secondary">Test Saved Cookies</button>
+    </div>
 
     <div id="save-success" class="success-message" style="display: none;">
         Cookies saved successfully! You can now <a href="/">convert articles</a>.
@@ -102,8 +123,8 @@ function hideAllResults() {
     document.getElementById('test-error').style.display = 'none';
 }
 
-// Save cookies handler
-document.getElementById('cookie-form').addEventListener('submit', async (e) => {
+// Save cookies handler (shared for both forms)
+async function handleCookieSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const successDiv = document.getElementById('save-success');
@@ -125,6 +146,8 @@ document.getElementById('cookie-form').addEventListener('submit', async (e) => {
             // Refresh the cookie status in the nav and cookie display
             refreshCookieStatus();
             loadCurrentCookies();
+            // Clear the form
+            form.reset();
         } else {
             errorDiv.style.display = 'block';
             errorDiv.textContent = data.error || 'Failed to save cookies';
@@ -133,7 +156,11 @@ document.getElementById('cookie-form').addEventListener('submit', async (e) => {
         errorDiv.style.display = 'block';
         errorDiv.textContent = 'Failed to connect to server';
     }
-});
+}
+
+// Attach handler to both forms
+document.getElementById('cookie-form-devtools').addEventListener('submit', handleCookieSubmit);
+document.getElementById('cookie-form-traditional').addEventListener('submit', handleCookieSubmit);
 
 // Test cookies handler
 document.getElementById('test-cookies-btn').addEventListener('click', async () => {
