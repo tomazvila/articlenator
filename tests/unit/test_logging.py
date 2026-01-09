@@ -1,10 +1,5 @@
 """Tests for logging.py - structlog configuration."""
 
-import io
-import json
-import sys
-
-import pytest
 import structlog
 
 
@@ -19,15 +14,9 @@ class TestConfigureLogging:
         """Test configure_logging sets up JSON output."""
         from twitter_articlenator.logging import configure_logging
 
-        # Capture stderr
-        captured = io.BytesIO()
-        old_stderr = sys.stderr
-
         configure_logging(json_output=True)
-        log = structlog.get_logger()
 
-        # Structlog with BytesLoggerFactory writes to stderr
-        # We need to test the output format
+        # Verify structlog is configured
         assert structlog.is_configured()
 
     def test_configure_logging_console_output(self):

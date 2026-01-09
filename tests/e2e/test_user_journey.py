@@ -2,7 +2,6 @@
 
 import json
 
-import pytest
 from playwright.sync_api import Page, expect
 
 from .pages import CookieGuidePage, IndexPage

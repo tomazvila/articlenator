@@ -1,6 +1,5 @@
 """Tests for sources/web.py - Generic web article source."""
 
-from datetime import datetime
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest

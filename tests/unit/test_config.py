@@ -1,10 +1,7 @@
 """Tests for config.py - configuration management."""
 
-import json
-import os
 from pathlib import Path
 
-import pytest
 
 
 class TestConfigProperties:

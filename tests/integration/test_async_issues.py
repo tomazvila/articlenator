@@ -7,7 +7,6 @@ with the Playwright-based Twitter source.
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 
 class TestAsyncEventLoopIssues:
