@@ -30,19 +30,28 @@ https://substack.com/@author/post-title"
     <span id="status-text">Processing...</span>
 </div>
 
+<div id="progress-details" class="progress-section" style="display: none;">
+    <div class="progress-bar-container">
+        <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+    </div>
+    <div id="progress-info" class="progress-info"></div>
+    <ul id="progress-list" class="progress-list"></ul>
+</div>
+
 <div id="results" class="results-section" style="display: none;">
     <h2>Generated PDFs</h2>
     <ul id="download-list"></ul>
+</div>
+
+<div id="warning" class="warning-message" style="display: none;">
+    <strong>Warning:</strong>
+    <pre id="warning-text"></pre>
 </div>
 
 <div id="error" class="error-message" style="display: none;">
     <strong>Error:</strong>
     <pre id="error-text"></pre>
 </div>
-
-<p class="setup-hint">
-    For Twitter/X content: <a href="/setup">Set up your Twitter cookies</a> to access protected content.
-</p>
 
 <script>
 // Persist textarea content to localStorage
@@ -65,74 +74,194 @@ linksInput.addEventListener('blur', () => {
     localStorage.setItem(STORAGE_KEY, linksInput.value);
 });
 
+// Browser notifications
+function requestNotificationPermission() {
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+}
+
+function sendNotification(title, body) {
+    if ('Notification' in window && Notification.permission === 'granted') {
+        const notification = new Notification(title, {
+            body: body,
+            icon: '/static/icon-192.png',
+            tag: 'pdf-ready'
+        });
+        // Auto-close after 5 seconds
+        setTimeout(() => notification.close(), 5000);
+        // Focus window when clicked
+        notification.onclick = () => {
+            window.focus();
+            notification.close();
+        };
+    }
+}
+
 // Clear button
 document.getElementById('clear-btn').addEventListener('click', () => {
     linksInput.value = '';
     localStorage.removeItem(STORAGE_KEY);
     document.getElementById('results').style.display = 'none';
+    document.getElementById('warning').style.display = 'none';
     document.getElementById('error').style.display = 'none';
+    document.getElementById('progress-details').style.display = 'none';
+    document.getElementById('progress-list').innerHTML = '';
+    document.getElementById('progress-bar').style.width = '0%';
 });
 
 document.getElementById('convert-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+
+    // Request notification permission on first submit
+    requestNotificationPermission();
+
     const form = e.target;
     const resultsDiv = document.getElementById('results');
     const errorDiv = document.getElementById('error');
     const errorText = document.getElementById('error-text');
+    const warningDiv = document.getElementById('warning');
+    const warningText = document.getElementById('warning-text');
     const statusDiv = document.getElementById('status');
     const statusText = document.getElementById('status-text');
+    const progressDetails = document.getElementById('progress-details');
+    const progressBar = document.getElementById('progress-bar');
+    const progressInfo = document.getElementById('progress-info');
+    const progressList = document.getElementById('progress-list');
     const downloadList = document.getElementById('download-list');
     const submitBtn = document.getElementById('convert-btn');
 
     // Reset UI
     resultsDiv.style.display = 'none';
     errorDiv.style.display = 'none';
+    warningDiv.style.display = 'none';
+    progressDetails.style.display = 'none';
+    progressList.innerHTML = '';
     downloadList.innerHTML = '';
     submitBtn.disabled = true;
-    statusDiv.style.display = 'block';
-    statusText.textContent = 'Processing links...';
+    statusDiv.style.display = 'flex';
+    statusText.textContent = 'Starting...';
 
     try {
-        const response = await fetch('/api/convert', {
+        // Use streaming endpoint for real-time progress
+        const response = await fetch('/api/convert/stream', {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
             body: new URLSearchParams(new FormData(form))
         });
 
-        const data = await response.json();
-        console.log('API Response:', data);  // Debug logging
+        // Check for non-stream error responses
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            if (data.error) {
+                errorDiv.style.display = 'block';
+                errorText.textContent = data.error;
+                if (data.setup_url) {
+                    const link = document.createElement('a');
+                    link.href = data.setup_url;
+                    link.textContent = ' Go to setup →';
+                    errorText.appendChild(link);
+                }
+                return;
+            }
+        }
 
-        if (response.ok && data.success && data.filename) {
-            resultsDiv.style.display = 'block';
-            // Single combined PDF for all articles
-            const li = document.createElement('li');
-            const a = document.createElement('a');
-            a.href = `/download/${data.filename}`;
-            if (data.articles && data.articles.length > 1) {
-                a.textContent = `Download: ${data.articles.length} articles combined`;
-            } else if (data.articles && data.articles.length === 1) {
-                a.textContent = `Download: ${data.articles[0].title}`;
-            } else {
-                a.textContent = `Download PDF`;
+        // Process SSE stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        progressDetails.style.display = 'block';
+
+        while (true) {
+            const {value, done} = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, {stream: true});
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();  // Keep incomplete data
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = JSON.parse(line.slice(6));
+                    console.log('SSE event:', data);
+
+                    if (data.type === 'start') {
+                        statusText.textContent = `Processing ${data.total} link(s)...`;
+                        progressInfo.textContent = `0 / ${data.total}`;
+                    } else if (data.type === 'progress') {
+                        const percent = (data.current / data.total) * 100;
+                        progressBar.style.width = `${percent}%`;
+                        progressInfo.textContent = `${data.current} / ${data.total}`;
+
+                        // Update or add list item
+                        let li = document.getElementById(`progress-${data.current}`);
+                        if (!li) {
+                            li = document.createElement('li');
+                            li.id = `progress-${data.current}`;
+                            progressList.appendChild(li);
+                        }
+
+                        if (data.status === 'processing') {
+                            li.className = 'progress-item processing';
+                            li.innerHTML = `<span class="status-icon">⏳</span> ${data.url}`;
+                            statusText.textContent = `Processing: ${data.url.substring(0, 50)}...`;
+                        } else if (data.status === 'success') {
+                            li.className = 'progress-item success';
+                            li.innerHTML = `<span class="status-icon">✓</span> ${data.title || data.url}`;
+                        } else if (data.status === 'failed') {
+                            li.className = 'progress-item failed';
+                            li.innerHTML = `<span class="status-icon">✗</span> ${data.url}<br><small class="error-detail">${data.error}</small>`;
+                        }
+                    } else if (data.type === 'generating_pdf') {
+                        statusText.textContent = 'Generating PDF...';
+                        progressBar.style.width = '100%';
+                    } else if (data.type === 'complete') {
+                        statusDiv.style.display = 'none';
+                        resultsDiv.style.display = 'block';
+
+                        const li = document.createElement('li');
+                        const a = document.createElement('a');
+                        a.href = `/download/${data.filename}`;
+                        if (data.summary) {
+                            a.textContent = `Download PDF (${data.summary.succeeded} article${data.summary.succeeded !== 1 ? 's' : ''})`;
+                        } else {
+                            a.textContent = 'Download PDF';
+                        }
+                        li.appendChild(a);
+                        downloadList.appendChild(li);
+
+                        // Show summary
+                        if (data.summary) {
+                            const summaryLi = document.createElement('li');
+                            summaryLi.className = 'summary';
+                            summaryLi.textContent = `Summary: ${data.summary.succeeded} succeeded, ${data.summary.failed} failed of ${data.summary.total} total`;
+                            downloadList.appendChild(summaryLi);
+                        }
+
+                        // Show warnings for failed URLs
+                        if (data.errors && data.errors.length > 0) {
+                            warningDiv.style.display = 'block';
+                            const failedUrls = data.errors.map(e => `${e.url}:\n  ${e.error}`).join('\n\n');
+                            warningText.textContent = `${data.errors.length} URL(s) failed (may be rate limited - try again with fewer URLs):\n\n${failedUrls}`;
+                        }
+
+                        // Send browser notification
+                        const notifyBody = data.summary
+                            ? `${data.summary.succeeded} article${data.summary.succeeded !== 1 ? 's' : ''} converted`
+                            : 'Your PDF is ready';
+                        sendNotification('PDF Ready!', notifyBody);
+                    } else if (data.type === 'error') {
+                        statusDiv.style.display = 'none';
+                        errorDiv.style.display = 'block';
+                        errorText.textContent = data.error;
+                        if (data.details) {
+                            errorText.textContent += '\n\nDetails:\n' + data.details.map(d => `${d.url}: ${d.error}`).join('\n');
+                        }
+                    }
+                }
             }
-            li.appendChild(a);
-            downloadList.appendChild(li);
-        } else if (data.error) {
-            errorDiv.style.display = 'block';
-            errorText.textContent = data.error;
-            if (data.setup_url) {
-                const link = document.createElement('a');
-                link.href = data.setup_url;
-                link.textContent = ' Go to setup →';
-                errorText.appendChild(link);
-            }
-        } else if (data.message) {
-            // Status message (processing)
-            errorDiv.style.display = 'block';
-            errorText.textContent = data.message + '\n\nNote: Full conversion not yet implemented. This is a placeholder response.';
-        } else {
-            errorDiv.style.display = 'block';
-            errorText.textContent = 'Unexpected response: ' + JSON.stringify(data, null, 2);
         }
     } catch (err) {
         console.error('Fetch error:', err);
@@ -140,7 +269,9 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
         errorText.textContent = 'Failed to connect to server: ' + err.message;
     } finally {
         submitBtn.disabled = false;
-        statusDiv.style.display = 'none';
+        if (statusDiv.style.display !== 'none') {
+            statusDiv.style.display = 'none';
+        }
     }
 });
 </script>

@@ -1,11 +1,17 @@
 """API routes blueprint."""
 
+import json as json_module
+import time
+
 import structlog
-from flask import Blueprint, jsonify, request, current_app
+from flask import Blueprint, Response, jsonify, request, current_app
 from ..config import get_config
 from ..pdf.generator import generate_combined_pdf
 from ..sources import get_source_for_url
 from ..sources.twitter_playwright import TwitterPlaywrightSource
+
+# Delay between processing URLs to avoid rate limiting (seconds)
+URL_PROCESSING_DELAY = 2.0
 
 log = structlog.get_logger()
 
@@ -81,7 +87,11 @@ def convert():
     articles = []
     errors = []
 
-    for url, source in sources_for_urls:
+    for i, (url, source) in enumerate(sources_for_urls):
+        # Add delay between requests to avoid rate limiting (skip first)
+        if i > 0 and isinstance(source, TwitterPlaywrightSource):
+            time.sleep(URL_PROCESSING_DELAY)
+
         try:
             log.info("processing_url", url=url, source_type=type(source).__name__)
 
@@ -111,18 +121,25 @@ def convert():
                 "url": a["url"],
                 "title": a["article"].title,
                 "author": a["article"].author,
+                "status": "success",
             }
             for a in articles
         ]
 
         log.info("combined_pdf_generated", pdf=pdf_path.name, article_count=len(articles))
 
+        total_count = len(articles) + len(errors)
         return jsonify(
             {
                 "success": True,
                 "filename": pdf_path.name,
                 "articles": results,
                 "errors": errors if errors else None,
+                "summary": {
+                    "total": total_count,
+                    "succeeded": len(articles),
+                    "failed": len(errors),
+                },
             }
         )
     except Exception as e:
@@ -245,3 +262,125 @@ def save_cookies():
     log.info("cookies_saved")
 
     return jsonify({"success": True, "message": "Cookies saved successfully"})
+
+
+@api_bp.route("/convert/stream", methods=["POST"])
+def convert_stream():
+    """POST /api/convert/stream - Process links with streaming progress updates."""
+    run_async = _get_run_async()
+
+    # Handle both JSON and form data
+    if request.is_json:
+        data = request.get_json() or {}
+        links = data.get("links", [])
+    else:
+        links_text = request.form.get("links", "")
+        links = [line.strip() for line in links_text.split("\n") if line.strip()]
+
+    if not links:
+        return jsonify({"error": "No links provided"}), 400
+
+    config = get_config()
+    cookies = config.load_cookies()
+
+    # Validate URLs and find sources
+    sources_for_urls = []
+    unsupported_urls = []
+
+    for url in links:
+        source = get_source_for_url(url, cookies=cookies)
+        if source:
+            sources_for_urls.append((url, source))
+        else:
+            unsupported_urls.append(url)
+
+    if unsupported_urls:
+        return (
+            jsonify({"error": f"Unsupported URLs: {', '.join(unsupported_urls)}"}),
+            400,
+        )
+
+    # Check if Twitter URLs need cookies
+    twitter_urls = [
+        url for url, src in sources_for_urls if isinstance(src, TwitterPlaywrightSource)
+    ]
+    if twitter_urls and not cookies:
+        return (
+            jsonify(
+                {
+                    "error": f"Twitter cookies required for: {', '.join(twitter_urls)}",
+                    "setup_url": "/setup",
+                }
+            ),
+            400,
+        )
+
+    def generate():
+        """Generator function for SSE stream."""
+        articles = []
+        errors = []
+        total = len(sources_for_urls)
+
+        # Send initial progress
+        yield f"data: {json_module.dumps({'type': 'start', 'total': total})}\n\n"
+
+        for i, (url, source) in enumerate(sources_for_urls, 1):
+            # Add delay between requests to avoid rate limiting (skip first)
+            if i > 1 and isinstance(source, TwitterPlaywrightSource):
+                time.sleep(URL_PROCESSING_DELAY)
+
+            # Send progress update
+            yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing'})}\n\n"
+
+            try:
+                log.info("processing_url_stream", url=url, progress=f"{i}/{total}")
+                article = run_async(source.fetch(url))
+                articles.append({"url": url, "article": article})
+
+                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
+
+            except Exception as e:
+                log.error("url_processing_failed_stream", url=url, error=str(e))
+                errors.append({"url": url, "error": str(e)})
+
+                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': str(e)})}\n\n"
+
+        # Generate PDF if we have articles
+        if articles:
+            try:
+                yield f"data: {json_module.dumps({'type': 'generating_pdf'})}\n\n"
+
+                article_objects = [a["article"] for a in articles]
+                pdf_path = generate_combined_pdf(article_objects)
+
+                results = [
+                    {
+                        "url": a["url"],
+                        "title": a["article"].title,
+                        "author": a["article"].author,
+                        "status": "success",
+                    }
+                    for a in articles
+                ]
+
+                final_result = {
+                    "type": "complete",
+                    "success": True,
+                    "filename": pdf_path.name,
+                    "articles": results,
+                    "errors": errors if errors else None,
+                    "summary": {
+                        "total": total,
+                        "succeeded": len(articles),
+                        "failed": len(errors),
+                    },
+                }
+                yield f"data: {json_module.dumps(final_result)}\n\n"
+
+            except Exception as e:
+                yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {str(e)}'})}\n\n"
+        else:
+            error_details = [{"url": e["url"], "error": e["error"]} for e in errors]
+            yield f"data: {json_module.dumps({'type': 'error', 'error': 'All conversions failed', 'details': error_details})}\n\n"
+
+    return Response(generate(), mimetype="text/event-stream")

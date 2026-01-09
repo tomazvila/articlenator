@@ -28,6 +28,9 @@ class TwitterPlaywrightSource(ContentSource):
     # Maximum title length
     MAX_TITLE_LENGTH = 100
 
+    # Maximum retry attempts for page load failures
+    MAX_LOAD_RETRIES = 5
+
     def __init__(self, cookies: str | None = None) -> None:
         """Initialize Twitter source with cookies.
 
@@ -121,55 +124,80 @@ class TwitterPlaywrightSource(ContentSource):
             except Exception:
                 log.warning(
                     "home_feed_not_loaded",
-                    hint="Cookies may be expired - replies won't be available",
+                    hint="Session not ready - may be rate limited or slow to load",
                 )
 
-            # Now use React Router navigation by manipulating history
-            # This simulates clicking a link rather than direct navigation
-            await page.evaluate(f"""
-                window.history.pushState({{}}, '', '{url}');
-                window.dispatchEvent(new PopStateEvent('popstate'));
-            """)
-            await asyncio.sleep(3)
+            # Retry loop for navigation and content loading
+            last_error = None
+            for attempt in range(1, self.MAX_LOAD_RETRIES + 1):
+                try:
+                    # Now use React Router navigation by manipulating history
+                    # This simulates clicking a link rather than direct navigation
+                    await page.evaluate(f"""
+                        window.history.pushState({{}}, '', '{url}');
+                        window.dispatchEvent(new PopStateEvent('popstate'));
+                    """)
+                    await asyncio.sleep(3)
 
-            # If that didn't work, try clicking the URL in address bar style
-            # by using goto but with a referrer
-            if page.url != url:
-                await page.goto(
-                    url,
-                    wait_until="domcontentloaded",
-                    timeout=60000,
-                    referer="https://x.com/home",
-                )
-                await asyncio.sleep(3)
+                    # If that didn't work, try clicking the URL in address bar style
+                    # by using goto but with a referrer
+                    if page.url != url:
+                        await page.goto(
+                            url,
+                            wait_until="domcontentloaded",
+                            timeout=60000,
+                            referer="https://x.com/home",
+                        )
+                        await asyncio.sleep(3)
 
-            # Take screenshot for debugging
-            await page.screenshot(path="/tmp/twitter_nav_test.png")
-            log.info("navigation_complete", url=page.url, title=await page.title())
+                    # Take screenshot for debugging
+                    await page.screenshot(path="/tmp/twitter_nav_test.png")
+                    log.info(
+                        "navigation_complete",
+                        url=page.url,
+                        title=await page.title(),
+                        attempt=attempt,
+                    )
 
-            # Wait for tweet content to load (regular tweet OR article)
-            try:
-                # Try to find either a regular tweet or an article
-                await page.wait_for_selector(
-                    '[data-testid="tweetText"], [data-testid="longformRichTextComponent"]',
-                    timeout=30000,
-                )
-            except Exception as wait_error:
-                # Save screenshot for debugging
-                screenshot_path = "/tmp/twitter_debug.png"
-                await page.screenshot(path=screenshot_path, full_page=True)
-                # Also save HTML for debugging
-                html_path = "/tmp/twitter_debug.html"
-                with open(html_path, "w") as f:
-                    f.write(await page.content())
-                log.error(
-                    "tweet_not_found",
-                    screenshot=screenshot_path,
-                    html_path=html_path,
-                    page_url=page.url,
-                    page_title=await page.title(),
-                )
-                raise wait_error
+                    # Wait for tweet content to load (regular tweet OR article)
+                    await page.wait_for_selector(
+                        '[data-testid="tweetText"], [data-testid="longformRichTextComponent"]',
+                        timeout=30000,
+                    )
+                    # Success - break out of retry loop
+                    break
+
+                except Exception as e:
+                    last_error = e
+                    log.warning(
+                        "tweet_load_failed",
+                        attempt=attempt,
+                        max_attempts=self.MAX_LOAD_RETRIES,
+                        error=str(e),
+                        url=url,
+                    )
+
+                    if attempt < self.MAX_LOAD_RETRIES:
+                        # Reload the page and try again
+                        log.info("retrying_tweet_load", attempt=attempt + 1, url=url)
+                        await page.reload(wait_until="domcontentloaded", timeout=30000)
+                        await asyncio.sleep(3)
+                    else:
+                        # Final attempt failed - save debug info and raise
+                        screenshot_path = "/tmp/twitter_debug.png"
+                        await page.screenshot(path=screenshot_path, full_page=True)
+                        html_path = "/tmp/twitter_debug.html"
+                        with open(html_path, "w") as f:
+                            f.write(await page.content())
+                        log.error(
+                            "tweet_not_found_after_retries",
+                            screenshot=screenshot_path,
+                            html_path=html_path,
+                            page_url=page.url,
+                            page_title=await page.title(),
+                            attempts=self.MAX_LOAD_RETRIES,
+                        )
+                        raise last_error
 
             # Extract tweet data
             tweet_data = await self._extract_tweet_data(page, username, is_authenticated)

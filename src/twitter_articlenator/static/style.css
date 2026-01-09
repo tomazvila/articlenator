@@ -225,6 +225,24 @@ button.secondary:hover {
     border: 1px solid var(--red);
 }
 
+.warning-message {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: rgba(224, 175, 104, 0.15);
+    color: var(--yellow);
+    border-radius: 4px;
+    border: 1px solid var(--yellow);
+}
+
+.warning-message pre {
+    margin-top: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    color: var(--fg);
+}
+
 .error-message pre {
     margin-top: 10px;
     white-space: pre-wrap;
@@ -258,6 +276,91 @@ button.secondary:hover {
 
 @keyframes spin {
     to { transform: rotate(360deg); }
+}
+
+/* Progress section */
+.progress-section {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+}
+
+.progress-bar-container {
+    height: 8px;
+    background-color: var(--bg-light);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--blue), var(--cyan));
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.progress-info {
+    text-align: center;
+    color: var(--fg-dark);
+    font-size: 14px;
+    margin-bottom: 15px;
+}
+
+.progress-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.progress-item {
+    padding: 8px 10px;
+    margin-bottom: 5px;
+    border-radius: 4px;
+    font-size: 13px;
+    word-break: break-all;
+}
+
+.progress-item .status-icon {
+    margin-right: 8px;
+}
+
+.progress-item.processing {
+    background-color: rgba(122, 162, 247, 0.15);
+    color: var(--blue);
+    border-left: 3px solid var(--blue);
+}
+
+.progress-item.success {
+    background-color: rgba(158, 206, 106, 0.1);
+    color: var(--green);
+    border-left: 3px solid var(--green);
+}
+
+.progress-item.failed {
+    background-color: rgba(247, 118, 142, 0.1);
+    color: var(--red);
+    border-left: 3px solid var(--red);
+}
+
+.progress-item .error-detail {
+    display: block;
+    margin-top: 4px;
+    margin-left: 24px;
+    color: var(--fg-dark);
+    font-size: 11px;
+}
+
+.results-section .summary {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(158, 206, 106, 0.2);
+    color: var(--fg-dark);
+    font-size: 13px;
 }
 
 /* Disabled button */
