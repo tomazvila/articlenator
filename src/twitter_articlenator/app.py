@@ -12,6 +12,7 @@ from flask import Flask
 from .config import get_config
 from .logging import configure_logging
 from .routes import api_bp, pages_bp
+from .version import get_git_commit, get_version_string
 
 log = structlog.get_logger()
 
@@ -113,6 +114,15 @@ def create_app(test_config: dict | None = None) -> Flask:
         app.config.update(test_config)
 
     log.info("app_created", testing=app.config.get("TESTING", False))
+
+    # Inject version into all templates
+    @app.context_processor
+    def inject_version():
+        """Make version info available to all templates."""
+        return {
+            "app_version": get_version_string(),
+            "git_commit": get_git_commit(),
+        }
 
     # Register security headers
     @app.after_request

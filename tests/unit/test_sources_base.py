@@ -3,7 +3,6 @@
 from datetime import datetime
 
 
-
 class TestArticle:
     """Tests for the Article dataclass."""
 
@@ -78,6 +77,7 @@ class TestContentSource:
 
         class ValidSource:
             """A class that implements the ContentSource protocol."""
+
             def can_handle(self, url: str) -> bool:
                 return True
 
@@ -100,6 +100,7 @@ class TestContentSource:
 
         class IncompleteSource:
             """A class missing the fetch method."""
+
             def can_handle(self, url: str) -> bool:
                 return True
 

@@ -327,6 +327,13 @@ footer {
     font-size: 14px;
 }
 
+footer .version {
+    font-size: 11px;
+    color: var(--bg-light);
+    margin-top: 5px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
 /* Cookie status indicator */
 .cookie-status {
     display: inline-flex;

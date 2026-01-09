@@ -130,18 +130,14 @@ class TestConvertRoute:
 
     def test_convert_validates_urls(self, client):
         """Test /api/convert validates URLs."""
-        response = client.post(
-            "/api/convert", json={"links": ["ftp://invalid-protocol.com/file"]}
-        )
+        response = client.post("/api/convert", json={"links": ["ftp://invalid-protocol.com/file"]})
         # Should return error for unsupported URL scheme
         assert response.status_code == 400
 
     def test_convert_accepts_valid_twitter_url(self, client):
         """Test /api/convert accepts valid Twitter URL format."""
         # This will fail without cookies, but should not fail URL validation
-        response = client.post(
-            "/api/convert", json={"links": ["https://x.com/user/status/123"]}
-        )
+        response = client.post("/api/convert", json={"links": ["https://x.com/user/status/123"]})
         # Should fail because no cookies, not because of URL validation
         data = json.loads(response.data)
         # Either 400 (no cookies) or a message about cookies
@@ -149,9 +145,7 @@ class TestConvertRoute:
 
     def test_convert_returns_json(self, client):
         """Test /api/convert returns JSON response."""
-        response = client.post(
-            "/api/convert", json={"links": ["https://x.com/user/status/123"]}
-        )
+        response = client.post("/api/convert", json={"links": ["https://x.com/user/status/123"]})
         assert response.content_type == "application/json"
 
 
@@ -233,7 +227,9 @@ class TestCookiesCurrentRoute:
 
     def test_current_returns_masked_cookies(self, client):
         """Test current masks cookie values for security."""
-        client.post("/api/cookies", json={"cookies": "auth_token=secretvalue123456; ct0=anothersecret789"})
+        client.post(
+            "/api/cookies", json={"cookies": "auth_token=secretvalue123456; ct0=anothersecret789"}
+        )
 
         response = client.get("/api/cookies/current")
         assert response.status_code == 200
@@ -258,9 +254,7 @@ class TestCookiesRoute:
 
     def test_save_cookies_stores_cookies(self, client, tmp_path):
         """Test POST /api/cookies stores cookies."""
-        response = client.post(
-            "/api/cookies", json={"cookies": "auth_token=abc123; ct0=xyz789"}
-        )
+        response = client.post("/api/cookies", json={"cookies": "auth_token=abc123; ct0=xyz789"})
         assert response.status_code == 200
 
     def test_save_cookies_requires_cookies_field(self, client):
@@ -275,9 +269,7 @@ class TestCookiesRoute:
 
     def test_save_cookies_returns_success_message(self, client):
         """Test POST /api/cookies returns success message."""
-        response = client.post(
-            "/api/cookies", json={"cookies": "auth_token=test; ct0=test"}
-        )
+        response = client.post("/api/cookies", json={"cookies": "auth_token=test; ct0=test"})
         data = json.loads(response.data)
         assert "success" in str(data).lower() or "saved" in str(data).lower()
 
@@ -351,7 +343,7 @@ class TestFormDataHandling:
         response = client.post(
             "/api/convert",
             data={"links": "https://x.com/user/status/123"},
-            content_type="application/x-www-form-urlencoded"
+            content_type="application/x-www-form-urlencoded",
         )
         # Should fail because no cookies, not because of form parsing
         assert response.status_code in [400, 500]
@@ -363,7 +355,7 @@ class TestFormDataHandling:
         response = client.post(
             "/api/convert",
             data={"links": "https://x.com/user/status/123\nhttps://x.com/user/status/456"},
-            content_type="application/x-www-form-urlencoded"
+            content_type="application/x-www-form-urlencoded",
         )
         # Should process both links (fail on cookies)
         assert response.status_code in [400, 500]
@@ -373,7 +365,7 @@ class TestFormDataHandling:
         response = client.post(
             "/api/cookies",
             data={"cookies": "auth_token=test; ct0=test"},
-            content_type="application/x-www-form-urlencoded"
+            content_type="application/x-www-form-urlencoded",
         )
         assert response.status_code == 200
 

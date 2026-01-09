@@ -11,6 +11,8 @@
       dockerSystems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
       isDockerSystem = system: builtins.elem system dockerSystems;
+      # Git commit hash (8 chars) - uses shortRev if available, "dirty" otherwise
+      gitCommit = if self ? shortRev then self.shortRev else "dirty";
     in {
       packages = forAllSystems (system:
         let
@@ -134,6 +136,7 @@
                   Env = [
                     "PYTHONUNBUFFERED=1"
                     "TWITTER_ARTICLENATOR_JSON_LOGGING=true"
+                    "GIT_COMMIT=${gitCommit}"
                   ];
                   ExposedPorts = {
                     "5001/tcp" = {};
@@ -145,6 +148,7 @@
                   Labels = {
                     "org.opencontainers.image.source" = "https://github.com/tomazvila/articlenator";
                     "org.opencontainers.image.description" = "Twitter Article to PDF Converter";
+                    "org.opencontainers.image.revision" = gitCommit;
                   };
                 };
               };

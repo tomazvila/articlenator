@@ -79,9 +79,7 @@ class TestLogOutput:
         processors = config.get("processors", [])
 
         # Should have TimeStamper processor
-        has_timestamper = any(
-            isinstance(p, structlog.processors.TimeStamper) for p in processors
-        )
+        has_timestamper = any(isinstance(p, structlog.processors.TimeStamper) for p in processors)
         assert has_timestamper
 
     def test_json_log_has_level(self):
@@ -106,8 +104,7 @@ class TestLogOutput:
 
         # Should have CallsiteParameterAdder processor
         has_callsite = any(
-            isinstance(p, structlog.processors.CallsiteParameterAdder)
-            for p in processors
+            isinstance(p, structlog.processors.CallsiteParameterAdder) for p in processors
         )
         assert has_callsite
 

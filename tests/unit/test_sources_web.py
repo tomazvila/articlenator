@@ -102,7 +102,7 @@ class TestExtractTitle:
         from bs4 import BeautifulSoup
 
         source = WebArticleSource()
-        html = '<html><body><h1>Article Title</h1></body></html>'
+        html = "<html><body><h1>Article Title</h1></body></html>"
         soup = BeautifulSoup(html, "lxml")
 
         title = source._extract_title(soup, "https://example.com")
@@ -114,7 +114,7 @@ class TestExtractTitle:
         from bs4 import BeautifulSoup
 
         source = WebArticleSource()
-        html = '<html><head><title>Page Title</title></head></html>'
+        html = "<html><head><title>Page Title</title></head></html>"
         soup = BeautifulSoup(html, "lxml")
 
         title = source._extract_title(soup, "https://example.com")
@@ -126,7 +126,7 @@ class TestExtractTitle:
         from bs4 import BeautifulSoup
 
         source = WebArticleSource()
-        html = '<html><body><p>No title here</p></body></html>'
+        html = "<html><body><p>No title here</p></body></html>"
         soup = BeautifulSoup(html, "lxml")
 
         title = source._extract_title(soup, "https://example.com/article")
@@ -178,7 +178,7 @@ class TestExtractAuthor:
         from bs4 import BeautifulSoup
 
         source = WebArticleSource()
-        html = '<html><body><p>No author here</p></body></html>'
+        html = "<html><body><p>No author here</p></body></html>"
         soup = BeautifulSoup(html, "lxml")
 
         author = source._extract_author(soup, "https://blog.example.com/post")
@@ -270,7 +270,7 @@ class TestExtractContent:
         from bs4 import BeautifulSoup
 
         source = WebArticleSource()
-        html = '<html><body><article><p>Article content here.</p></article></body></html>'
+        html = "<html><body><article><p>Article content here.</p></article></body></html>"
         soup = BeautifulSoup(html, "lxml")
 
         content = source._extract_content(soup)
@@ -282,7 +282,7 @@ class TestExtractContent:
         from bs4 import BeautifulSoup
 
         source = WebArticleSource()
-        html = '<html><body><main><p>Main content here.</p></main></body></html>'
+        html = "<html><body><main><p>Main content here.</p></main></body></html>"
         soup = BeautifulSoup(html, "lxml")
 
         content = source._extract_content(soup)
@@ -307,7 +307,7 @@ class TestExtractContent:
         from bs4 import BeautifulSoup
 
         source = WebArticleSource()
-        html = '<html><body><nav>Menu</nav><article><p>Article content.</p></article></body></html>'
+        html = "<html><body><nav>Menu</nav><article><p>Article content.</p></article></body></html>"
         soup = BeautifulSoup(html, "lxml")
 
         content = source._extract_content(soup)
@@ -319,7 +319,7 @@ class TestExtractContent:
         from bs4 import BeautifulSoup
 
         source = WebArticleSource()
-        html = '<html><body><p>Body content that is long enough to be considered valid content for an article.</p></body></html>'
+        html = "<html><body><p>Body content that is long enough to be considered valid content for an article.</p></body></html>"
         soup = BeautifulSoup(html, "lxml")
 
         content = source._extract_content(soup)
@@ -335,7 +335,7 @@ class TestCleanContent:
         from bs4 import BeautifulSoup
 
         source = WebArticleSource()
-        html = '<article><p>Content</p><p></p><p>   </p></article>'
+        html = "<article><p>Content</p><p></p><p>   </p></article>"
         soup = BeautifulSoup(html, "lxml")
         element = soup.find("article")
 

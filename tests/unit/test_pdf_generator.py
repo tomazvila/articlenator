@@ -107,6 +107,7 @@ class TestGeneratePdf:
 
         # Clear the singleton to pick up new env var
         import twitter_articlenator.config as config_module
+
         config_module._config_instance = None
 
         pdf_path = generate_pdf(sample_article)

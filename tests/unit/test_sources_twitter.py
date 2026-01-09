@@ -290,7 +290,7 @@ class TestFetch:
 
         with patch(
             "twitter_articlenator.sources.twitter_playwright.get_browser_pool",
-            return_value=mock_pool
+            return_value=mock_pool,
         ):
             # Mock _extract_tweet_data
             with patch.object(
@@ -326,8 +326,7 @@ class TestSourceRegistry:
         from twitter_articlenator.sources import get_source_for_url, TwitterPlaywrightSource
 
         source = get_source_for_url(
-            "https://x.com/user/status/123",
-            cookies="auth_token=test; ct0=test"
+            "https://x.com/user/status/123", cookies="auth_token=test; ct0=test"
         )
         assert isinstance(source, TwitterPlaywrightSource)
         assert source._cookies_str == "auth_token=test; ct0=test"

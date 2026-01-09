@@ -68,7 +68,7 @@ class TestBrowserPoolAcquireRelease:
         mock_playwright = AsyncMock()
         mock_playwright.chromium.launch = AsyncMock(return_value=mock_browser)
 
-        with patch.object(pool, '_playwright', mock_playwright):
+        with patch.object(pool, "_playwright", mock_playwright):
             pool._initialized = True
 
             browser = await pool.acquire()
@@ -134,7 +134,7 @@ class TestBrowserPoolGetContext:
         mock_playwright = AsyncMock()
         mock_playwright.chromium.launch = AsyncMock(return_value=mock_browser)
 
-        with patch.object(pool, '_playwright', mock_playwright):
+        with patch.object(pool, "_playwright", mock_playwright):
             pool._initialized = True
 
             async with pool.get_context() as context:
@@ -164,7 +164,7 @@ class TestBrowserPoolGetContext:
 
         cookies = [{"name": "test", "value": "value", "domain": ".x.com", "path": "/"}]
 
-        with patch.object(pool, '_playwright', mock_playwright):
+        with patch.object(pool, "_playwright", mock_playwright):
             pool._initialized = True
 
             async with pool.get_context(cookies=cookies):

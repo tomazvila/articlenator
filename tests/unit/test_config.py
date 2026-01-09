@@ -3,7 +3,6 @@
 from pathlib import Path
 
 
-
 class TestConfigProperties:
     """Tests for Config class properties."""
 
@@ -58,9 +57,7 @@ class TestConfigDefaults:
         from twitter_articlenator.config import Config
 
         config = Config()
-        assert "Downloads" in str(config.output_dir) or "twitter-articles" in str(
-            config.output_dir
-        )
+        assert "Downloads" in str(config.output_dir) or "twitter-articles" in str(config.output_dir)
 
     def test_config_default_log_level(self):
         """Test default log level is INFO."""
@@ -110,9 +107,7 @@ class TestCookieManagement:
         from twitter_articlenator.config import Config
 
         # Point to non-existent file
-        monkeypatch.setenv(
-            "TWITTER_ARTICLENATOR_CONFIG_DIR", str(tmp_path / "nonexistent")
-        )
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_CONFIG_DIR", str(tmp_path / "nonexistent"))
 
         config = Config()
         result = config.load_cookies()
@@ -212,7 +207,10 @@ auth_token    d1badbeaafb428e17244c00a3fed7d16340a9119    .x.com    /    19/06/2
 
         result = config._parse_cookie_input(devtools_input)
 
-        assert "ct0=4659f60d187797c7388366c349d729a0261421c7467e57203b6b82816d828f20be6caf9e171d42e046b017518f31b08afd12e59e177f2c8efbb09ef1dae86d4ff2b4ac835beff6f8bb04f69599528100" in result
+        assert (
+            "ct0=4659f60d187797c7388366c349d729a0261421c7467e57203b6b82816d828f20be6caf9e171d42e046b017518f31b08afd12e59e177f2c8efbb09ef1dae86d4ff2b4ac835beff6f8bb04f69599528100"
+            in result
+        )
         assert "auth_token=d1badbeaafb428e17244c00a3fed7d16340a9119" in result
 
     def test_parse_devtools_ignores_irrelevant_cookies(self):
@@ -250,7 +248,9 @@ auth_token    d1badbeaafb428e17244c00a3fed7d16340a9119    .x.com    /    19/06/2
         config = Config()
 
         # Save DevTools format
-        devtools_input = "ct0    myct0value    .x.com    /\nauth_token    myauthtoken    .x.com    /"
+        devtools_input = (
+            "ct0    myct0value    .x.com    /\nauth_token    myauthtoken    .x.com    /"
+        )
         config.save_cookies(devtools_input)
 
         # Load should return normalized format

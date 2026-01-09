@@ -8,7 +8,6 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-
 class TestAsyncEventLoopIssues:
     """Tests for event loop isolation between requests."""
 
@@ -29,7 +28,12 @@ class TestAsyncEventLoopIssues:
     def test_cookie_status_then_test(self, client):
         """Test checking status then testing cookies doesn't cause event loop issues."""
         # Save some cookies first (long enough to pass validation)
-        client.post("/api/cookies", json={"cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"})
+        client.post(
+            "/api/cookies",
+            json={
+                "cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"
+            },
+        )
 
         # Check status (creates one async call)
         response1 = client.get("/api/cookies/status")
@@ -48,7 +52,12 @@ class TestAsyncEventLoopIssues:
         from contextlib import asynccontextmanager
 
         # Save cookies (long enough to pass validation)
-        client.post("/api/cookies", json={"cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"})
+        client.post(
+            "/api/cookies",
+            json={
+                "cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"
+            },
+        )
 
         # Check status first
         r1 = client.get("/api/cookies/status")
@@ -79,13 +88,13 @@ class TestAsyncEventLoopIssues:
         # Mock the browser pool
         with patch(
             "twitter_articlenator.sources.twitter_playwright.get_browser_pool",
-            return_value=mock_pool
+            return_value=mock_pool,
         ):
             # Mock the _extract_tweet_data method
             with patch(
                 "twitter_articlenator.sources.twitter_playwright.TwitterPlaywrightSource._extract_tweet_data",
                 new_callable=AsyncMock,
-                return_value=mock_tweet_data
+                return_value=mock_tweet_data,
             ):
                 # Now try to convert
                 r2 = client.post("/api/convert", json={"links": ["https://x.com/user/status/123"]})
@@ -100,7 +109,12 @@ class TestAsyncEventLoopIssues:
         from contextlib import asynccontextmanager
 
         # Save cookies (long enough to pass validation)
-        client.post("/api/cookies", json={"cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"})
+        client.post(
+            "/api/cookies",
+            json={
+                "cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"
+            },
+        )
 
         mock_tweet_data = {
             "author": "testuser",
@@ -127,12 +141,12 @@ class TestAsyncEventLoopIssues:
         # Mock the browser pool
         with patch(
             "twitter_articlenator.sources.twitter_playwright.get_browser_pool",
-            return_value=mock_pool
+            return_value=mock_pool,
         ):
             with patch(
                 "twitter_articlenator.sources.twitter_playwright.TwitterPlaywrightSource._extract_tweet_data",
                 new_callable=AsyncMock,
-                return_value=mock_tweet_data
+                return_value=mock_tweet_data,
             ):
                 # First conversion attempt
                 r1 = client.post("/api/convert", json={"links": ["https://x.com/user/status/123"]})
@@ -148,7 +162,12 @@ class TestAsyncEventLoopIssues:
 
     def test_interleaved_operations(self, client):
         """Test interleaved async operations don't conflict."""
-        client.post("/api/cookies", json={"cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"})
+        client.post(
+            "/api/cookies",
+            json={
+                "cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"
+            },
+        )
 
         # Interleave different async operations
         for _ in range(3):
@@ -166,6 +185,7 @@ class TestCookiesCurrentEndpoint:
         """Test response when no cookies are configured."""
         # Use a fresh config dir to ensure no cookies
         import twitter_articlenator.config as config_module
+
         config_module._config_instance = None
         monkeypatch.setenv("TWITTER_ARTICLENATOR_CONFIG_DIR", str(tmp_path / "fresh_config"))
 
@@ -179,9 +199,9 @@ class TestCookiesCurrentEndpoint:
     def test_cookies_are_masked(self, client):
         """Test that cookie values are properly masked."""
         # Save cookies with known values
-        client.post("/api/cookies", json={
-            "cookies": "auth_token=abcdefghijklmnop; ct0=1234567890abcdef"
-        })
+        client.post(
+            "/api/cookies", json={"cookies": "auth_token=abcdefghijklmnop; ct0=1234567890abcdef"}
+        )
 
         response = client.get("/api/cookies/current")
         assert response.status_code == 200
@@ -228,9 +248,12 @@ class TestCookieStatusValidation:
     def test_status_with_valid_cookies(self, client):
         """Test status shows working with properly formatted cookies."""
         # Long enough cookies to pass validation
-        client.post("/api/cookies", json={
-            "cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"
-        })
+        client.post(
+            "/api/cookies",
+            json={
+                "cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"
+            },
+        )
 
         response = client.get("/api/cookies/status?test=true")
         assert response.status_code == 200
@@ -240,9 +263,9 @@ class TestCookieStatusValidation:
 
     def test_status_with_short_auth_token(self, client):
         """Test status shows invalid with too short auth_token."""
-        client.post("/api/cookies", json={
-            "cookies": "auth_token=short; ct0=abcdefghijklmnopqrstuvwxyz"
-        })
+        client.post(
+            "/api/cookies", json={"cookies": "auth_token=short; ct0=abcdefghijklmnopqrstuvwxyz"}
+        )
 
         response = client.get("/api/cookies/status?test=true")
         assert response.status_code == 200
@@ -253,9 +276,7 @@ class TestCookieStatusValidation:
 
     def test_status_with_missing_ct0(self, client):
         """Test status shows invalid with missing ct0."""
-        client.post("/api/cookies", json={
-            "cookies": "auth_token=abcdefghijklmnopqrstuvwxyz"
-        })
+        client.post("/api/cookies", json={"cookies": "auth_token=abcdefghijklmnopqrstuvwxyz"})
 
         response = client.get("/api/cookies/status?test=true")
         assert response.status_code == 200
@@ -266,9 +287,12 @@ class TestCookieStatusValidation:
 
     def test_status_without_test_parameter(self, client):
         """Test status without test parameter just checks if configured."""
-        client.post("/api/cookies", json={
-            "cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"
-        })
+        client.post(
+            "/api/cookies",
+            json={
+                "cookies": "auth_token=abcdefghijklmnopqrstuvwxyz; ct0=abcdefghijklmnopqrstuvwxyz"
+            },
+        )
 
         response = client.get("/api/cookies/status")
         assert response.status_code == 200

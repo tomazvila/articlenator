@@ -75,9 +75,7 @@ app.run(host='127.0.0.1', port={port}, debug=False, use_reloader=False)
     if not wait_for_server(port):
         proc.terminate()
         stdout, stderr = proc.communicate(timeout=5)
-        pytest.fail(
-            f"Server failed to start. stdout: {stdout.decode()}, stderr: {stderr.decode()}"
-        )
+        pytest.fail(f"Server failed to start. stdout: {stdout.decode()}, stderr: {stderr.decode()}")
 
     yield {"port": port, "process": proc, "config_dir": config_dir, "output_dir": output_dir}
 
