@@ -113,11 +113,16 @@ class TwitterPlaywrightSource(ContentSource):
             await asyncio.sleep(3)
 
             # Wait for home feed to load (proves we're logged in)
+            is_authenticated = False
             try:
                 await page.wait_for_selector('[data-testid="tweet"]', timeout=10000)
                 log.info("home_feed_loaded")
+                is_authenticated = True
             except Exception:
-                log.warning("home_feed_not_loaded")
+                log.warning(
+                    "home_feed_not_loaded",
+                    hint="Cookies may be expired - replies won't be available",
+                )
 
             # Now use React Router navigation by manipulating history
             # This simulates clicking a link rather than direct navigation
@@ -167,7 +172,7 @@ class TwitterPlaywrightSource(ContentSource):
                 raise wait_error
 
             # Extract tweet data
-            tweet_data = await self._extract_tweet_data(page, username)
+            tweet_data = await self._extract_tweet_data(page, username, is_authenticated)
 
             log.info(
                 "tweet_extracted_playwright",
@@ -177,12 +182,15 @@ class TwitterPlaywrightSource(ContentSource):
 
             return self._create_article(tweet_data, url)
 
-    async def _extract_tweet_data(self, page, expected_username: str) -> dict:
+    async def _extract_tweet_data(
+        self, page, expected_username: str, is_authenticated: bool = False
+    ) -> dict:
         """Extract tweet data from the page including images and replies.
 
         Args:
             page: Playwright page object.
             expected_username: Expected author username.
+            is_authenticated: Whether the session is authenticated (needed for replies).
 
         Returns:
             Dict with tweet data.
@@ -251,10 +259,12 @@ class TwitterPlaywrightSource(ContentSource):
         except Exception:
             pass
 
-        # Extract replies/conversation thread
+        # Extract replies/conversation thread (only if authenticated)
         replies = []
-        if not is_article:
+        if not is_article and is_authenticated:
             replies = await self._extract_replies(page, expected_username)
+        elif not is_article and not is_authenticated:
+            log.info("skipping_replies", reason="not authenticated")
 
         return {
             "author": expected_username,
@@ -305,13 +315,43 @@ class TwitterPlaywrightSource(ContentSource):
         replies = []
 
         try:
-            # Scroll down to load replies
-            for _ in range(3):
-                await page.evaluate("window.scrollBy(0, window.innerHeight)")
+            # Wait for page to stabilize
+            await asyncio.sleep(2)
+
+            # Try to click "Show replies" or similar buttons if they exist
+            try:
+                show_replies = await page.query_selector('text="Show replies"')
+                if show_replies:
+                    await show_replies.click()
+                    await asyncio.sleep(2)
+                    log.info("clicked_show_replies")
+            except Exception:
+                pass
+
+            # Scroll down to load replies - scroll past the main tweet
+            for i in range(5):
+                await page.evaluate("window.scrollBy(0, 800)")
                 await asyncio.sleep(1)
 
-            # Get all tweet elements
-            tweet_elements = await page.query_selector_all('[data-testid="tweet"]')
+            # Wait for any lazy-loaded content
+            await asyncio.sleep(2)
+
+            # Save debug screenshot
+            await page.screenshot(path="/tmp/twitter_replies_debug.png", full_page=True)
+
+            # Get all tweet articles - these contain the actual tweet content
+            tweet_elements = await page.query_selector_all('article[data-testid="tweet"]')
+            log.info("found_tweet_elements", count=len(tweet_elements))
+
+            # Also try to find tweets in the conversation section
+            if len(tweet_elements) <= 1:
+                # Twitter wraps conversation in cellInnerDiv elements
+                cell_elements = await page.query_selector_all(
+                    '[data-testid="cellInnerDiv"] article'
+                )
+                log.info("found_cell_article_elements", count=len(cell_elements))
+                if len(cell_elements) > len(tweet_elements):
+                    tweet_elements = cell_elements
 
             # Skip the first one (main tweet) and process replies
             for i, tweet in enumerate(tweet_elements):

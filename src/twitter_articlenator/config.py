@@ -75,13 +75,91 @@ class Config:
         """Save Twitter cookies to file.
 
         Args:
-            cookies: Cookie string to save.
+            cookies: Cookie string to save (supports multiple formats).
         """
+        # Parse and normalize the cookies
+        normalized = self._parse_cookie_input(cookies)
+
         # Ensure directory exists
         self.cookie_path.parent.mkdir(parents=True, exist_ok=True)
 
-        data = {"cookies": cookies}
+        data = {"cookies": normalized}
         self.cookie_path.write_text(json.dumps(data, indent=2))
+
+    def _parse_cookie_input(self, raw_input: str) -> str:
+        """Parse cookie input from various formats.
+
+        Supports:
+        - Standard format: auth_token=xxx; ct0=yyy
+        - DevTools table copy-paste (tab or space-separated):
+          ct0    value    .x.com    /    date    size    ...
+          auth_token    value    .x.com    /    date    size    ...
+
+        Args:
+            raw_input: Raw cookie input string.
+
+        Returns:
+            Normalized cookie string in format: name=value; name2=value2
+        """
+        raw_input = raw_input.strip()
+
+        # Check if it looks like DevTools format (contains tabs or multiple spaces)
+        has_tabs = "\t" in raw_input
+        has_multi_spaces = "    " in raw_input  # 4+ spaces
+        has_multiple_lines = "\n" in raw_input
+        has_no_equals = "=" not in raw_input.split("\n")[0]  # First line has no =
+
+        # Check for known cookie names at start of lines (DevTools format indicator)
+        lines = raw_input.split("\n")
+        starts_with_cookie_name = any(
+            line.strip().startswith(("ct0", "auth_token", "twid", "guest_id"))
+            for line in lines
+        )
+
+        if starts_with_cookie_name and (has_tabs or has_multi_spaces):
+            return self._parse_devtools_cookies(raw_input)
+
+        if (has_tabs or has_multi_spaces) and has_multiple_lines and has_no_equals:
+            return self._parse_devtools_cookies(raw_input)
+
+        # Already in standard format
+        return raw_input
+
+    def _parse_devtools_cookies(self, raw_input: str) -> str:
+        """Parse cookies from Chrome DevTools copy-paste format.
+
+        Format: name<tab or spaces>value<tab or spaces>domain<tab or spaces>...
+
+        Args:
+            raw_input: Tab or space-separated cookie data.
+
+        Returns:
+            Cookie string in format: name=value; name2=value2
+        """
+        import re
+
+        cookies = {}
+        lines = raw_input.strip().split("\n")
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Split by tab or multiple spaces (2+)
+            parts = re.split(r"\t|  +", line)
+            parts = [p.strip() for p in parts if p.strip()]
+
+            if len(parts) >= 2:
+                name = parts[0]
+                value = parts[1]
+
+                # Only include relevant Twitter cookies
+                if name in ("auth_token", "ct0", "twid", "guest_id"):
+                    cookies[name] = value
+
+        # Build cookie string
+        return "; ".join(f"{name}={value}" for name, value in cookies.items())
 
 
 def get_config() -> Config:
