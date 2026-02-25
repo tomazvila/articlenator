@@ -105,37 +105,66 @@ class BookmarkScraper:
             page = await context.new_page()
 
             # Establish session by visiting home first (same as TwitterPlaywrightSource)
-            await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
+            await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(3)
 
             # Verify authentication
             try:
-                await page.wait_for_selector('[data-testid="tweet"]', timeout=10000)
+                await page.wait_for_selector('[data-testid="tweet"]', timeout=15000)
                 log.info("bookmark_scrape_authenticated")
             except Exception:
-                log.warning("bookmark_scrape_auth_unclear", hint="Home feed did not load")
+                log.warning(
+                    "bookmark_scrape_auth_unclear",
+                    hint="Home feed did not load",
+                    page_url=page.url,
+                    page_title=await page.title(),
+                )
 
-            # Navigate to bookmarks
-            await page.goto(
-                "https://x.com/i/bookmarks",
-                wait_until="domcontentloaded",
-                timeout=30000,
-                referer="https://x.com/home",
-            )
-            await asyncio.sleep(3)
+            # Navigate to bookmarks using React Router (same approach as
+            # TwitterPlaywrightSource which is known to work reliably)
+            await page.evaluate("""
+                window.history.pushState({}, '', '/i/bookmarks');
+                window.dispatchEvent(new PopStateEvent('popstate'));
+            """)
+            await asyncio.sleep(5)
 
-            # Wait for bookmarks to load
+            # If pushState didn't navigate, fall back to goto
+            if "/i/bookmarks" not in page.url:
+                log.info("bookmark_pushstate_fallback", page_url=page.url)
+                await page.goto(
+                    "https://x.com/i/bookmarks",
+                    wait_until="domcontentloaded",
+                    timeout=60000,
+                    referer="https://x.com/home",
+                )
+                await asyncio.sleep(5)
+
+            # Wait for bookmarks to load (generous timeout for slow environments)
             try:
-                await page.wait_for_selector('[data-testid="tweet"]', timeout=15000)
+                await page.wait_for_selector('[data-testid="tweet"]', timeout=30000)
             except Exception:
                 # Check if it's an empty bookmarks page
-                empty = await page.query_selector(
-                    'text="You haven\'t added any posts to your Bookmarks yet"'
-                )
-                if empty:
+                page_text = await page.inner_text("body")
+                if "haven't added any" in page_text or "Save posts for later" in page_text:
                     log.info("bookmark_scrape_empty")
                     return []
-                raise ValueError("Bookmarks page failed to load. Check your cookies.")
+
+                # Save debug info before raising
+                try:
+                    await page.screenshot(path="/tmp/bookmark_debug.png")
+                    log.error(
+                        "bookmark_page_load_failed",
+                        page_url=page.url,
+                        page_title=await page.title(),
+                        screenshot="/tmp/bookmark_debug.png",
+                    )
+                except Exception:
+                    pass
+
+                raise ValueError(
+                    f"Bookmarks page failed to load (url={page.url}). "
+                    "Check your cookies or try again."
+                )
 
             log.info("bookmark_scrape_page_loaded")
 
