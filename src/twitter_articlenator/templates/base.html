@@ -12,54 +12,53 @@
     <header>
         <nav>
             <a href="/">Home</a>
+            <a href="/bookmarks">Bookmarks</a>
             <a href="/setup">Setup</a>
-            <span id="cookie-status" class="cookie-status loading" title="Checking cookie status...">
+            <span id="cookie-status" class="cookie-status" title="Checking cookie status...">
                 <span class="status-dot"></span>
                 <span class="status-text">Checking...</span>
             </span>
         </nav>
     </header>
     <script>
-    // Check cookie status on every page load
-    (async function checkCookieStatus() {
+    // Shared cookie status key
+    const COOKIES_KEY = 'articlenator_cookies';
+
+    // Update nav cookie status from localStorage
+    function updateNavCookieStatus() {
         const statusEl = document.getElementById('cookie-status');
         const dotEl = statusEl.querySelector('.status-dot');
         const textEl = statusEl.querySelector('.status-text');
 
-        try {
-            const response = await fetch('/api/cookies/status');
-            const data = await response.json();
+        // Remove all status classes
+        statusEl.classList.remove('loading', 'not-configured', 'configured', 'working', 'invalid', 'error');
 
-            statusEl.classList.remove('loading');
+        const cookies = localStorage.getItem(COOKIES_KEY);
 
-            if (data.status === 'not_configured') {
-                statusEl.classList.add('not-configured');
-                statusEl.title = 'Twitter cookies not configured';
-                textEl.textContent = 'No cookies';
-            } else if (data.status === 'locked') {
-                statusEl.classList.add('invalid');
-                statusEl.title = data.message;
-                textEl.textContent = `Locked ${Math.floor(data.remaining_seconds / 60)}m`;
-            } else if (data.status === 'configured') {
-                statusEl.classList.add('configured');
-                statusEl.title = 'Cookies configured (click Setup to test)';
-                textEl.textContent = 'Cookies set';
-            } else if (data.status === 'working') {
-                statusEl.classList.add('working');
-                statusEl.title = 'Twitter cookies are working';
-                textEl.textContent = 'Cookies OK';
-            } else if (data.status === 'invalid') {
-                statusEl.classList.add('invalid');
-                statusEl.title = data.message;
-                textEl.textContent = 'Invalid';
-            }
-        } catch (err) {
-            statusEl.classList.remove('loading');
-            statusEl.classList.add('error');
-            statusEl.title = 'Could not check cookie status';
-            textEl.textContent = 'Error';
+        if (!cookies || !cookies.trim()) {
+            statusEl.classList.add('not-configured');
+            statusEl.title = 'Twitter cookies not configured';
+            textEl.textContent = 'No cookies';
+            return;
         }
-    })();
+
+        // Quick client-side validation: check for auth_token and ct0
+        const hasAuthToken = cookies.includes('auth_token') && cookies.match(/auth_token[=\s]\S{20,}/);
+        const hasCt0 = cookies.includes('ct0') && cookies.match(/ct0[=\s]\S{20,}/);
+
+        if (hasAuthToken && hasCt0) {
+            statusEl.classList.add('configured');
+            statusEl.title = 'Cookies configured (go to Setup to test)';
+            textEl.textContent = 'Cookies set';
+        } else {
+            statusEl.classList.add('invalid');
+            statusEl.title = 'Cookies incomplete - missing required values';
+            textEl.textContent = 'Invalid';
+        }
+    }
+
+    // Run on page load
+    updateNavCookieStatus();
     </script>
     <main>
         {% block content %}{% endblock %}

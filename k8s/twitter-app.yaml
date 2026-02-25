@@ -41,8 +41,6 @@ spec:
           env:
             - name: TWITTER_ARTICLENATOR_JSON_LOGGING
               value: "true"
-            - name: TWITTER_ARTICLENATOR_CONFIG_DIR
-              value: "/data/config"
             - name: TWITTER_ARTICLENATOR_OUTPUT_DIR
               value: "/data/output"
           livenessProbe:

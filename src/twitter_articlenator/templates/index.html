@@ -7,7 +7,7 @@
 <p>Paste article links below (one per line) to convert them to e-reader friendly PDFs.</p>
 <p class="supported-sources">Supported: Twitter/X, Blog articles (Bear Blog, Substack, etc.)</p>
 
-<form id="convert-form" method="post" action="/api/convert">
+<form id="convert-form">
     <div class="form-group">
         <label for="links-input">Article Links:</label>
         <textarea
@@ -54,24 +54,20 @@ https://substack.com/@author/post-title"
 </div>
 
 <script>
+const COOKIES_KEY = 'articlenator_cookies';
+const LINKS_KEY = 'articlenator_links';
+
 // Persist textarea content to localStorage
 const linksInput = document.getElementById('links-input');
-const STORAGE_KEY = 'articlenator_links';
-
-// Restore saved content on page load
-const savedLinks = localStorage.getItem(STORAGE_KEY);
+const savedLinks = localStorage.getItem(LINKS_KEY);
 if (savedLinks) {
     linksInput.value = savedLinks;
 }
-
-// Save on every input change
 linksInput.addEventListener('input', () => {
-    localStorage.setItem(STORAGE_KEY, linksInput.value);
+    localStorage.setItem(LINKS_KEY, linksInput.value);
 });
-
-// Also save on blur (when leaving the field)
 linksInput.addEventListener('blur', () => {
-    localStorage.setItem(STORAGE_KEY, linksInput.value);
+    localStorage.setItem(LINKS_KEY, linksInput.value);
 });
 
 // Browser notifications
@@ -88,9 +84,7 @@ function sendNotification(title, body) {
             icon: '/static/icon-192.png',
             tag: 'pdf-ready'
         });
-        // Auto-close after 5 seconds
         setTimeout(() => notification.close(), 5000);
-        // Focus window when clicked
         notification.onclick = () => {
             window.focus();
             notification.close();
@@ -101,7 +95,7 @@ function sendNotification(title, body) {
 // Clear button
 document.getElementById('clear-btn').addEventListener('click', () => {
     linksInput.value = '';
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LINKS_KEY);
     document.getElementById('results').style.display = 'none';
     document.getElementById('warning').style.display = 'none';
     document.getElementById('error').style.display = 'none';
@@ -112,11 +106,8 @@ document.getElementById('clear-btn').addEventListener('click', () => {
 
 document.getElementById('convert-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-
-    // Request notification permission on first submit
     requestNotificationPermission();
 
-    const form = e.target;
     const resultsDiv = document.getElementById('results');
     const errorDiv = document.getElementById('error');
     const errorText = document.getElementById('error-text');
@@ -142,12 +133,23 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
     statusDiv.style.display = 'flex';
     statusText.textContent = 'Starting...';
 
+    // Get links and cookies
+    const links = linksInput.value.trim().split('\n').filter(l => l.trim());
+    const cookies = localStorage.getItem(COOKIES_KEY) || '';
+
+    if (links.length === 0) {
+        errorDiv.style.display = 'block';
+        errorText.textContent = 'Please enter at least one link';
+        statusDiv.style.display = 'none';
+        submitBtn.disabled = false;
+        return;
+    }
+
     try {
-        // Use streaming endpoint for real-time progress
         const response = await fetch('/api/convert/stream', {
             method: 'POST',
-            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: new URLSearchParams(new FormData(form))
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({links: links, cookies: cookies})
         });
 
         // Check for non-stream error responses
@@ -160,7 +162,7 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
                 if (data.setup_url) {
                     const link = document.createElement('a');
                     link.href = data.setup_url;
-                    link.textContent = ' Go to setup →';
+                    link.textContent = ' Go to setup \u2192';
                     errorText.appendChild(link);
                 }
                 return;
@@ -180,12 +182,11 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
 
             buffer += decoder.decode(value, {stream: true});
             const lines = buffer.split('\n\n');
-            buffer = lines.pop();  // Keep incomplete data
+            buffer = lines.pop();
 
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
                     const data = JSON.parse(line.slice(6));
-                    console.log('SSE event:', data);
 
                     if (data.type === 'start') {
                         statusText.textContent = `Processing ${data.total} link(s)...`;
@@ -195,7 +196,6 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
                         progressBar.style.width = `${percent}%`;
                         progressInfo.textContent = `${data.current} / ${data.total}`;
 
-                        // Update or add list item
                         let li = document.getElementById(`progress-${data.current}`);
                         if (!li) {
                             li = document.createElement('li');
@@ -205,14 +205,14 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
 
                         if (data.status === 'processing') {
                             li.className = 'progress-item processing';
-                            li.innerHTML = `<span class="status-icon">⏳</span> ${data.url}`;
+                            li.innerHTML = `<span class="status-icon">\u23F3</span> ${data.url}`;
                             statusText.textContent = `Processing: ${data.url.substring(0, 50)}...`;
                         } else if (data.status === 'success') {
                             li.className = 'progress-item success';
-                            li.innerHTML = `<span class="status-icon">✓</span> ${data.title || data.url}`;
+                            li.innerHTML = `<span class="status-icon">\u2713</span> ${data.title || data.url}`;
                         } else if (data.status === 'failed') {
                             li.className = 'progress-item failed';
-                            li.innerHTML = `<span class="status-icon">✗</span> ${data.url}<br><small class="error-detail">${data.error}</small>`;
+                            li.innerHTML = `<span class="status-icon">\u2717</span> ${data.url}<br><small class="error-detail">${data.error}</small>`;
                         }
                     } else if (data.type === 'generating_pdf') {
                         statusText.textContent = 'Generating PDF...';
@@ -232,7 +232,6 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
                         li.appendChild(a);
                         downloadList.appendChild(li);
 
-                        // Show summary
                         if (data.summary) {
                             const summaryLi = document.createElement('li');
                             summaryLi.className = 'summary';
@@ -240,14 +239,12 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
                             downloadList.appendChild(summaryLi);
                         }
 
-                        // Show warnings for failed URLs
                         if (data.errors && data.errors.length > 0) {
                             warningDiv.style.display = 'block';
                             const failedUrls = data.errors.map(e => `${e.url}:\n  ${e.error}`).join('\n\n');
                             warningText.textContent = `${data.errors.length} URL(s) failed (may be rate limited - try again with fewer URLs):\n\n${failedUrls}`;
                         }
 
-                        // Send browser notification
                         const notifyBody = data.summary
                             ? `${data.summary.succeeded} article${data.summary.succeeded !== 1 ? 's' : ''} converted`
                             : 'Your PDF is ready';

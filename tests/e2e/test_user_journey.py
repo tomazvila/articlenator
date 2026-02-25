@@ -1,10 +1,10 @@
 """E2E tests for complete user journeys."""
 
-import json
-
 from playwright.sync_api import Page, expect
 
 from .pages import CookieGuidePage, IndexPage
+
+COOKIES_KEY = "articlenator_cookies"
 
 
 class TestIndexPage:
@@ -85,26 +85,25 @@ class TestNavigationFlow:
 
 
 class TestCookieSaving:
-    """Tests for saving cookies."""
+    """Tests for saving cookies to localStorage."""
 
-    def test_user_can_save_cookies(self, page: Page, base_url, config_dir):
+    def test_user_can_save_cookies(self, page: Page, base_url):
         """Test user can save cookies via setup page."""
         guide = CookieGuidePage(page)
         guide.navigate(base_url)
 
         # Enter cookies
-        test_cookies = "auth_token=test123; ct0=csrf456"
+        test_cookies = "auth_token=test123456789012345678901234; ct0=csrf456789012345678901234"
         guide.enter_cookies(test_cookies)
         guide.click_save()
 
         # Wait for success message
         expect(guide.success_message).to_be_visible(timeout=5000)
 
-        # Verify cookies were saved
-        cookie_file = config_dir / "cookies.json"
-        assert cookie_file.exists()
-        data = json.loads(cookie_file.read_text())
-        assert data["cookies"] == test_cookies
+        # Verify cookies were saved to localStorage
+        stored = page.evaluate(f"localStorage.getItem('{COOKIES_KEY}')")
+        assert stored is not None
+        assert "auth_token" in stored
 
     def test_empty_cookies_shows_error(self, page: Page, base_url):
         """Test empty cookies shows error message."""
@@ -121,15 +120,14 @@ class TestCookieSaving:
 class TestConversionFlow:
     """Tests for the conversion workflow."""
 
-    def test_convert_without_cookies_shows_error(self, page: Page, base_url, config_dir):
+    def test_convert_without_cookies_shows_error(self, page: Page, base_url):
         """Test converting without cookies shows setup prompt."""
-        # Ensure no cookies exist for this test
-        cookie_file = config_dir / "cookies.json"
-        if cookie_file.exists():
-            cookie_file.unlink()
+        # Ensure no cookies in localStorage
+        page.goto(base_url)
+        page.evaluate(f"localStorage.removeItem('{COOKIES_KEY}')")
+        page.reload()
 
         index = IndexPage(page)
-        index.navigate(base_url)
 
         # Enter a valid Twitter URL
         index.enter_links(["https://x.com/testuser/status/123456789"])
@@ -140,14 +138,16 @@ class TestConversionFlow:
         expect(error_div).to_be_visible(timeout=5000)
         expect(error_div).to_contain_text("cookie")
 
-    def test_convert_with_invalid_url_shows_error(self, page: Page, base_url, config_dir):
+    def test_convert_with_invalid_url_shows_error(self, page: Page, base_url):
         """Test converting invalid URL shows error."""
-        # First save cookies
-        cookie_file = config_dir / "cookies.json"
-        cookie_file.write_text(json.dumps({"cookies": "auth_token=test; ct0=test"}))
+        # Set cookies in localStorage
+        page.goto(base_url)
+        page.evaluate(
+            f"localStorage.setItem('{COOKIES_KEY}', 'auth_token=test12345678901234567890; ct0=test12345678901234567890')"
+        )
+        page.reload()
 
         index = IndexPage(page)
-        index.navigate(base_url)
 
         # Enter an invalid URL (non-existent page)
         index.enter_links(["https://example.com/not-twitter"])

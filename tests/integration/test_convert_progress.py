@@ -5,11 +5,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+VALID_COOKIES = "auth_token=test123456789012345678901234567890; ct0=test123456789012345678901234567890"
+
 
 @pytest.fixture
 def app(tmp_path, monkeypatch):
     """Create Flask test application with temp directories."""
-    monkeypatch.setenv("TWITTER_ARTICLENATOR_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("TWITTER_ARTICLENATOR_OUTPUT_DIR", str(tmp_path / "output"))
     monkeypatch.setenv("TWITTER_ARTICLENATOR_JSON_LOGGING", "false")
 
@@ -32,20 +33,11 @@ def client(app):
 class TestConvertResponseReport:
     """Tests for detailed report in convert response."""
 
-    def test_response_includes_articles_list(self, client, tmp_path, monkeypatch):
+    def test_response_includes_articles_list(self, client):
         """Test successful response includes list of processed articles."""
         from twitter_articlenator.sources.base import Article
         from datetime import datetime
 
-        # Save cookies
-        client.post(
-            "/api/cookies",
-            json={
-                "cookies": "auth_token=test123456789012345678901234567890; ct0=test123456789012345678901234567890"
-            },
-        )
-
-        # Mock the source to return a successful article
         mock_article = Article(
             title="Test Article",
             author="testuser",
@@ -62,7 +54,7 @@ class TestConvertResponseReport:
 
             response = client.post(
                 "/api/convert",
-                json={"links": ["https://example.com/article"]},
+                json={"links": ["https://example.com/article"], "cookies": VALID_COOKIES},
             )
 
         data = json.loads(response.data)
@@ -75,16 +67,8 @@ class TestConvertResponseReport:
         assert "status" in data["articles"][0]
         assert data["articles"][0]["status"] == "success"
 
-    def test_response_includes_failed_urls_with_reason(self, client, tmp_path, monkeypatch):
+    def test_response_includes_failed_urls_with_reason(self, client):
         """Test response includes failed URLs with error reason."""
-        # Save cookies
-        client.post(
-            "/api/cookies",
-            json={
-                "cookies": "auth_token=test123456789012345678901234567890; ct0=test123456789012345678901234567890"
-            },
-        )
-
         with patch("twitter_articlenator.routes.api.get_source_for_url") as mock_get_source:
             mock_source = AsyncMock()
             mock_source.fetch = AsyncMock(side_effect=Exception("Tweet not found"))
@@ -92,7 +76,7 @@ class TestConvertResponseReport:
 
             response = client.post(
                 "/api/convert",
-                json={"links": ["https://x.com/user/status/123"]},
+                json={"links": ["https://x.com/user/status/123"], "cookies": VALID_COOKIES},
             )
 
         data = json.loads(response.data)
@@ -105,20 +89,10 @@ class TestConvertResponseReport:
             assert "error" in data["errors"][0]
             assert "Tweet not found" in data["errors"][0]["error"]
 
-    def test_partial_success_includes_both_success_and_failures(
-        self, client, tmp_path, monkeypatch
-    ):
+    def test_partial_success_includes_both_success_and_failures(self, client):
         """Test partial success includes both successful and failed URLs."""
         from twitter_articlenator.sources.base import Article
         from datetime import datetime
-
-        # Save cookies
-        client.post(
-            "/api/cookies",
-            json={
-                "cookies": "auth_token=test123456789012345678901234567890; ct0=test123456789012345678901234567890"
-            },
-        )
 
         mock_article = Article(
             title="Success Article",
@@ -144,7 +118,7 @@ class TestConvertResponseReport:
 
             response = client.post(
                 "/api/convert",
-                json={"links": ["https://example.com/success", "https://example.com/fail"]},
+                json={"links": ["https://example.com/success", "https://example.com/fail"], "cookies": VALID_COOKIES},
             )
 
         data = json.loads(response.data)
@@ -156,18 +130,10 @@ class TestConvertResponseReport:
         assert len(data["articles"]) >= 1
         assert len(data["errors"]) >= 1
 
-    def test_response_includes_summary_counts(self, client, tmp_path, monkeypatch):
+    def test_response_includes_summary_counts(self, client):
         """Test response includes summary of success/failure counts."""
         from twitter_articlenator.sources.base import Article
         from datetime import datetime
-
-        # Save cookies
-        client.post(
-            "/api/cookies",
-            json={
-                "cookies": "auth_token=test123456789012345678901234567890; ct0=test123456789012345678901234567890"
-            },
-        )
 
         mock_article = Article(
             title="Test",
@@ -185,7 +151,7 @@ class TestConvertResponseReport:
 
             response = client.post(
                 "/api/convert",
-                json={"links": ["https://example.com/1", "https://example.com/2"]},
+                json={"links": ["https://example.com/1", "https://example.com/2"], "cookies": VALID_COOKIES},
             )
 
         data = json.loads(response.data)
@@ -200,39 +166,23 @@ class TestConvertResponseReport:
 class TestConvertWithStreaming:
     """Tests for streaming progress updates during conversion."""
 
-    def test_convert_stream_returns_event_stream(self, client, tmp_path, monkeypatch):
+    def test_convert_stream_returns_event_stream(self, client):
         """Test /api/convert/stream returns event stream content type."""
-        # Save cookies
-        client.post(
-            "/api/cookies",
-            json={
-                "cookies": "auth_token=test123456789012345678901234567890; ct0=test123456789012345678901234567890"
-            },
-        )
-
         with patch("twitter_articlenator.routes.api.get_source_for_url") as mock_get_source:
             mock_get_source.return_value = None  # No source = unsupported URL
 
             response = client.post(
                 "/api/convert/stream",
-                json={"links": ["https://example.com/article"]},
+                json={"links": ["https://example.com/article"], "cookies": VALID_COOKIES},
             )
 
         # Should return event stream or JSON with progress
         assert response.content_type in ["text/event-stream", "application/json"]
 
-    def test_stream_emits_progress_events(self, client, tmp_path, monkeypatch):
+    def test_stream_emits_progress_events(self, client):
         """Test streaming endpoint emits progress events."""
         from twitter_articlenator.sources.base import Article
         from datetime import datetime
-
-        # Save cookies
-        client.post(
-            "/api/cookies",
-            json={
-                "cookies": "auth_token=test123456789012345678901234567890; ct0=test123456789012345678901234567890"
-            },
-        )
 
         mock_article = Article(
             title="Test",
@@ -250,7 +200,7 @@ class TestConvertWithStreaming:
 
             response = client.post(
                 "/api/convert/stream",
-                json={"links": ["https://example.com/1", "https://example.com/2"]},
+                json={"links": ["https://example.com/1", "https://example.com/2"], "cookies": VALID_COOKIES},
             )
 
         # Parse event stream or JSON response
@@ -259,18 +209,10 @@ class TestConvertWithStreaming:
         # Should contain progress information
         assert "progress" in data.lower() or "processing" in data.lower() or "1" in data
 
-    def test_stream_shows_current_url_being_processed(self, client, tmp_path, monkeypatch):
+    def test_stream_shows_current_url_being_processed(self, client):
         """Test progress shows which URL is currently being processed."""
         from twitter_articlenator.sources.base import Article
         from datetime import datetime
-
-        # Save cookies
-        client.post(
-            "/api/cookies",
-            json={
-                "cookies": "auth_token=test123456789012345678901234567890; ct0=test123456789012345678901234567890"
-            },
-        )
 
         mock_article = Article(
             title="Test",
@@ -288,7 +230,7 @@ class TestConvertWithStreaming:
 
             response = client.post(
                 "/api/convert/stream",
-                json={"links": ["https://example.com/specific-url"]},
+                json={"links": ["https://example.com/specific-url"], "cookies": VALID_COOKIES},
             )
 
         data = response.data.decode()
@@ -300,23 +242,15 @@ class TestConvertWithStreaming:
 class TestProgressPolling:
     """Tests for polling-based progress (alternative to streaming)."""
 
-    def test_job_endpoint_returns_job_id(self, client, tmp_path, monkeypatch):
+    def test_job_endpoint_returns_job_id(self, client):
         """Test /api/convert/job returns a job ID for tracking."""
-        # Save cookies
-        client.post(
-            "/api/cookies",
-            json={
-                "cookies": "auth_token=test123456789012345678901234567890; ct0=test123456789012345678901234567890"
-            },
-        )
-
         with patch("twitter_articlenator.routes.api.get_source_for_url") as mock_get_source:
             mock_source = AsyncMock()
             mock_get_source.return_value = mock_source
 
             response = client.post(
                 "/api/convert/job",
-                json={"links": ["https://example.com/1"]},
+                json={"links": ["https://example.com/1"], "cookies": VALID_COOKIES},
             )
 
         # Should return job ID (or fall back to direct processing)
@@ -325,9 +259,8 @@ class TestProgressPolling:
             assert "job_id" in data
         # If not implemented, that's OK - test documents expected behavior
 
-    def test_job_status_returns_progress(self, client, tmp_path, monkeypatch):
+    def test_job_status_returns_progress(self, client):
         """Test /api/job/<id>/status returns current progress."""
-        # This test documents expected behavior
         response = client.get("/api/job/test-job-id/status")
 
         # If implemented, should return progress info

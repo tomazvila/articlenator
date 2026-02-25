@@ -38,13 +38,10 @@ def flask_server(tmp_path_factory):
 
     # Create temp directories for this test session
     tmp_dir = tmp_path_factory.mktemp("e2e")
-    config_dir = tmp_dir / "config"
     output_dir = tmp_dir / "output"
-    config_dir.mkdir()
     output_dir.mkdir()
 
     env = os.environ.copy()
-    env["TWITTER_ARTICLENATOR_CONFIG_DIR"] = str(config_dir)
     env["TWITTER_ARTICLENATOR_OUTPUT_DIR"] = str(output_dir)
     env["TWITTER_ARTICLENATOR_JSON_LOGGING"] = "false"
     env["FLASK_APP"] = "twitter_articlenator.app:create_app"
@@ -57,7 +54,6 @@ def flask_server(tmp_path_factory):
             "-c",
             f"""
 import os
-os.environ['TWITTER_ARTICLENATOR_CONFIG_DIR'] = '{config_dir}'
 os.environ['TWITTER_ARTICLENATOR_OUTPUT_DIR'] = '{output_dir}'
 os.environ['TWITTER_ARTICLENATOR_JSON_LOGGING'] = 'false'
 
@@ -77,7 +73,7 @@ app.run(host='127.0.0.1', port={port}, debug=False, use_reloader=False)
         stdout, stderr = proc.communicate(timeout=5)
         pytest.fail(f"Server failed to start. stdout: {stdout.decode()}, stderr: {stderr.decode()}")
 
-    yield {"port": port, "process": proc, "config_dir": config_dir, "output_dir": output_dir}
+    yield {"port": port, "process": proc, "output_dir": output_dir}
 
     # Cleanup
     proc.terminate()
@@ -91,12 +87,6 @@ app.run(host='127.0.0.1', port={port}, debug=False, use_reloader=False)
 def base_url(flask_server):
     """Base URL for the running Flask server."""
     return f"http://127.0.0.1:{flask_server['port']}"
-
-
-@pytest.fixture(scope="session")
-def config_dir(flask_server):
-    """Config directory for the test session."""
-    return flask_server["config_dir"]
 
 
 @pytest.fixture(scope="session")

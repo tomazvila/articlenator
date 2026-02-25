@@ -1,7 +1,7 @@
 # Package metadata only - dependencies managed by Nix (see flake.nix)
 [project]
 name = "twitter-articlenator"
-version = "0.1.0"
+version = "0.2.0"
 description = "Convert X/Twitter articles to e-reader PDFs"
 requires-python = ">=3.12"
 

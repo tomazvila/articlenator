@@ -685,6 +685,138 @@ footer .version {
     color: var(--red);
 }
 
+/* Bookmarks page */
+.bookmarks-controls {
+    margin-bottom: 20px;
+}
+
+.bookmarks-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.bookmarks-header h2 {
+    margin: 0;
+}
+
+.bookmarks-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.small-btn {
+    background-color: var(--bg-light);
+    color: var(--fg);
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.small-btn:hover {
+    background-color: var(--fg-dark);
+}
+
+.selection-count {
+    font-size: 12px;
+    color: var(--fg-dark);
+    margin-left: 5px;
+}
+
+.bookmarks-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.bookmark-item {
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    background-color: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    transition: border-color 0.2s;
+}
+
+.bookmark-item:hover {
+    border-color: var(--fg-dark);
+}
+
+.bookmark-item.has-article {
+    border-left: 3px solid var(--green);
+}
+
+.bookmark-label {
+    display: flex;
+    gap: 10px;
+    cursor: pointer;
+    align-items: flex-start;
+}
+
+.bookmark-label input[type="checkbox"] {
+    margin-top: 4px;
+    accent-color: var(--blue);
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.bookmark-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.bookmark-meta {
+    font-size: 12px;
+    color: var(--fg-dark);
+    margin-bottom: 4px;
+    display: flex;
+    gap: 10px;
+}
+
+.bookmark-author {
+    color: var(--cyan);
+    font-weight: 500;
+}
+
+.bookmark-text {
+    font-size: 13px;
+    color: var(--fg);
+    line-height: 1.4;
+    margin-bottom: 4px;
+    word-break: break-word;
+}
+
+.bookmark-links {
+    font-size: 12px;
+}
+
+.article-link {
+    color: var(--green);
+    text-decoration: none;
+    word-break: break-all;
+}
+
+.article-link:hover {
+    text-decoration: underline;
+    color: var(--cyan);
+}
+
+.no-link {
+    color: var(--fg-dark);
+    font-style: italic;
+}
+
 /* Responsive */
 @media (max-width: 600px) {
     body {

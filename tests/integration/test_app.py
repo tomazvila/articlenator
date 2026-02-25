@@ -8,12 +8,9 @@ import pytest
 @pytest.fixture
 def app(tmp_path, monkeypatch):
     """Create Flask test application with temp directories."""
-    # Set temp directories for testing
-    monkeypatch.setenv("TWITTER_ARTICLENATOR_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("TWITTER_ARTICLENATOR_OUTPUT_DIR", str(tmp_path / "output"))
     monkeypatch.setenv("TWITTER_ARTICLENATOR_JSON_LOGGING", "false")
 
-    # Clear config singleton
     import twitter_articlenator.config as config_module
 
     config_module._config_instance = None
@@ -81,7 +78,6 @@ class TestSetupRoute:
         response = client.get("/setup")
         html = response.data.decode("utf-8")
 
-        # Should mention at least one browser
         browsers = ["chrome", "firefox", "safari", "browser"]
         assert any(browser in html.lower() for browser in browsers)
 
@@ -91,6 +87,27 @@ class TestSetupRoute:
         html = response.data.decode("utf-8")
 
         assert "<form" in html.lower()
+
+
+class TestBookmarksRoute:
+    """Tests for GET /bookmarks route."""
+
+    def test_bookmarks_returns_200(self, client):
+        """Test GET /bookmarks returns 200."""
+        response = client.get("/bookmarks")
+        assert response.status_code == 200
+
+    def test_bookmarks_contains_fetch_button(self, client):
+        """Test bookmarks page has fetch button."""
+        response = client.get("/bookmarks")
+        html = response.data.decode("utf-8")
+        assert "fetch" in html.lower()
+
+    def test_bookmarks_contains_convert_button(self, client):
+        """Test bookmarks page has convert button."""
+        response = client.get("/bookmarks")
+        html = response.data.decode("utf-8")
+        assert "convert" in html.lower()
 
 
 class TestHealthRoute:
@@ -131,16 +148,12 @@ class TestConvertRoute:
     def test_convert_validates_urls(self, client):
         """Test /api/convert validates URLs."""
         response = client.post("/api/convert", json={"links": ["ftp://invalid-protocol.com/file"]})
-        # Should return error for unsupported URL scheme
         assert response.status_code == 400
 
     def test_convert_accepts_valid_twitter_url(self, client):
         """Test /api/convert accepts valid Twitter URL format."""
-        # This will fail without cookies, but should not fail URL validation
         response = client.post("/api/convert", json={"links": ["https://x.com/user/status/123"]})
-        # Should fail because no cookies, not because of URL validation
         data = json.loads(response.data)
-        # Either 400 (no cookies) or a message about cookies
         assert response.status_code in [400, 401, 500] or "cookie" in str(data).lower()
 
     def test_convert_returns_json(self, client):
@@ -148,130 +161,57 @@ class TestConvertRoute:
         response = client.post("/api/convert", json={"links": ["https://x.com/user/status/123"]})
         assert response.content_type == "application/json"
 
+    def test_convert_with_cookies_in_body(self, client):
+        """Test /api/convert reads cookies from request body."""
+        response = client.post(
+            "/api/convert",
+            json={
+                "links": ["https://x.com/user/status/123"],
+                "cookies": "auth_token=abc123; ct0=xyz789",
+            },
+        )
+        # Should not complain about missing cookies
+        data = json.loads(response.data)
+        assert "cookie" not in str(data.get("error", "")).lower() or response.status_code == 500
 
-class TestCookiesStatusRoute:
-    """Tests for GET /api/cookies/status route."""
 
-    def test_status_returns_not_configured_when_no_cookies(self, client):
-        """Test status returns not_configured when no cookies saved."""
-        response = client.get("/api/cookies/status")
+class TestCookiesValidateRoute:
+    """Tests for POST /api/cookies/validate route."""
+
+    def test_validate_with_no_cookies(self, client):
+        """Test validation with no cookies."""
+        response = client.post("/api/cookies/validate", json={})
         assert response.status_code == 200
 
         data = json.loads(response.data)
-        assert data["configured"] is False
+        assert not data["valid"]
         assert data["status"] == "not_configured"
 
-    def test_status_returns_configured_after_saving_cookies(self, client):
-        """Test status returns configured after cookies are saved."""
-        # First save cookies
-        client.post("/api/cookies", json={"cookies": "auth_token=test; ct0=test"})
-
-        # Check status
-        response = client.get("/api/cookies/status")
-        assert response.status_code == 200
-
-        data = json.loads(response.data)
-        assert data["configured"] is True
-        assert data["status"] == "configured"
-
-    def test_status_returns_json(self, client):
-        """Test status endpoint returns JSON."""
-        response = client.get("/api/cookies/status")
-        assert response.content_type == "application/json"
-
-    def test_status_with_test_param_not_configured(self, client):
-        """Test status with test=true when no cookies configured."""
-        response = client.get("/api/cookies/status?test=true")
-        assert response.status_code == 200
-
-        data = json.loads(response.data)
-        assert data["configured"] is False
-        assert data["status"] == "not_configured"
-
-    def test_status_with_test_validates_valid_cookies(self, client):
-        """Test status with test=true validates properly formatted cookies."""
-        # Save valid cookies (long enough tokens)
+    def test_validate_with_valid_cookies(self, client):
+        """Test validation with valid cookies."""
         valid_cookies = "auth_token=" + "a" * 30 + "; ct0=" + "b" * 30
-        client.post("/api/cookies", json={"cookies": valid_cookies})
-
-        response = client.get("/api/cookies/status?test=true")
+        response = client.post("/api/cookies/validate", json={"cookies": valid_cookies})
         assert response.status_code == 200
 
         data = json.loads(response.data)
-        assert data["configured"] is True
-        assert data["status"] == "working"
+        assert data["valid"]
+        assert data["status"] == "valid"
 
-    def test_status_with_test_rejects_short_tokens(self, client):
-        """Test status with test=true rejects short tokens."""
-        # Save cookies with short tokens
-        client.post("/api/cookies", json={"cookies": "auth_token=short; ct0=short"})
-
-        response = client.get("/api/cookies/status?test=true")
+    def test_validate_with_short_tokens(self, client):
+        """Test validation rejects short tokens."""
+        response = client.post(
+            "/api/cookies/validate", json={"cookies": "auth_token=short; ct0=short"}
+        )
         assert response.status_code == 200
 
         data = json.loads(response.data)
+        assert not data["valid"]
         assert data["status"] == "invalid"
 
-
-class TestCookiesCurrentRoute:
-    """Tests for GET /api/cookies/current route."""
-
-    def test_current_returns_not_configured_when_empty(self, client):
-        """Test current returns not configured when no cookies."""
-        response = client.get("/api/cookies/current")
-        assert response.status_code == 200
-
-        data = json.loads(response.data)
-        assert data["configured"] is False
-        assert data["cookies"] == []
-
-    def test_current_returns_masked_cookies(self, client):
-        """Test current masks cookie values for security."""
-        client.post(
-            "/api/cookies", json={"cookies": "auth_token=secretvalue123456; ct0=anothersecret789"}
-        )
-
-        response = client.get("/api/cookies/current")
-        assert response.status_code == 200
-
-        data = json.loads(response.data)
-        assert data["configured"] is True
-        assert len(data["cookies"]) == 2
-
-        # Check that values are masked
-        for cookie in data["cookies"]:
-            assert "..." in cookie["value_masked"]
-            assert "length" in cookie
-
-    def test_current_returns_json(self, client):
-        """Test current endpoint returns JSON."""
-        response = client.get("/api/cookies/current")
+    def test_validate_returns_json(self, client):
+        """Test validate endpoint returns JSON."""
+        response = client.post("/api/cookies/validate", json={})
         assert response.content_type == "application/json"
-
-
-class TestCookiesRoute:
-    """Tests for POST /api/cookies route."""
-
-    def test_save_cookies_stores_cookies(self, client, tmp_path):
-        """Test POST /api/cookies stores cookies."""
-        response = client.post("/api/cookies", json={"cookies": "auth_token=abc123; ct0=xyz789"})
-        assert response.status_code == 200
-
-    def test_save_cookies_requires_cookies_field(self, client):
-        """Test POST /api/cookies requires cookies field."""
-        response = client.post("/api/cookies", json={})
-        assert response.status_code == 400
-
-    def test_save_cookies_rejects_empty_cookies(self, client):
-        """Test POST /api/cookies rejects empty cookies."""
-        response = client.post("/api/cookies", json={"cookies": ""})
-        assert response.status_code == 400
-
-    def test_save_cookies_returns_success_message(self, client):
-        """Test POST /api/cookies returns success message."""
-        response = client.post("/api/cookies", json={"cookies": "auth_token=test; ct0=test"})
-        data = json.loads(response.data)
-        assert "success" in str(data).lower() or "saved" in str(data).lower()
 
 
 class TestDownloadRoute:
@@ -285,18 +225,15 @@ class TestDownloadRoute:
     def test_download_rejects_path_traversal(self, client):
         """Test download rejects path traversal attempts."""
         response = client.get("/download/../../../etc/passwd")
-        # Should return 404 or 400, not serve the file
         assert response.status_code in [400, 404]
 
     def test_download_only_serves_pdfs(self, client, tmp_path, monkeypatch):
         """Test download only serves PDF files."""
-        # Create a non-PDF file in output dir
         output_dir = tmp_path / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "test.txt").write_text("not a pdf")
 
         response = client.get("/download/test.txt")
-        # Should not serve non-PDF files
         assert response.status_code in [400, 404]
 
 
@@ -345,7 +282,6 @@ class TestFormDataHandling:
             data={"links": "https://x.com/user/status/123"},
             content_type="application/x-www-form-urlencoded",
         )
-        # Should fail because no cookies, not because of form parsing
         assert response.status_code in [400, 500]
         data = json.loads(response.data)
         assert "cookie" in str(data).lower() or "error" in data
@@ -357,17 +293,18 @@ class TestFormDataHandling:
             data={"links": "https://x.com/user/status/123\nhttps://x.com/user/status/456"},
             content_type="application/x-www-form-urlencoded",
         )
-        # Should process both links (fail on cookies)
         assert response.status_code in [400, 500]
 
-    def test_cookies_accepts_form_data(self, client):
-        """Test /api/cookies accepts form data."""
+    def test_validate_accepts_form_data(self, client):
+        """Test /api/cookies/validate accepts form data."""
         response = client.post(
-            "/api/cookies",
-            data={"cookies": "auth_token=test; ct0=test"},
+            "/api/cookies/validate",
+            data={"cookies": "auth_token=" + "a" * 30 + "; ct0=" + "b" * 30},
             content_type="application/x-www-form-urlencoded",
         )
         assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data["valid"]
 
 
 class TestAppFactory:

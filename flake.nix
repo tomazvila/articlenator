@@ -36,7 +36,7 @@
           # Build the application package
           app = pkgs.python3Packages.buildPythonApplication {
             pname = "twitter-articlenator";
-            version = "0.1.0";
+            version = "0.2.0";
             format = "pyproject";
 
             src = ./.;
@@ -111,8 +111,6 @@
                 export PLAYWRIGHT_BROWSERS_PATH="${pkgs.playwright-driver.browsers}"
                 export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
                 export HOME="/tmp"
-                export XDG_CONFIG_HOME="/data/config"
-                export TWITTER_ARTICLENATOR_CONFIG_DIR="/data/config"
                 export TWITTER_ARTICLENATOR_OUTPUT_DIR="/data/output"
 
                 exec ${app}/bin/twitter-articlenator "$@"
@@ -128,7 +126,7 @@
                 ] ++ runtimeDeps;
 
                 extraCommands = ''
-                  mkdir -p data/config data/output tmp
+                  mkdir -p data/output tmp
                 '';
 
                 config = {

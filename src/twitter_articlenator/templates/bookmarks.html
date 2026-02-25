@@ -1,0 +1,477 @@
+{% extends "base.html" %}
+
+{% block title %}Bookmarks{% endblock %}
+
+{% block content %}
+<h1>Bookmarks</h1>
+<p>Fetch your Twitter/X bookmarks and convert them to a PDF.</p>
+
+<div class="bookmarks-controls">
+    <div class="button-group">
+        <button type="button" id="fetch-btn">Fetch Bookmarks</button>
+        <button type="button" id="convert-btn" class="secondary" disabled>Convert Selected to PDF</button>
+    </div>
+</div>
+
+<div id="fetch-status" class="status-message" style="display: none;">
+    <span class="spinner"></span>
+    <span id="fetch-status-text">Starting...</span>
+</div>
+
+<div id="convert-status" class="status-message" style="display: none;">
+    <span class="spinner"></span>
+    <span id="convert-status-text">Processing...</span>
+</div>
+
+<div id="convert-progress" class="progress-section" style="display: none;">
+    <div class="progress-bar-container">
+        <div id="convert-progress-bar" class="progress-bar" style="width: 0%"></div>
+    </div>
+    <div id="convert-progress-info" class="progress-info"></div>
+    <ul id="convert-progress-list" class="progress-list"></ul>
+</div>
+
+<div id="bookmarks-section" style="display: none;">
+    <div class="bookmarks-header">
+        <h2 id="bookmarks-title">Bookmarks</h2>
+        <div class="bookmarks-actions">
+            <button type="button" id="select-all-btn" class="small-btn">Select All</button>
+            <button type="button" id="select-none-btn" class="small-btn">Select None</button>
+            <button type="button" id="select-articles-btn" class="small-btn">Select With Links</button>
+            <span id="selection-count" class="selection-count"></span>
+        </div>
+    </div>
+    <ul id="bookmarks-list" class="bookmarks-list"></ul>
+</div>
+
+<div id="results" class="results-section" style="display: none;">
+    <h2>Generated PDF</h2>
+    <ul id="download-list"></ul>
+</div>
+
+<div id="warning" class="warning-message" style="display: none;">
+    <strong>Warning:</strong>
+    <pre id="warning-text"></pre>
+</div>
+
+<div id="error" class="error-message" style="display: none;">
+    <strong>Error:</strong>
+    <pre id="error-text"></pre>
+</div>
+
+<script>
+const COOKIES_KEY = 'articlenator_cookies';
+const BOOKMARKS_KEY = 'articlenator_bookmarks';
+
+let bookmarksData = [];
+
+// Browser notifications
+function requestNotificationPermission() {
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+}
+
+function sendNotification(title, body) {
+    if ('Notification' in window && Notification.permission === 'granted') {
+        const notification = new Notification(title, {
+            body: body,
+            icon: '/static/icon-192.png',
+            tag: 'pdf-ready'
+        });
+        setTimeout(() => notification.close(), 5000);
+        notification.onclick = () => {
+            window.focus();
+            notification.close();
+        };
+    }
+}
+
+// Load saved bookmarks from localStorage on page load
+function loadSavedBookmarks() {
+    const saved = localStorage.getItem(BOOKMARKS_KEY);
+    if (saved) {
+        try {
+            bookmarksData = JSON.parse(saved);
+            renderBookmarks();
+        } catch (e) {
+            console.error('Failed to parse saved bookmarks:', e);
+        }
+    }
+}
+
+function renderBookmarks() {
+    const section = document.getElementById('bookmarks-section');
+    const list = document.getElementById('bookmarks-list');
+    const title = document.getElementById('bookmarks-title');
+    const convertBtn = document.getElementById('convert-btn');
+
+    if (bookmarksData.length === 0) {
+        section.style.display = 'none';
+        convertBtn.disabled = true;
+        return;
+    }
+
+    section.style.display = 'block';
+    title.textContent = `Bookmarks (${bookmarksData.length})`;
+    list.innerHTML = '';
+
+    for (let i = 0; i < bookmarksData.length; i++) {
+        const b = bookmarksData[i];
+        const hasArticle = b.article_urls && b.article_urls.length > 0;
+
+        const li = document.createElement('li');
+        li.className = 'bookmark-item' + (hasArticle ? ' has-article' : '');
+
+        const linksHtml = hasArticle
+            ? b.article_urls.map(url => `<a href="${url}" target="_blank" class="article-link">${truncateUrl(url)}</a>`).join(' ')
+            : '<span class="no-link">No external link</span>';
+
+        li.innerHTML = `
+            <label class="bookmark-label">
+                <input type="checkbox" class="bookmark-check" data-index="${i}" ${hasArticle ? 'checked' : ''}>
+                <div class="bookmark-content">
+                    <div class="bookmark-meta">
+                        <span class="bookmark-author">@${b.author}</span>
+                        ${b.bookmarked_at ? `<span class="bookmark-date">${new Date(b.bookmarked_at).toLocaleDateString()}</span>` : ''}
+                    </div>
+                    <div class="bookmark-text">${escapeHtml(b.text_preview || '(no text)')}</div>
+                    <div class="bookmark-links">${linksHtml}</div>
+                </div>
+            </label>
+        `;
+        list.appendChild(li);
+    }
+
+    updateSelectionCount();
+    convertBtn.disabled = false;
+}
+
+function truncateUrl(url) {
+    try {
+        const u = new URL(url);
+        const path = u.pathname.length > 40 ? u.pathname.substring(0, 40) + '...' : u.pathname;
+        return u.hostname + path;
+    } catch {
+        return url.substring(0, 60);
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function updateSelectionCount() {
+    const checks = document.querySelectorAll('.bookmark-check:checked');
+    const count = checks.length;
+    const total = document.querySelectorAll('.bookmark-check').length;
+    document.getElementById('selection-count').textContent = `${count} / ${total} selected`;
+
+    const convertBtn = document.getElementById('convert-btn');
+    convertBtn.disabled = count === 0;
+}
+
+// Selection buttons
+document.getElementById('select-all-btn').addEventListener('click', () => {
+    document.querySelectorAll('.bookmark-check').forEach(c => c.checked = true);
+    updateSelectionCount();
+});
+
+document.getElementById('select-none-btn').addEventListener('click', () => {
+    document.querySelectorAll('.bookmark-check').forEach(c => c.checked = false);
+    updateSelectionCount();
+});
+
+document.getElementById('select-articles-btn').addEventListener('click', () => {
+    document.querySelectorAll('.bookmark-check').forEach(c => {
+        const idx = parseInt(c.dataset.index);
+        const b = bookmarksData[idx];
+        c.checked = b && b.article_urls && b.article_urls.length > 0;
+    });
+    updateSelectionCount();
+});
+
+// Delegate checkbox changes for selection count
+document.getElementById('bookmarks-list').addEventListener('change', (e) => {
+    if (e.target.classList.contains('bookmark-check')) {
+        updateSelectionCount();
+    }
+});
+
+// Fetch bookmarks
+document.getElementById('fetch-btn').addEventListener('click', async () => {
+    const cookies = localStorage.getItem(COOKIES_KEY);
+    if (!cookies) {
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error-text').textContent = 'No cookies configured. Go to Setup first.';
+        return;
+    }
+
+    requestNotificationPermission();
+
+    const fetchBtn = document.getElementById('fetch-btn');
+    const fetchStatus = document.getElementById('fetch-status');
+    const fetchStatusText = document.getElementById('fetch-status-text');
+    const errorDiv = document.getElementById('error');
+    const errorText = document.getElementById('error-text');
+
+    errorDiv.style.display = 'none';
+    fetchBtn.disabled = true;
+    fetchStatus.style.display = 'flex';
+    fetchStatusText.textContent = 'Connecting...';
+
+    bookmarksData = [];
+
+    try {
+        const response = await fetch('/api/bookmarks/fetch', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({cookies: cookies})
+        });
+
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            if (data.error) {
+                errorDiv.style.display = 'block';
+                errorText.textContent = data.error;
+                return;
+            }
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const {value, done} = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, {stream: true});
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = JSON.parse(line.slice(6));
+
+                    if (data.type === 'start') {
+                        fetchStatusText.textContent = 'Scrolling bookmarks...';
+                    } else if (data.type === 'bookmark') {
+                        bookmarksData.push(data.entry);
+                        fetchStatusText.textContent = `Scrolling... found ${data.count} bookmarks`;
+                        renderBookmarks();
+                    } else if (data.type === 'complete') {
+                        fetchStatus.style.display = 'none';
+                        // Save to localStorage
+                        localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(bookmarksData));
+                        renderBookmarks();
+
+                        const articleCount = bookmarksData.filter(b => b.article_urls && b.article_urls.length > 0).length;
+                        sendNotification('Bookmarks Fetched', `Found ${data.total} bookmarks with ${articleCount} article links`);
+                    } else if (data.type === 'error') {
+                        fetchStatus.style.display = 'none';
+                        errorDiv.style.display = 'block';
+                        errorText.textContent = data.error;
+                    }
+                }
+            }
+        }
+    } catch (err) {
+        console.error('Fetch error:', err);
+        errorDiv.style.display = 'block';
+        errorText.textContent = 'Failed to connect to server: ' + err.message;
+        fetchStatus.style.display = 'none';
+    } finally {
+        fetchBtn.disabled = false;
+        if (fetchStatus.style.display !== 'none') {
+            fetchStatus.style.display = 'none';
+        }
+    }
+});
+
+// Convert selected bookmarks to PDF
+document.getElementById('convert-btn').addEventListener('click', async () => {
+    const cookies = localStorage.getItem(COOKIES_KEY);
+    if (!cookies) {
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error-text').textContent = 'No cookies configured. Go to Setup first.';
+        return;
+    }
+
+    requestNotificationPermission();
+
+    // Collect selected URLs
+    const selectedUrls = [];
+    document.querySelectorAll('.bookmark-check:checked').forEach(c => {
+        const idx = parseInt(c.dataset.index);
+        const b = bookmarksData[idx];
+        if (b) {
+            if (b.article_urls && b.article_urls.length > 0) {
+                // Use the article URLs
+                selectedUrls.push(...b.article_urls);
+            } else {
+                // Use the tweet URL itself
+                selectedUrls.push(b.tweet_url);
+            }
+        }
+    });
+
+    if (selectedUrls.length === 0) {
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error-text').textContent = 'No bookmarks selected';
+        return;
+    }
+
+    const convertBtn = document.getElementById('convert-btn');
+    const convertStatus = document.getElementById('convert-status');
+    const convertStatusText = document.getElementById('convert-status-text');
+    const progressSection = document.getElementById('convert-progress');
+    const progressBar = document.getElementById('convert-progress-bar');
+    const progressInfo = document.getElementById('convert-progress-info');
+    const progressList = document.getElementById('convert-progress-list');
+    const resultsDiv = document.getElementById('results');
+    const downloadList = document.getElementById('download-list');
+    const errorDiv = document.getElementById('error');
+    const errorText = document.getElementById('error-text');
+    const warningDiv = document.getElementById('warning');
+    const warningText = document.getElementById('warning-text');
+
+    // Reset UI
+    errorDiv.style.display = 'none';
+    warningDiv.style.display = 'none';
+    resultsDiv.style.display = 'none';
+    progressSection.style.display = 'none';
+    progressList.innerHTML = '';
+    downloadList.innerHTML = '';
+    progressBar.style.width = '0%';
+    convertBtn.disabled = true;
+    convertStatus.style.display = 'flex';
+    convertStatusText.textContent = 'Starting...';
+
+    try {
+        const response = await fetch('/api/bookmarks/convert', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({urls: selectedUrls, cookies: cookies})
+        });
+
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            if (data.error) {
+                errorDiv.style.display = 'block';
+                errorText.textContent = data.error;
+                return;
+            }
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        progressSection.style.display = 'block';
+
+        while (true) {
+            const {value, done} = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, {stream: true});
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = JSON.parse(line.slice(6));
+
+                    if (data.type === 'start') {
+                        convertStatusText.textContent = `Processing ${data.total} URL(s)...`;
+                        progressInfo.textContent = `0 / ${data.total}`;
+                    } else if (data.type === 'progress') {
+                        const percent = (data.current / data.total) * 100;
+                        progressBar.style.width = `${percent}%`;
+                        progressInfo.textContent = `${data.current} / ${data.total}`;
+
+                        let li = document.getElementById(`cp-${data.current}`);
+                        if (!li) {
+                            li = document.createElement('li');
+                            li.id = `cp-${data.current}`;
+                            progressList.appendChild(li);
+                        }
+
+                        if (data.status === 'processing') {
+                            li.className = 'progress-item processing';
+                            li.innerHTML = `<span class="status-icon">\u23F3</span> ${data.url}`;
+                            convertStatusText.textContent = `Processing: ${data.url.substring(0, 50)}...`;
+                        } else if (data.status === 'success') {
+                            li.className = 'progress-item success';
+                            li.innerHTML = `<span class="status-icon">\u2713</span> ${data.title || data.url}`;
+                        } else if (data.status === 'failed') {
+                            li.className = 'progress-item failed';
+                            li.innerHTML = `<span class="status-icon">\u2717</span> ${data.url}<br><small class="error-detail">${data.error}</small>`;
+                        }
+                    } else if (data.type === 'generating_pdf') {
+                        convertStatusText.textContent = 'Generating PDF...';
+                        progressBar.style.width = '100%';
+                    } else if (data.type === 'complete') {
+                        convertStatus.style.display = 'none';
+                        resultsDiv.style.display = 'block';
+
+                        const li = document.createElement('li');
+                        const a = document.createElement('a');
+                        a.href = `/download/${data.filename}`;
+                        if (data.summary) {
+                            a.textContent = `Download PDF (${data.summary.succeeded} article${data.summary.succeeded !== 1 ? 's' : ''})`;
+                        } else {
+                            a.textContent = 'Download PDF';
+                        }
+                        li.appendChild(a);
+                        downloadList.appendChild(li);
+
+                        if (data.summary) {
+                            const summaryLi = document.createElement('li');
+                            summaryLi.className = 'summary';
+                            summaryLi.textContent = `Summary: ${data.summary.succeeded} succeeded, ${data.summary.failed} failed of ${data.summary.total} total`;
+                            downloadList.appendChild(summaryLi);
+                        }
+
+                        if (data.errors && data.errors.length > 0) {
+                            warningDiv.style.display = 'block';
+                            const failedUrls = data.errors.map(e => `${e.url}:\n  ${e.error}`).join('\n\n');
+                            warningText.textContent = `${data.errors.length} URL(s) failed:\n\n${failedUrls}`;
+                        }
+
+                        const notifyBody = data.summary
+                            ? `${data.summary.succeeded} article${data.summary.succeeded !== 1 ? 's' : ''} converted`
+                            : 'Your PDF is ready';
+                        sendNotification('PDF Ready!', notifyBody);
+                    } else if (data.type === 'error') {
+                        convertStatus.style.display = 'none';
+                        errorDiv.style.display = 'block';
+                        errorText.textContent = data.error;
+                        if (data.details) {
+                            errorText.textContent += '\n\nDetails:\n' + data.details.map(d => `${d.url}: ${d.error}`).join('\n');
+                        }
+                    }
+                }
+            }
+        }
+    } catch (err) {
+        console.error('Convert error:', err);
+        errorDiv.style.display = 'block';
+        errorText.textContent = 'Failed to connect to server: ' + err.message;
+        convertStatus.style.display = 'none';
+    } finally {
+        convertBtn.disabled = false;
+        if (convertStatus.style.display !== 'none') {
+            convertStatus.style.display = 'none';
+        }
+    }
+});
+
+// Load saved bookmarks on page load
+loadSavedBookmarks();
+</script>
+{% endblock %}

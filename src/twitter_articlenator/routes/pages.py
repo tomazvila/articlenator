@@ -20,6 +20,12 @@ def setup():
     return render_template("cookie_guide.html")
 
 
+@pages_bp.route("/bookmarks")
+def bookmarks():
+    """GET /bookmarks - Bookmark fetcher and converter."""
+    return render_template("bookmarks.html")
+
+
 @pages_bp.route("/download/<filename>")
 def download(filename: str):
     """GET /download/<filename> - Download generated PDF."""
