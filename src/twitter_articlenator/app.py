@@ -48,11 +48,12 @@ class AsyncRunner:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
-    def run[T](self, coro: Coroutine[Any, Any, T]) -> T:
+    def run[T](self, coro: Coroutine[Any, Any, T], *, timeout: float = 120) -> T:
         """Run a coroutine on the persistent event loop.
 
         Args:
             coro: Coroutine to run.
+            timeout: Maximum seconds to wait for the result (default 120).
 
         Returns:
             Result of the coroutine.
@@ -60,14 +61,14 @@ class AsyncRunner:
         self._ensure_loop()
         assert self._loop is not None  # Guaranteed by _ensure_loop
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=120)  # 2 minute timeout
+        return future.result(timeout=timeout)
 
 
 # Global async runner instance
 _async_runner = AsyncRunner()
 
 
-def run_async(coro):
+def run_async(coro, *, timeout: float = 120):
     """Run an async coroutine safely from sync Flask code.
 
     Uses a persistent background event loop to avoid event loop conflicts
@@ -75,11 +76,12 @@ def run_async(coro):
 
     Args:
         coro: Coroutine to run.
+        timeout: Maximum seconds to wait for the result (default 120).
 
     Returns:
         Result of the coroutine.
     """
-    return _async_runner.run(coro)
+    return _async_runner.run(coro, timeout=timeout)
 
 
 def create_app(test_config: dict | None = None) -> Flask:

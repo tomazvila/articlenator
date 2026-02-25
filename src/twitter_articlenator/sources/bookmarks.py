@@ -1,7 +1,10 @@
 """Bookmark scraper using Playwright browser automation."""
 
+from __future__ import annotations
+
 import asyncio
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import structlog
@@ -90,8 +93,15 @@ class BookmarkScraper:
                 )
         return cookies
 
-    async def scrape(self) -> list[BookmarkEntry]:
+    async def scrape(
+        self,
+        on_bookmark: "Callable[[BookmarkEntry, int], None] | None" = None,
+    ) -> list[BookmarkEntry]:
         """Scrape all bookmarks from x.com/i/bookmarks.
+
+        Args:
+            on_bookmark: Optional callback invoked for each new bookmark found.
+                         Receives (entry, running_total).
 
         Returns:
             List of BookmarkEntry objects.
@@ -184,6 +194,8 @@ class BookmarkScraper:
                         seen_ids.add(entry.tweet_id)
                         bookmarks.append(entry)
                         new_count += 1
+                        if on_bookmark:
+                            on_bookmark(entry, len(bookmarks))
 
                 if new_count > 0:
                     empty_scroll_count = 0

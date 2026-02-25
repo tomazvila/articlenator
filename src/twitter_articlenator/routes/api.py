@@ -311,7 +311,14 @@ def bookmarks_fetch():
     """POST /api/bookmarks/fetch - Scrape bookmarks with streaming progress.
 
     Expects cookies in request body. Returns SSE stream of bookmark entries.
+
+    Uses a thread-safe queue so bookmark entries are streamed to the client
+    as they are discovered (instead of waiting for the full scrape to finish,
+    which can exceed the run_async timeout for large bookmark lists).
     """
+    import queue
+    import threading
+
     run_async = _get_run_async()
     cookies = _get_cookies_from_request()
 
@@ -331,21 +338,56 @@ def bookmarks_fetch():
 
     scraper = BookmarkScraper(cookies=cookies)
 
-    def generate():
-        """Generator function for SSE stream."""
+    # Thread-safe queue for streaming bookmarks from the async scraper
+    # to the SSE generator.
+    bookmark_queue: queue.Queue = queue.Queue()
+
+    def _on_bookmark(entry, total):
+        """Callback invoked by the scraper for each new bookmark."""
+        bookmark_queue.put(("bookmark", entry, total))
+
+    def _run_scrape():
+        """Run the scraper in a background thread so the SSE generator can stream."""
         try:
-            yield f"data: {json_module.dumps({'type': 'start'})}\n\n"
-
-            bookmarks = run_async(scraper.scrape())
-
-            for i, entry in enumerate(bookmarks, 1):
-                yield f"data: {json_module.dumps({'type': 'bookmark', 'count': i, 'entry': entry.to_dict()})}\n\n"
-
-            yield f"data: {json_module.dumps({'type': 'complete', 'total': len(bookmarks)})}\n\n"
-
+            # Use a long timeout — scraping 300+ bookmarks can take 15+ minutes
+            bookmarks = run_async(scraper.scrape(on_bookmark=_on_bookmark), timeout=1200)
+            bookmark_queue.put(("complete", len(bookmarks), None))
+        except TimeoutError:
+            log.error("bookmark_fetch_timeout")
+            bookmark_queue.put(("error", "Bookmark scrape timed out (20 min limit)", None))
         except Exception as e:
             log.error("bookmark_fetch_failed", error=str(e))
-            yield f"data: {json_module.dumps({'type': 'error', 'error': str(e)})}\n\n"
+            bookmark_queue.put(("error", str(e) or type(e).__name__, None))
+
+    def generate():
+        """Generator function for SSE stream."""
+        yield f"data: {json_module.dumps({'type': 'start'})}\n\n"
+
+        # Start scraping in a background thread
+        thread = threading.Thread(target=_run_scrape, daemon=True)
+        thread.start()
+
+        count = 0
+        while True:
+            try:
+                msg = bookmark_queue.get(timeout=300)  # 5-minute overall timeout
+            except queue.Empty:
+                yield f"data: {json_module.dumps({'type': 'error', 'error': 'Scrape timed out'})}\n\n"
+                break
+
+            kind = msg[0]
+            if kind == "bookmark":
+                entry, total = msg[1], msg[2]
+                count += 1
+                yield f"data: {json_module.dumps({'type': 'bookmark', 'count': count, 'entry': entry.to_dict()})}\n\n"
+            elif kind == "complete":
+                total = msg[1]
+                yield f"data: {json_module.dumps({'type': 'complete', 'total': total})}\n\n"
+                break
+            elif kind == "error":
+                error_msg = msg[1]
+                yield f"data: {json_module.dumps({'type': 'error', 'error': error_msg})}\n\n"
+                break
 
     return Response(generate(), mimetype="text/event-stream")
 
