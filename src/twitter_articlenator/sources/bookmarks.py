@@ -129,7 +129,9 @@ class BookmarkScraper:
                 await page.wait_for_selector('[data-testid="tweet"]', timeout=15000)
             except Exception:
                 # Check if it's an empty bookmarks page
-                empty = await page.query_selector('text="You haven\'t added any posts to your Bookmarks yet"')
+                empty = await page.query_selector(
+                    'text="You haven\'t added any posts to your Bookmarks yet"'
+                )
                 if empty:
                     log.info("bookmark_scrape_empty")
                     return []
@@ -184,7 +186,12 @@ class BookmarkScraper:
             status_links = await tweet_el.query_selector_all('a[href*="/status/"]')
             for link in status_links:
                 href = await link.get_attribute("href")
-                if href and "/status/" in href and "/analytics" not in href and "/photo/" not in href:
+                if (
+                    href
+                    and "/status/" in href
+                    and "/analytics" not in href
+                    and "/photo/" not in href
+                ):
                     # Normalize to full URL
                     if href.startswith("/"):
                         href = f"https://x.com{href}"
@@ -220,7 +227,7 @@ class BookmarkScraper:
             text_el = await tweet_el.query_selector('[data-testid="tweetText"]')
             if text_el:
                 full_text = await text_el.inner_text()
-                text_preview = full_text[:self.MAX_PREVIEW_LENGTH]
+                text_preview = full_text[: self.MAX_PREVIEW_LENGTH]
                 if len(full_text) > self.MAX_PREVIEW_LENGTH:
                     text_preview += "..."
 
@@ -230,7 +237,11 @@ class BookmarkScraper:
                 links = await text_el.query_selector_all("a")
                 for link in links:
                     href = await link.get_attribute("href")
-                    if href and href.startswith("http") and not self.IGNORE_URL_PATTERNS.match(href):
+                    if (
+                        href
+                        and href.startswith("http")
+                        and not self.IGNORE_URL_PATTERNS.match(href)
+                    ):
                         article_urls.append(href)
 
             # Also check for card links (preview cards for articles)

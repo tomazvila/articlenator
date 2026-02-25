@@ -316,7 +316,12 @@ def bookmarks_fetch():
     cookies = _get_cookies_from_request()
 
     if not cookies:
-        return jsonify({"error": "Twitter cookies required. Please set up your cookies first.", "setup_url": "/setup"}), 400
+        return jsonify(
+            {
+                "error": "Twitter cookies required. Please set up your cookies first.",
+                "setup_url": "/setup",
+            }
+        ), 400
 
     validation = validate_cookies(cookies)
     if not validation["valid"]:
