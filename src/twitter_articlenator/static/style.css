@@ -700,7 +700,35 @@ footer .version {
 }
 
 .bookmarks-header h2 {
+    width: 100%;
     margin: 0;
+}
+
+.bookmarks-filter {
+    display: flex;
+    gap: 4px;
+}
+
+.filter-btn {
+    background-color: var(--bg-light);
+    color: var(--fg-dark);
+    padding: 5px 14px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.filter-btn:hover {
+    background-color: var(--fg-dark);
+    color: var(--fg);
+}
+
+.filter-btn.active {
+    background-color: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
 }
 
 .bookmarks-actions {
@@ -708,6 +736,11 @@ footer .version {
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+}
+
+.bookmark-displayname {
+    font-size: 12px;
+    color: var(--fg-dark);
 }
 
 .small-btn {

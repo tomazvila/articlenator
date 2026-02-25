@@ -4,7 +4,7 @@
 
 {% block content %}
 <h1>Bookmarks</h1>
-<p>Fetch your Twitter/X bookmarks and convert them to a PDF.</p>
+<p>Fetch your Twitter/X bookmarks, filter for articles, and convert them to PDF.</p>
 
 <div class="bookmarks-controls">
     <div class="button-group">
@@ -34,10 +34,14 @@
 <div id="bookmarks-section" style="display: none;">
     <div class="bookmarks-header">
         <h2 id="bookmarks-title">Bookmarks</h2>
+        <div class="bookmarks-filter">
+            <button type="button" class="filter-btn active" data-filter="articles">Articles Only</button>
+            <button type="button" class="filter-btn" data-filter="all">All</button>
+            <button type="button" class="filter-btn" data-filter="tweets">Tweets Only</button>
+        </div>
         <div class="bookmarks-actions">
-            <button type="button" id="select-all-btn" class="small-btn">Select All</button>
+            <button type="button" id="select-all-btn" class="small-btn">Select All Visible</button>
             <button type="button" id="select-none-btn" class="small-btn">Select None</button>
-            <button type="button" id="select-articles-btn" class="small-btn">Select With Links</button>
             <span id="selection-count" class="selection-count"></span>
         </div>
     </div>
@@ -64,6 +68,7 @@
 const BOOKMARKS_KEY = 'articlenator_bookmarks';
 
 let bookmarksData = [];
+let currentFilter = 'articles'; // 'articles', 'all', 'tweets'
 
 // Browser notifications
 function requestNotificationPermission() {
@@ -85,6 +90,10 @@ function sendNotification(title, body) {
             notification.close();
         };
     }
+}
+
+function hasArticleLinks(b) {
+    return b.article_urls && b.article_urls.length > 0;
 }
 
 // Load saved bookmarks from localStorage on page load
@@ -113,19 +122,36 @@ function renderBookmarks() {
     }
 
     section.style.display = 'block';
-    title.textContent = `Bookmarks (${bookmarksData.length})`;
     list.innerHTML = '';
 
+    const articleCount = bookmarksData.filter(hasArticleLinks).length;
+    const tweetCount = bookmarksData.length - articleCount;
+
+    // Update title based on filter
+    if (currentFilter === 'articles') {
+        title.textContent = `Articles (${articleCount} of ${bookmarksData.length} bookmarks)`;
+    } else if (currentFilter === 'tweets') {
+        title.textContent = `Tweets (${tweetCount} of ${bookmarksData.length} bookmarks)`;
+    } else {
+        title.textContent = `All Bookmarks (${bookmarksData.length})`;
+    }
+
+    let visibleCount = 0;
     for (let i = 0; i < bookmarksData.length; i++) {
         const b = bookmarksData[i];
-        const hasArticle = b.article_urls && b.article_urls.length > 0;
+        const hasArticle = hasArticleLinks(b);
 
+        // Apply filter
+        if (currentFilter === 'articles' && !hasArticle) continue;
+        if (currentFilter === 'tweets' && hasArticle) continue;
+
+        visibleCount++;
         const li = document.createElement('li');
         li.className = 'bookmark-item' + (hasArticle ? ' has-article' : '');
 
         const linksHtml = hasArticle
             ? b.article_urls.map(url => `<a href="${url}" target="_blank" class="article-link">${truncateUrl(url)}</a>`).join(' ')
-            : '<span class="no-link">No external link</span>';
+            : '';
 
         li.innerHTML = `
             <label class="bookmark-label">
@@ -133,10 +159,11 @@ function renderBookmarks() {
                 <div class="bookmark-content">
                     <div class="bookmark-meta">
                         <span class="bookmark-author">@${b.author}</span>
+                        ${b.display_name ? `<span class="bookmark-displayname">${escapeHtml(b.display_name)}</span>` : ''}
                         ${b.bookmarked_at ? `<span class="bookmark-date">${new Date(b.bookmarked_at).toLocaleDateString()}</span>` : ''}
                     </div>
                     <div class="bookmark-text">${escapeHtml(b.text_preview || '(no text)')}</div>
-                    <div class="bookmark-links">${linksHtml}</div>
+                    ${linksHtml ? `<div class="bookmark-links">${linksHtml}</div>` : ''}
                 </div>
             </label>
         `;
@@ -144,7 +171,16 @@ function renderBookmarks() {
     }
 
     updateSelectionCount();
-    convertBtn.disabled = false;
+    convertBtn.disabled = visibleCount === 0;
+}
+
+function applyFilter(filter) {
+    currentFilter = filter;
+    // Update active button
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+    renderBookmarks();
 }
 
 function truncateUrl(url) {
@@ -164,16 +200,20 @@ function escapeHtml(text) {
 }
 
 function updateSelectionCount() {
-    const checks = document.querySelectorAll('.bookmark-check:checked');
-    const count = checks.length;
-    const total = document.querySelectorAll('.bookmark-check').length;
-    document.getElementById('selection-count').textContent = `${count} / ${total} selected`;
+    const visible = document.querySelectorAll('.bookmark-check');
+    const checked = document.querySelectorAll('.bookmark-check:checked');
+    document.getElementById('selection-count').textContent = `${checked.length} / ${visible.length} selected`;
 
     const convertBtn = document.getElementById('convert-btn');
-    convertBtn.disabled = count === 0;
+    convertBtn.disabled = checked.length === 0;
 }
 
-// Selection buttons
+// Filter buttons
+document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => applyFilter(btn.dataset.filter));
+});
+
+// Selection buttons — operate on visible items only
 document.getElementById('select-all-btn').addEventListener('click', () => {
     document.querySelectorAll('.bookmark-check').forEach(c => c.checked = true);
     updateSelectionCount();
@@ -181,15 +221,6 @@ document.getElementById('select-all-btn').addEventListener('click', () => {
 
 document.getElementById('select-none-btn').addEventListener('click', () => {
     document.querySelectorAll('.bookmark-check').forEach(c => c.checked = false);
-    updateSelectionCount();
-});
-
-document.getElementById('select-articles-btn').addEventListener('click', () => {
-    document.querySelectorAll('.bookmark-check').forEach(c => {
-        const idx = parseInt(c.dataset.index);
-        const b = bookmarksData[idx];
-        c.checked = b && b.article_urls && b.article_urls.length > 0;
-    });
     updateSelectionCount();
 });
 
