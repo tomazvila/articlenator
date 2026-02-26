@@ -22,7 +22,7 @@ class TwitterPlaywrightSource(ContentSource):
 
     # URL patterns for Twitter/X
     TWITTER_URL_PATTERN = re.compile(
-        r"https?://(?:www\.)?(?:twitter\.com|x\.com)/(\w+)/status/(\d+)"
+        r"https?://(?:www\.)?(?:twitter\.com|x\.com)/(\w+)/(?:status|article)/(\d+)"
     )
 
     # Maximum title length

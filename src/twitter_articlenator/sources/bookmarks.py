@@ -31,6 +31,7 @@ class BookmarkEntry:
     display_name: str
     text_preview: str
     article_urls: list[str] = field(default_factory=list)
+    is_article: bool = False
     bookmarked_at: str | None = None
 
     def to_dict(self) -> dict:
@@ -42,6 +43,7 @@ class BookmarkEntry:
             "display_name": self.display_name,
             "text_preview": self.text_preview,
             "article_urls": self.article_urls,
+            "is_article": self.is_article,
             "bookmarked_at": self.bookmarked_at,
         }
 
@@ -58,6 +60,11 @@ class BookmarkScraper:
     # URLs to ignore when extracting article links
     IGNORE_URL_PATTERNS = re.compile(
         r"https?://(?:www\.)?(?:twitter\.com|x\.com|t\.co)/",
+    )
+
+    # Pattern matching X Article URLs (native long-form articles on X)
+    X_ARTICLE_URL_PATTERN = re.compile(
+        r"https?://(?:www\.)?(?:twitter\.com|x\.com)/\w+/article/",
     )
 
     def __init__(self, cookies: str) -> None:
@@ -286,12 +293,33 @@ class BookmarkScraper:
                         article_urls.append(href)
 
             # Also check for card links (preview cards for articles)
-            card_link = await tweet_el.query_selector('[data-testid="card.wrapper"] a[href]')
-            if card_link:
+            card_links = await tweet_el.query_selector_all('[data-testid="card.wrapper"] a[href]')
+            is_article = False
+            for card_link in card_links:
                 href = await card_link.get_attribute("href")
-                if href and href.startswith("http") and not self.IGNORE_URL_PATTERNS.match(href):
+                if not href or not href.startswith("http"):
+                    continue
+                # Check if this is a native X Article link
+                if self.X_ARTICLE_URL_PATTERN.match(href):
+                    is_article = True
                     if href not in article_urls:
                         article_urls.append(href)
+                elif not self.IGNORE_URL_PATTERNS.match(href):
+                    if href not in article_urls:
+                        article_urls.append(href)
+
+            # Also detect X Articles by looking for all links with /article/ pattern
+            # (may appear outside card wrappers)
+            all_links = await tweet_el.query_selector_all("a[href]")
+            for link in all_links:
+                href = await link.get_attribute("href")
+                if href:
+                    if href.startswith("/"):
+                        href = f"https://x.com{href}"
+                    if self.X_ARTICLE_URL_PATTERN.match(href):
+                        is_article = True
+                        if href not in article_urls:
+                            article_urls.append(href)
 
             # Extract timestamp
             bookmarked_at = None
@@ -306,6 +334,7 @@ class BookmarkScraper:
                 display_name=display_name,
                 text_preview=text_preview,
                 article_urls=article_urls,
+                is_article=is_article,
                 bookmarked_at=bookmarked_at,
             )
 

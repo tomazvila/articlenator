@@ -92,8 +92,8 @@ function sendNotification(title, body) {
     }
 }
 
-function hasArticleLinks(b) {
-    return b.article_urls && b.article_urls.length > 0;
+function isArticle(b) {
+    return b.is_article || (b.article_urls && b.article_urls.length > 0);
 }
 
 // Load saved bookmarks from localStorage on page load
@@ -124,7 +124,7 @@ function renderBookmarks() {
     section.style.display = 'block';
     list.innerHTML = '';
 
-    const articleCount = bookmarksData.filter(hasArticleLinks).length;
+    const articleCount = bookmarksData.filter(isArticle).length;
     const tweetCount = bookmarksData.length - articleCount;
 
     // Update title based on filter
@@ -139,27 +139,42 @@ function renderBookmarks() {
     let visibleCount = 0;
     for (let i = 0; i < bookmarksData.length; i++) {
         const b = bookmarksData[i];
-        const hasArticle = hasArticleLinks(b);
+        const article = isArticle(b);
+        const hasLinks = b.article_urls && b.article_urls.length > 0;
+        const nativeArticle = b.is_article;
 
         // Apply filter
-        if (currentFilter === 'articles' && !hasArticle) continue;
-        if (currentFilter === 'tweets' && hasArticle) continue;
+        if (currentFilter === 'articles' && !article) continue;
+        if (currentFilter === 'tweets' && article) continue;
 
         visibleCount++;
         const li = document.createElement('li');
-        li.className = 'bookmark-item' + (hasArticle ? ' has-article' : '');
+        li.className = 'bookmark-item' + (article ? ' has-article' : '');
 
-        const linksHtml = hasArticle
-            ? b.article_urls.map(url => `<a href="${url}" target="_blank" class="article-link">${truncateUrl(url)}</a>`).join(' ')
-            : '';
+        // Build links display
+        let linksHtml = '';
+        if (hasLinks) {
+            linksHtml = b.article_urls.map(url => `<a href="${url}" target="_blank" class="article-link">${truncateUrl(url)}</a>`).join(' ');
+        } else if (nativeArticle) {
+            linksHtml = `<a href="${b.tweet_url}" target="_blank" class="article-link">X Article</a>`;
+        }
+
+        // Badge for article type
+        let badge = '';
+        if (nativeArticle) {
+            badge = '<span class="bookmark-badge badge-article">X Article</span>';
+        } else if (hasLinks) {
+            badge = '<span class="bookmark-badge badge-link">Has Links</span>';
+        }
 
         li.innerHTML = `
             <label class="bookmark-label">
-                <input type="checkbox" class="bookmark-check" data-index="${i}" ${hasArticle ? 'checked' : ''}>
+                <input type="checkbox" class="bookmark-check" data-index="${i}" ${article ? 'checked' : ''}>
                 <div class="bookmark-content">
                     <div class="bookmark-meta">
                         <span class="bookmark-author">@${b.author}</span>
                         ${b.display_name ? `<span class="bookmark-displayname">${escapeHtml(b.display_name)}</span>` : ''}
+                        ${badge}
                         ${b.bookmarked_at ? `<span class="bookmark-date">${new Date(b.bookmarked_at).toLocaleDateString()}</span>` : ''}
                     </div>
                     <div class="bookmark-text">${escapeHtml(b.text_preview || '(no text)')}</div>
@@ -300,8 +315,8 @@ document.getElementById('fetch-btn').addEventListener('click', async () => {
                         localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(bookmarksData));
                         renderBookmarks();
 
-                        const articleCount = bookmarksData.filter(b => b.article_urls && b.article_urls.length > 0).length;
-                        sendNotification('Bookmarks Fetched', `Found ${data.total} bookmarks with ${articleCount} article links`);
+                        const articleCount = bookmarksData.filter(isArticle).length;
+                        sendNotification('Bookmarks Fetched', `Found ${articleCount} articles in ${data.total} bookmarks`);
                     } else if (data.type === 'error') {
                         fetchStatus.style.display = 'none';
                         errorDiv.style.display = 'block';
