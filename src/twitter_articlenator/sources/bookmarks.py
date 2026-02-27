@@ -125,16 +125,27 @@ class BookmarkScraper:
             await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(3)
 
-            # Verify authentication
+            # Verify authentication — fail fast if cookies are expired
             try:
                 await page.wait_for_selector('[data-testid="tweet"]', timeout=15000)
                 log.info("bookmark_scrape_authenticated")
             except Exception:
-                log.warning(
-                    "bookmark_scrape_auth_unclear",
-                    hint="Home feed did not load",
-                    page_url=page.url,
-                    page_title=await page.title(),
+                page_url = page.url
+                page_title = await page.title()
+                log.error(
+                    "bookmark_scrape_auth_failed",
+                    page_url=page_url,
+                    page_title=page_title,
+                )
+                # Detect login redirect — cookies are expired
+                if "login" in page_url or "Log in" in page_title:
+                    raise ValueError(
+                        "Authentication failed — your Twitter cookies have expired. "
+                        "Please go to Setup and enter fresh cookies."
+                    )
+                raise ValueError(
+                    "Could not verify Twitter authentication. "
+                    "Please check your cookies and try again."
                 )
 
             # Navigate to bookmarks using React Router (same approach as

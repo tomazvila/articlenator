@@ -171,12 +171,61 @@ def convert():
 
 @api_bp.route("/cookies/validate", methods=["POST"])
 def validate_cookies_endpoint():
-    """POST /api/cookies/validate - Validate cookie format.
+    """POST /api/cookies/validate - Validate cookie format and optionally test live.
 
     Client sends cookies from localStorage for server-side validation.
+    Pass ?live=true to also test cookies against Twitter's API.
     """
     cookies = _get_cookies_from_request()
     result = validate_cookies(cookies)
+
+    if not result["valid"]:
+        log.info("cookies_validated", status=result["status"])
+        return jsonify(result)
+
+    # If live validation requested, test against Twitter API
+    live = request.args.get("live", "false").lower() == "true"
+    if live and cookies:
+        import httpx
+
+        try:
+            cookie_dict = {}
+            for part in cookies.split(";"):
+                part = part.strip()
+                if "=" in part:
+                    name, value = part.split("=", 1)
+                    cookie_dict[name.strip()] = value.strip()
+
+            resp = httpx.get(
+                "https://api.x.com/1.1/account/verify_credentials.json",
+                headers={
+                    "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+                    "x-csrf-token": cookie_dict.get("ct0", ""),
+                },
+                cookies=cookie_dict,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                screen_name = data.get("screen_name", "unknown")
+                result["live"] = True
+                result["screen_name"] = screen_name
+                result["message"] = f"Cookies valid — authenticated as @{screen_name}"
+                log.info("cookies_live_valid", screen_name=screen_name)
+            else:
+                result["valid"] = False
+                result["live"] = False
+                result["status"] = "expired"
+                result["message"] = (
+                    "Cookies have expired or are invalid. "
+                    "Please get fresh cookies from Twitter."
+                )
+                log.warning("cookies_live_invalid", status_code=resp.status_code)
+        except Exception as e:
+            log.warning("cookies_live_check_failed", error=str(e))
+            # Don't fail validation — just skip live check
+            result["live"] = None
+            result["message"] += " (Could not verify live — network error)"
 
     log.info("cookies_validated", status=result["status"])
     return jsonify(result)
@@ -333,6 +382,38 @@ def bookmarks_fetch():
     validation = validate_cookies(cookies)
     if not validation["valid"]:
         return jsonify({"error": validation["message"]}), 400
+
+    # Quick live check — verify cookies work before launching expensive scraper
+    import httpx
+
+    try:
+        cookie_dict = {}
+        for part in cookies.split(";"):
+            part = part.strip()
+            if "=" in part:
+                name, value = part.split("=", 1)
+                cookie_dict[name.strip()] = value.strip()
+
+        resp = httpx.get(
+            "https://api.x.com/1.1/account/verify_credentials.json",
+            headers={
+                "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+                "x-csrf-token": cookie_dict.get("ct0", ""),
+            },
+            cookies=cookie_dict,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            log.warning("bookmark_preflight_auth_failed", status_code=resp.status_code)
+            return jsonify(
+                {
+                    "error": "Your Twitter cookies have expired or are invalid. Please go to Setup and enter fresh cookies.",
+                    "setup_url": "/setup",
+                }
+            ), 401
+    except Exception as e:
+        log.warning("bookmark_preflight_check_failed", error=str(e))
+        # Network error — proceed anyway, let the scraper handle it
 
     from ..sources.bookmarks import BookmarkScraper
 

@@ -283,6 +283,14 @@ document.getElementById('fetch-btn').addEventListener('click', async () => {
             if (data.error) {
                 errorDiv.style.display = 'block';
                 errorText.textContent = data.error;
+                if (data.setup_url) {
+                    const link = document.createElement('a');
+                    link.href = data.setup_url;
+                    link.textContent = ' Go to Setup \u2192';
+                    link.style.display = 'block';
+                    link.style.marginTop = '0.5em';
+                    errorText.appendChild(link);
+                }
                 return;
             }
         }
