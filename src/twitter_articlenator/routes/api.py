@@ -217,8 +217,7 @@ def validate_cookies_endpoint():
                 result["live"] = False
                 result["status"] = "expired"
                 result["message"] = (
-                    "Cookies have expired or are invalid. "
-                    "Please get fresh cookies from Twitter."
+                    "Cookies have expired or are invalid. Please get fresh cookies from Twitter."
                 )
                 log.warning("cookies_live_invalid", status_code=resp.status_code)
         except Exception as e:
