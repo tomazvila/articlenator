@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+
+{% block title %}Video Downloader{% endblock %}
+
+{% block content %}
+<h1>Video Downloader</h1>
+<p>Paste Twitter/X video links below (one per line) to download them as separate MP4 files.</p>
+
+<form id="download-form">
+    <div class="form-group">
+        <label for="video-links-input">Video Links:</label>
+        <textarea
+            id="video-links-input"
+            name="links"
+            rows="10"
+            placeholder="https://x.com/user/status/123456789
+https://x.com/anotheruser/status/987654321"
+        ></textarea>
+    </div>
+    <div class="button-group">
+        <button type="submit" id="download-btn">Download Videos</button>
+        <button type="button" id="clear-btn" class="secondary">Clear</button>
+    </div>
+</form>
+
+<div id="status" class="status-message" style="display: none;">
+    <span class="spinner"></span>
+    <span id="status-text">Processing...</span>
+</div>
+
+<div id="progress-details" class="progress-section" style="display: none;">
+    <div class="progress-bar-container">
+        <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+    </div>
+    <div id="progress-info" class="progress-info"></div>
+    <ul id="progress-list" class="progress-list"></ul>
+</div>
+
+<div id="results" class="results-section" style="display: none;">
+    <h2>Downloaded Videos</h2>
+    <ul id="download-list"></ul>
+</div>
+
+<div id="warning" class="warning-message" style="display: none;">
+    <strong>Warning:</strong>
+    <pre id="warning-text"></pre>
+</div>
+
+<div id="error" class="error-message" style="display: none;">
+    <strong>Error:</strong>
+    <pre id="error-text"></pre>
+</div>
+
+<script>
+// COOKIES_KEY is defined in base.html
+const VIDEO_LINKS_KEY = 'articlenator_video_links';
+
+// Persist textarea content
+const linksInput = document.getElementById('video-links-input');
+const savedLinks = localStorage.getItem(VIDEO_LINKS_KEY);
+if (savedLinks) {
+    linksInput.value = savedLinks;
+}
+linksInput.addEventListener('input', () => {
+    localStorage.setItem(VIDEO_LINKS_KEY, linksInput.value);
+});
+
+// Browser notifications
+function requestNotificationPermission() {
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+}
+
+function sendNotification(title, body) {
+    if ('Notification' in window && Notification.permission === 'granted') {
+        const notification = new Notification(title, {
+            body: body,
+            icon: '/static/icon-192.png',
+            tag: 'video-ready'
+        });
+        setTimeout(() => notification.close(), 5000);
+        notification.onclick = () => {
+            window.focus();
+            notification.close();
+        };
+    }
+}
+
+// Clear button
+document.getElementById('clear-btn').addEventListener('click', () => {
+    linksInput.value = '';
+    localStorage.removeItem(VIDEO_LINKS_KEY);
+    document.getElementById('results').style.display = 'none';
+    document.getElementById('warning').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+    document.getElementById('progress-details').style.display = 'none';
+    document.getElementById('progress-list').innerHTML = '';
+    document.getElementById('progress-bar').style.width = '0%';
+});
+
+document.getElementById('download-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    requestNotificationPermission();
+
+    const resultsDiv = document.getElementById('results');
+    const errorDiv = document.getElementById('error');
+    const errorText = document.getElementById('error-text');
+    const warningDiv = document.getElementById('warning');
+    const warningText = document.getElementById('warning-text');
+    const statusDiv = document.getElementById('status');
+    const statusText = document.getElementById('status-text');
+    const progressDetails = document.getElementById('progress-details');
+    const progressBar = document.getElementById('progress-bar');
+    const progressInfo = document.getElementById('progress-info');
+    const progressList = document.getElementById('progress-list');
+    const downloadList = document.getElementById('download-list');
+    const submitBtn = document.getElementById('download-btn');
+
+    // Reset UI
+    resultsDiv.style.display = 'none';
+    errorDiv.style.display = 'none';
+    warningDiv.style.display = 'none';
+    progressDetails.style.display = 'none';
+    progressList.innerHTML = '';
+    downloadList.innerHTML = '';
+    submitBtn.disabled = true;
+    statusDiv.style.display = 'flex';
+    statusText.textContent = 'Starting...';
+
+    // Get links and cookies
+    const links = linksInput.value.trim().split('\n').filter(l => l.trim());
+    const cookies = localStorage.getItem(COOKIES_KEY) || '';
+
+    if (links.length === 0) {
+        errorDiv.style.display = 'block';
+        errorText.textContent = 'Please enter at least one link';
+        statusDiv.style.display = 'none';
+        submitBtn.disabled = false;
+        return;
+    }
+
+    if (!cookies) {
+        errorDiv.style.display = 'block';
+        errorText.textContent = 'No cookies configured. Go to Setup first.';
+        statusDiv.style.display = 'none';
+        submitBtn.disabled = false;
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/videos/download', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({links: links, cookies: cookies})
+        });
+
+        // Check for non-stream error responses
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            if (data.error) {
+                errorDiv.style.display = 'block';
+                errorText.textContent = data.error;
+                if (data.setup_url) {
+                    const link = document.createElement('a');
+                    link.href = data.setup_url;
+                    link.textContent = ' Go to setup \u2192';
+                    errorText.appendChild(link);
+                }
+                return;
+            }
+        }
+
+        // Process SSE stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        progressDetails.style.display = 'block';
+
+        while (true) {
+            const {value, done} = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, {stream: true});
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = JSON.parse(line.slice(6));
+
+                    if (data.type === 'start') {
+                        statusText.textContent = `Downloading ${data.total} video(s)...`;
+                        progressInfo.textContent = `0 / ${data.total}`;
+                    } else if (data.type === 'waiting') {
+                        statusText.textContent = `Throttling... next video in ${data.seconds}s (${data.current} / ${data.total})`;
+                    } else if (data.type === 'retry') {
+                        statusText.textContent = `Retry ${data.attempt}/${data.max_attempts} in ${data.wait_seconds}s...`;
+                        let li = document.getElementById(`progress-${data.current}`);
+                        if (li) {
+                            li.className = 'progress-item processing';
+                            li.innerHTML = `<span class="status-icon">\u23F3</span> Retry ${data.attempt}/${data.max_attempts} - ${data.url}`;
+                        }
+                    } else if (data.type === 'progress') {
+                        const percent = (data.current / data.total) * 100;
+                        progressBar.style.width = `${percent}%`;
+                        progressInfo.textContent = `${data.current} / ${data.total}`;
+
+                        let li = document.getElementById(`progress-${data.current}`);
+                        if (!li) {
+                            li = document.createElement('li');
+                            li.id = `progress-${data.current}`;
+                            progressList.appendChild(li);
+                        }
+
+                        if (data.status === 'processing') {
+                            li.className = 'progress-item processing';
+                            li.innerHTML = `<span class="status-icon">\u23F3</span> ${data.url}`;
+                            statusText.textContent = `Downloading ${data.current}/${data.total}: ${data.url.substring(0, 50)}...`;
+                        } else if (data.status === 'success') {
+                            li.className = 'progress-item success';
+                            li.innerHTML = `<span class="status-icon">\u2713</span> ${data.filename}`;
+                        } else if (data.status === 'failed') {
+                            li.className = 'progress-item failed';
+                            li.innerHTML = `<span class="status-icon">\u2717</span> ${data.url}<br><small class="error-detail">${data.error}</small>`;
+                        }
+                    } else if (data.type === 'complete') {
+                        statusDiv.style.display = 'none';
+
+                        if (data.videos && data.videos.length > 0) {
+                            resultsDiv.style.display = 'block';
+                            for (const video of data.videos) {
+                                const li = document.createElement('li');
+                                const a = document.createElement('a');
+                                a.href = `/download/video/${video.filename}`;
+                                a.textContent = `${video.filename} (${formatFileSize(video.size_bytes)})`;
+                                li.appendChild(a);
+                                downloadList.appendChild(li);
+                            }
+                        }
+
+                        if (data.summary) {
+                            const summaryLi = document.createElement('li');
+                            summaryLi.className = 'summary';
+                            summaryLi.textContent = `Summary: ${data.summary.succeeded} downloaded, ${data.summary.failed} failed of ${data.summary.total} total`;
+                            downloadList.appendChild(summaryLi);
+                        }
+
+                        if (data.errors && data.errors.length > 0) {
+                            warningDiv.style.display = 'block';
+                            const failedUrls = data.errors.map(e => `${e.url}:\n  ${e.error}`).join('\n\n');
+                            warningText.textContent = `${data.errors.length} video(s) failed:\n\n${failedUrls}`;
+                        }
+
+                        const count = data.summary ? data.summary.succeeded : 0;
+                        sendNotification('Videos Ready!', `${count} video${count !== 1 ? 's' : ''} downloaded`);
+                    } else if (data.type === 'error') {
+                        statusDiv.style.display = 'none';
+                        errorDiv.style.display = 'block';
+                        errorText.textContent = data.error;
+                    }
+                }
+            }
+        }
+    } catch (err) {
+        console.error('Download error:', err);
+        errorDiv.style.display = 'block';
+        errorText.textContent = 'Failed to connect to server: ' + err.message;
+    } finally {
+        submitBtn.disabled = false;
+        if (statusDiv.style.display !== 'none') {
+            statusDiv.style.display = 'none';
+        }
+    }
+});
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+</script>
+{% endblock %}

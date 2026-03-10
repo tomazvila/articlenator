@@ -1,17 +1,21 @@
 """API routes blueprint."""
 
 import json as json_module
+import re
 import time
 
 import structlog
 from flask import Blueprint, Response, jsonify, request, current_app
-from ..config import parse_cookie_input, validate_cookies
+from ..config import get_config, parse_cookie_input, validate_cookies
 from ..pdf.generator import generate_combined_pdf
 from ..sources import get_source_for_url
 from ..sources.twitter_playwright import TwitterPlaywrightSource
 
 # Delay between processing URLs to avoid rate limiting (seconds)
 URL_PROCESSING_DELAY = 2.0
+
+# Pattern for valid Twitter/X video URLs
+TWITTER_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:twitter\.com|x\.com)/(\w+)/status/(\d+)")
 
 log = structlog.get_logger()
 
@@ -570,3 +574,164 @@ def bookmarks_convert():
             yield f"data: {json_module.dumps({'type': 'error', 'error': 'All conversions failed', 'details': error_details})}\n\n"
 
     return Response(generate(), mimetype="text/event-stream")
+
+
+@api_bp.route("/videos/download", methods=["POST"])
+def videos_download():
+    """POST /api/videos/download - Download videos from Twitter/X links.
+
+    Expects cookies and links in request body. Returns SSE stream with progress.
+    """
+    run_async = _get_run_async()
+
+    if request.is_json:
+        data = request.get_json() or {}
+        links = data.get("links", [])
+    else:
+        links_text = request.form.get("links", "")
+        links = [line.strip() for line in links_text.split("\n") if line.strip()]
+
+    if not links:
+        return jsonify({"error": "No links provided"}), 400
+
+    cookies = _get_cookies_from_request()
+    if not cookies:
+        return (
+            jsonify(
+                {
+                    "error": "Twitter cookies required. Please set up your cookies first.",
+                    "setup_url": "/setup",
+                }
+            ),
+            400,
+        )
+
+    # Validate all URLs are Twitter/X status URLs
+    invalid_urls = [url for url in links if not TWITTER_URL_PATTERN.match(url)]
+    if invalid_urls:
+        return (
+            jsonify(
+                {
+                    "error": f"Invalid Twitter/X URLs: {', '.join(invalid_urls)}. "
+                    "Only tweet URLs (x.com/user/status/ID) are supported."
+                }
+            ),
+            400,
+        )
+
+    config = get_config()
+    video_dir = config.output_dir / "videos"
+
+    # Resilient download settings — prioritize completion over speed
+    VIDEO_BASE_DELAY = 12  # seconds between successful downloads
+    VIDEO_MAX_RETRIES = 3  # retries per video before giving up
+    VIDEO_RETRY_DELAYS = [30, 60, 120]  # escalating retry waits (seconds)
+    VIDEO_TIMEOUT = 300  # 5 min per download attempt
+
+    def _sleep_with_keepalive(seconds):
+        """Sleep while yielding SSE keepalives to prevent connection drops."""
+        events = []
+        elapsed = 0
+        while elapsed < seconds:
+            chunk = min(15, seconds - elapsed)
+            time.sleep(chunk)
+            elapsed += chunk
+            events.append(": keepalive\n\n")
+        return events
+
+    def vid_generate():
+        """Generator function for SSE stream."""
+        import random
+
+        from ..sources.video_downloader import VideoDownloader
+
+        downloader = VideoDownloader(cookies=cookies)
+        videos = []
+        errors = []
+        total = len(links)
+        consecutive_failures = 0
+
+        yield f"data: {json_module.dumps({'type': 'start', 'total': total})}\n\n"
+
+        for i, url in enumerate(links, 1):
+            if i > 1:
+                # Adaptive delay: slow down more after failures
+                delay = VIDEO_BASE_DELAY + random.uniform(0, 5)
+                if consecutive_failures > 0:
+                    delay += consecutive_failures * 15
+                log.info("video_throttle_delay", delay=round(delay, 1), item=f"{i}/{total}")
+
+                yield f"data: {json_module.dumps({'type': 'waiting', 'current': i, 'total': total, 'seconds': round(delay)})}\n\n"
+                for evt in _sleep_with_keepalive(delay):
+                    yield evt
+
+            yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing'})}\n\n"
+
+            succeeded = False
+            last_error = None
+
+            for attempt in range(VIDEO_MAX_RETRIES + 1):
+                try:
+                    log.info(
+                        "downloading_video_stream",
+                        url=url,
+                        progress=f"{i}/{total}",
+                        attempt=attempt + 1,
+                    )
+                    video_path = run_async(
+                        downloader.download(url, video_dir), timeout=VIDEO_TIMEOUT
+                    )
+                    filename = video_path.name
+                    size_bytes = video_path.stat().st_size
+
+                    videos.append({"url": url, "filename": filename, "size_bytes": size_bytes})
+
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'filename': filename})}\n\n"
+
+                    succeeded = True
+                    consecutive_failures = 0
+                    break
+
+                except Exception as e:
+                    last_error = str(e)
+                    log.warning(
+                        "video_download_attempt_failed",
+                        url=url,
+                        attempt=attempt + 1,
+                        max_attempts=VIDEO_MAX_RETRIES + 1,
+                        error=last_error,
+                    )
+
+                    if attempt < VIDEO_MAX_RETRIES:
+                        retry_delay = VIDEO_RETRY_DELAYS[attempt] + random.uniform(0, 10)
+                        log.info("video_retry_wait", seconds=round(retry_delay, 1))
+
+                        yield f"data: {json_module.dumps({'type': 'retry', 'current': i, 'total': total, 'url': url, 'attempt': attempt + 2, 'max_attempts': VIDEO_MAX_RETRIES + 1, 'wait_seconds': round(retry_delay)})}\n\n"
+                        for evt in _sleep_with_keepalive(retry_delay):
+                            yield evt
+
+            if not succeeded:
+                consecutive_failures += 1
+                log.error(
+                    "video_download_failed_all_retries",
+                    url=url,
+                    error=last_error,
+                    retries=VIDEO_MAX_RETRIES,
+                )
+                errors.append({"url": url, "error": last_error})
+
+                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': last_error})}\n\n"
+
+        final_result = {
+            "type": "complete",
+            "videos": videos,
+            "errors": errors if errors else None,
+            "summary": {
+                "total": total,
+                "succeeded": len(videos),
+                "failed": len(errors),
+            },
+        }
+        yield f"data: {json_module.dumps(final_result)}\n\n"
+
+    return Response(vid_generate(), mimetype="text/event-stream")
