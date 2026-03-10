@@ -416,7 +416,10 @@ def convert_stream():
                 pdf_thread = threading.Thread(target=_generate_pdf, daemon=True)
                 pdf_thread.start()
 
-                # Send keepalive while waiting for PDF generation
+                # Send keepalive while waiting for PDF generation.
+                # No timeout — WeasyPrint fetches all remote images sequentially
+                # during write_pdf(), which can legitimately take 20+ minutes
+                # for 600 articles with images.
                 while True:
                     try:
                         pdf_result = pdf_result_queue.get(timeout=10)
@@ -563,12 +566,18 @@ def bookmarks_fetch():
         thread.start()
 
         count = 0
+        idle_seconds = 0
         while True:
             try:
-                msg = bookmark_queue.get(timeout=300)  # 5-minute overall timeout
+                msg = bookmark_queue.get(timeout=10)
+                idle_seconds = 0  # Reset on any message
             except queue.Empty:
-                yield f"data: {json_module.dumps({'type': 'error', 'error': 'Scrape timed out'})}\n\n"
-                break
+                idle_seconds += 10
+                if idle_seconds >= 300:
+                    yield f"data: {json_module.dumps({'type': 'error', 'error': 'Scrape timed out (no activity for 5 minutes)'})}\n\n"
+                    break
+                yield ": keepalive\n\n"
+                continue
 
             kind = msg[0]
             if kind == "bookmark":
