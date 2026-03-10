@@ -14,6 +14,11 @@ from ..sources.twitter_playwright import TwitterPlaywrightSource
 # Delay between processing URLs to avoid rate limiting (seconds)
 URL_PROCESSING_DELAY = 2.0
 
+# Resilient article fetch settings (mirrors video download resilience)
+ARTICLE_BASE_DELAY = 2  # seconds between fetches (base)
+ARTICLE_MAX_RETRIES = 3  # retries per URL before giving up
+ARTICLE_RETRY_DELAYS = [15, 30, 60]  # escalating retry waits (seconds)
+
 # Pattern for valid Twitter/X video URLs
 TWITTER_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:twitter\.com|x\.com)/(\w+)/status/(\d+)")
 
@@ -45,6 +50,16 @@ def _get_cookies_from_request() -> str | None:
         return None
 
     return parse_cookie_input(raw.strip())
+
+
+def _sleep_with_keepalive(seconds):
+    """Sleep in chunks, yielding SSE keepalive comments to prevent connection timeout."""
+    elapsed = 0
+    while elapsed < seconds:
+        chunk = min(10, seconds - elapsed)
+        time.sleep(chunk)
+        elapsed += chunk
+        yield ": keepalive\n\n"
 
 
 @api_bp.route("/health")
@@ -239,7 +254,12 @@ def convert_stream():
     """POST /api/convert/stream - Process links with streaming progress updates.
 
     Expects cookies and links in request body.
+    Uses resilient retry/backoff pattern for reliable batch processing of large link lists.
     """
+    import queue as queue_module
+    import random
+    import threading
+
     run_async = _get_run_async()
 
     # Handle both JSON and form data
@@ -255,32 +275,22 @@ def convert_stream():
 
     cookies = _get_cookies_from_request()
 
-    # Validate URLs and find sources
+    # Build sources for all URLs (lenient — unsupported URLs get source=None and are
+    # skipped during processing instead of blocking the entire batch)
     sources_for_urls = []
-    unsupported_urls = []
-
+    has_twitter_urls = False
     for url in links:
         source = get_source_for_url(url, cookies=cookies)
-        if source:
-            sources_for_urls.append((url, source))
-        else:
-            unsupported_urls.append(url)
+        sources_for_urls.append((url, source))
+        if source and isinstance(source, TwitterPlaywrightSource):
+            has_twitter_urls = True
 
-    if unsupported_urls:
-        return (
-            jsonify({"error": f"Unsupported URLs: {', '.join(unsupported_urls)}"}),
-            400,
-        )
-
-    # Check if Twitter URLs need cookies
-    twitter_urls = [
-        url for url, src in sources_for_urls if isinstance(src, TwitterPlaywrightSource)
-    ]
-    if twitter_urls and not cookies:
+    # Twitter URLs still require cookies
+    if has_twitter_urls and not cookies:
         return (
             jsonify(
                 {
-                    "error": f"Twitter cookies required for: {', '.join(twitter_urls)}",
+                    "error": "Twitter cookies required. Please set up your cookies first.",
                     "setup_url": "/setup",
                 }
             ),
@@ -288,74 +298,175 @@ def convert_stream():
         )
 
     def generate():
-        """Generator function for SSE stream."""
+        """Generator function for SSE stream with resilient retry/backoff."""
         articles = []
         errors = []
         total = len(sources_for_urls)
+        consecutive_failures = 0
 
-        # Send initial progress
-        yield f"data: {json_module.dumps({'type': 'start', 'total': total})}\n\n"
+        try:
+            yield f"data: {json_module.dumps({'type': 'start', 'total': total})}\n\n"
 
-        for i, (url, source) in enumerate(sources_for_urls, 1):
-            # Add delay between requests to avoid rate limiting (skip first)
-            if i > 1 and isinstance(source, TwitterPlaywrightSource):
-                time.sleep(URL_PROCESSING_DELAY)
+            for i, (url, source) in enumerate(sources_for_urls, 1):
+                # Adaptive delay between requests to avoid rate limiting
+                if i > 1:
+                    is_twitter = source is not None and isinstance(source, TwitterPlaywrightSource)
+                    delay = ARTICLE_BASE_DELAY + random.uniform(0, 2)
+                    if is_twitter:
+                        delay += 3  # Extra delay for Twitter rate limits
+                    if consecutive_failures > 0:
+                        delay += min(consecutive_failures * 10, 120)
 
-            # Send progress update
-            yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing'})}\n\n"
+                    log.info(
+                        "article_throttle_delay",
+                        delay=round(delay, 1),
+                        item=f"{i}/{total}",
+                    )
+                    yield f"data: {json_module.dumps({'type': 'waiting', 'current': i, 'total': total, 'seconds': round(delay)})}\n\n"
+                    yield from _sleep_with_keepalive(delay)
 
+                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing'})}\n\n"
+
+                # Skip unsupported URLs gracefully
+                if source is None:
+                    errors.append({"url": url, "error": "Unsupported URL"})
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': 'Unsupported URL'})}\n\n"
+                    continue
+
+                # Retry loop for each URL
+                succeeded = False
+                last_error = None
+
+                for attempt in range(ARTICLE_MAX_RETRIES + 1):
+                    try:
+                        log.info(
+                            "processing_url_stream",
+                            url=url,
+                            progress=f"{i}/{total}",
+                            attempt=attempt + 1,
+                        )
+                        article = run_async(source.fetch(url))
+                        articles.append({"url": url, "article": article})
+
+                        yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
+
+                        succeeded = True
+                        consecutive_failures = 0
+                        break
+
+                    except Exception as e:
+                        last_error = str(e)
+                        log.warning(
+                            "url_fetch_attempt_failed",
+                            url=url,
+                            attempt=attempt + 1,
+                            max_attempts=ARTICLE_MAX_RETRIES + 1,
+                            error=last_error,
+                        )
+
+                        if attempt < ARTICLE_MAX_RETRIES:
+                            retry_delay = ARTICLE_RETRY_DELAYS[attempt] + random.uniform(0, 5)
+                            log.info("article_retry_wait", seconds=round(retry_delay, 1))
+                            yield f"data: {json_module.dumps({'type': 'retry', 'current': i, 'total': total, 'url': url, 'attempt': attempt + 2, 'max_attempts': ARTICLE_MAX_RETRIES + 1, 'wait_seconds': round(retry_delay)})}\n\n"
+                            yield from _sleep_with_keepalive(retry_delay)
+
+                if not succeeded:
+                    consecutive_failures += 1
+                    log.error(
+                        "url_fetch_failed_all_retries",
+                        url=url,
+                        error=last_error,
+                        retries=ARTICLE_MAX_RETRIES,
+                    )
+                    errors.append({"url": url, "error": last_error})
+
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': last_error})}\n\n"
+
+        except GeneratorExit:
+            log.warning(
+                "convert_stream_client_disconnected",
+                completed=len(articles),
+                remaining=total - len(articles) - len(errors),
+            )
+            return
+        except Exception as e:
+            log.error("convert_stream_fatal_error", error=str(e), completed=len(articles))
             try:
-                log.info("processing_url_stream", url=url, progress=f"{i}/{total}")
-                article = run_async(source.fetch(url))
-                articles.append({"url": url, "article": article})
-
-                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
-
-            except Exception as e:
-                log.error("url_processing_failed_stream", url=url, error=str(e))
-                errors.append({"url": url, "error": str(e)})
-
-                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': str(e)})}\n\n"
+                yield f"data: {json_module.dumps({'type': 'error', 'error': f'Server error: {str(e)}'})}\n\n"
+            except GeneratorExit:
+                return
 
         # Generate PDF if we have articles
         if articles:
             try:
                 yield f"data: {json_module.dumps({'type': 'generating_pdf'})}\n\n"
 
-                article_objects = [a["article"] for a in articles]
-                pdf_path = generate_combined_pdf(article_objects)
+                # Run PDF generation in a background thread so we can send
+                # keepalive comments and prevent the SSE connection from timing out
+                pdf_result_queue = queue_module.Queue()
 
-                results = [
-                    {
-                        "url": a["url"],
-                        "title": a["article"].title,
-                        "author": a["article"].author,
-                        "status": "success",
+                def _generate_pdf():
+                    try:
+                        article_objects = [a["article"] for a in articles]
+                        pdf_path = generate_combined_pdf(article_objects)
+                        pdf_result_queue.put(("success", pdf_path))
+                    except Exception as exc:
+                        pdf_result_queue.put(("error", str(exc)))
+
+                pdf_thread = threading.Thread(target=_generate_pdf, daemon=True)
+                pdf_thread.start()
+
+                # Send keepalive while waiting for PDF generation
+                while True:
+                    try:
+                        pdf_result = pdf_result_queue.get(timeout=10)
+                        break
+                    except queue_module.Empty:
+                        yield ": keepalive\n\n"
+
+                if pdf_result[0] == "success":
+                    pdf_path = pdf_result[1]
+
+                    results = [
+                        {
+                            "url": a["url"],
+                            "title": a["article"].title,
+                            "author": a["article"].author,
+                            "status": "success",
+                        }
+                        for a in articles
+                    ]
+
+                    final_result = {
+                        "type": "complete",
+                        "success": True,
+                        "filename": pdf_path.name,
+                        "articles": results,
+                        "errors": errors if errors else None,
+                        "summary": {
+                            "total": total,
+                            "succeeded": len(articles),
+                            "failed": len(errors),
+                        },
                     }
-                    for a in articles
-                ]
+                    yield f"data: {json_module.dumps(final_result)}\n\n"
+                else:
+                    yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {pdf_result[1]}'})}\n\n"
 
-                final_result = {
-                    "type": "complete",
-                    "success": True,
-                    "filename": pdf_path.name,
-                    "articles": results,
-                    "errors": errors if errors else None,
-                    "summary": {
-                        "total": total,
-                        "succeeded": len(articles),
-                        "failed": len(errors),
-                    },
-                }
-                yield f"data: {json_module.dumps(final_result)}\n\n"
-
+            except GeneratorExit:
+                log.warning("convert_stream_disconnected_during_pdf")
+                return
             except Exception as e:
                 yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {str(e)}'})}\n\n"
         else:
             error_details = [{"url": e["url"], "error": e["error"]} for e in errors]
             yield f"data: {json_module.dumps({'type': 'error', 'error': 'All conversions failed', 'details': error_details})}\n\n"
 
-    return Response(generate(), mimetype="text/event-stream")
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.headers["Connection"] = "keep-alive"
+    return response
 
 
 @api_bp.route("/bookmarks/fetch", methods=["POST"])
@@ -481,7 +592,12 @@ def bookmarks_convert():
     """POST /api/bookmarks/convert - Convert selected bookmark URLs to PDF.
 
     Expects cookies and urls list in request body. Returns SSE stream.
+    Uses resilient retry/backoff pattern for reliable batch processing.
     """
+    import queue as queue_module
+    import random
+    import threading
+
     run_async = _get_run_async()
 
     if request.is_json:
@@ -500,90 +616,170 @@ def bookmarks_convert():
     sources_for_urls = []
     for url in urls:
         source = get_source_for_url(url, cookies=cookies)
-        if source:
-            sources_for_urls.append((url, source))
-        else:
-            sources_for_urls.append((url, None))
+        sources_for_urls.append((url, source))
 
     def generate():
-        """Generator function for SSE stream."""
+        """Generator function for SSE stream with resilient retry/backoff."""
         articles = []
         errors = []
         total = len(sources_for_urls)
+        consecutive_failures = 0
 
-        yield f"data: {json_module.dumps({'type': 'start', 'total': total})}\n\n"
+        try:
+            yield f"data: {json_module.dumps({'type': 'start', 'total': total})}\n\n"
 
-        for i, (url, source) in enumerate(sources_for_urls, 1):
-            if i > 1:
-                time.sleep(URL_PROCESSING_DELAY)
+            for i, (url, source) in enumerate(sources_for_urls, 1):
+                # Adaptive delay between requests
+                if i > 1:
+                    is_twitter = source is not None and isinstance(source, TwitterPlaywrightSource)
+                    delay = ARTICLE_BASE_DELAY + random.uniform(0, 2)
+                    if is_twitter:
+                        delay += 3
+                    if consecutive_failures > 0:
+                        delay += min(consecutive_failures * 10, 120)
 
-            yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing'})}\n\n"
+                    yield f"data: {json_module.dumps({'type': 'waiting', 'current': i, 'total': total, 'seconds': round(delay)})}\n\n"
+                    yield from _sleep_with_keepalive(delay)
 
-            if source is None:
-                errors.append({"url": url, "error": "Unsupported URL"})
-                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': 'Unsupported URL'})}\n\n"
-                continue
+                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing'})}\n\n"
 
+                if source is None:
+                    errors.append({"url": url, "error": "Unsupported URL"})
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': 'Unsupported URL'})}\n\n"
+                    continue
+
+                # Retry loop for each URL
+                succeeded = False
+                last_error = None
+
+                for attempt in range(ARTICLE_MAX_RETRIES + 1):
+                    try:
+                        log.info(
+                            "processing_bookmark_url",
+                            url=url,
+                            progress=f"{i}/{total}",
+                            attempt=attempt + 1,
+                        )
+                        article = run_async(source.fetch(url))
+                        articles.append({"url": url, "article": article})
+
+                        yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
+
+                        succeeded = True
+                        consecutive_failures = 0
+                        break
+
+                    except Exception as e:
+                        last_error = str(e)
+                        log.warning(
+                            "bookmark_url_attempt_failed",
+                            url=url,
+                            attempt=attempt + 1,
+                            max_attempts=ARTICLE_MAX_RETRIES + 1,
+                            error=last_error,
+                        )
+
+                        if attempt < ARTICLE_MAX_RETRIES:
+                            retry_delay = ARTICLE_RETRY_DELAYS[attempt] + random.uniform(0, 5)
+                            yield f"data: {json_module.dumps({'type': 'retry', 'current': i, 'total': total, 'url': url, 'attempt': attempt + 2, 'max_attempts': ARTICLE_MAX_RETRIES + 1, 'wait_seconds': round(retry_delay)})}\n\n"
+                            yield from _sleep_with_keepalive(retry_delay)
+
+                if not succeeded:
+                    consecutive_failures += 1
+                    errors.append({"url": url, "error": last_error})
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': last_error})}\n\n"
+
+        except GeneratorExit:
+            log.warning(
+                "bookmark_convert_client_disconnected",
+                completed=len(articles),
+                remaining=total - len(articles) - len(errors),
+            )
+            return
+        except Exception as e:
+            log.error("bookmark_convert_fatal_error", error=str(e), completed=len(articles))
             try:
-                log.info("processing_bookmark_url", url=url, progress=f"{i}/{total}")
-                article = run_async(source.fetch(url))
-                articles.append({"url": url, "article": article})
-
-                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
-
-            except Exception as e:
-                log.error("bookmark_url_failed", url=url, error=str(e))
-                errors.append({"url": url, "error": str(e)})
-                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': str(e)})}\n\n"
+                yield f"data: {json_module.dumps({'type': 'error', 'error': f'Server error: {str(e)}'})}\n\n"
+            except GeneratorExit:
+                return
 
         if articles:
             try:
                 yield f"data: {json_module.dumps({'type': 'generating_pdf'})}\n\n"
 
-                article_objects = [a["article"] for a in articles]
-                pdf_path = generate_combined_pdf(article_objects)
+                # Background thread for PDF generation with keepalive
+                pdf_result_queue = queue_module.Queue()
 
-                results = [
-                    {
-                        "url": a["url"],
-                        "title": a["article"].title,
-                        "author": a["article"].author,
-                        "status": "success",
+                def _generate_pdf():
+                    try:
+                        article_objects = [a["article"] for a in articles]
+                        pdf_path = generate_combined_pdf(article_objects)
+                        pdf_result_queue.put(("success", pdf_path))
+                    except Exception as exc:
+                        pdf_result_queue.put(("error", str(exc)))
+
+                pdf_thread = threading.Thread(target=_generate_pdf, daemon=True)
+                pdf_thread.start()
+
+                while True:
+                    try:
+                        pdf_result = pdf_result_queue.get(timeout=10)
+                        break
+                    except queue_module.Empty:
+                        yield ": keepalive\n\n"
+
+                if pdf_result[0] == "success":
+                    pdf_path = pdf_result[1]
+
+                    results = [
+                        {
+                            "url": a["url"],
+                            "title": a["article"].title,
+                            "author": a["article"].author,
+                            "status": "success",
+                        }
+                        for a in articles
+                    ]
+
+                    final_result = {
+                        "type": "complete",
+                        "success": True,
+                        "filename": pdf_path.name,
+                        "articles": results,
+                        "errors": errors if errors else None,
+                        "summary": {
+                            "total": total,
+                            "succeeded": len(articles),
+                            "failed": len(errors),
+                        },
                     }
-                    for a in articles
-                ]
+                    yield f"data: {json_module.dumps(final_result)}\n\n"
+                else:
+                    yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {pdf_result[1]}'})}\n\n"
 
-                final_result = {
-                    "type": "complete",
-                    "success": True,
-                    "filename": pdf_path.name,
-                    "articles": results,
-                    "errors": errors if errors else None,
-                    "summary": {
-                        "total": total,
-                        "succeeded": len(articles),
-                        "failed": len(errors),
-                    },
-                }
-                yield f"data: {json_module.dumps(final_result)}\n\n"
-
+            except GeneratorExit:
+                log.warning("bookmark_convert_disconnected_during_pdf")
+                return
             except Exception as e:
                 yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {str(e)}'})}\n\n"
         else:
             error_details = [{"url": e["url"], "error": e["error"]} for e in errors]
             yield f"data: {json_module.dumps({'type': 'error', 'error': 'All conversions failed', 'details': error_details})}\n\n"
 
-    return Response(generate(), mimetype="text/event-stream")
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.headers["Connection"] = "keep-alive"
+    return response
 
 
 @api_bp.route("/videos/download", methods=["POST"])
 def videos_download():
     """POST /api/videos/download - Download videos from Twitter/X links.
 
-    Expects cookies and links in request body. Returns SSE stream with progress.
+    Expects links in request body. Cookies are optional (help with private tweets).
+    Returns SSE stream with progress.
     """
-    run_async = _get_run_async()
-
     if request.is_json:
         data = request.get_json() or {}
         links = data.get("links", [])
@@ -595,16 +791,6 @@ def videos_download():
         return jsonify({"error": "No links provided"}), 400
 
     cookies = _get_cookies_from_request()
-    if not cookies:
-        return (
-            jsonify(
-                {
-                    "error": "Twitter cookies required. Please set up your cookies first.",
-                    "setup_url": "/setup",
-                }
-            ),
-            400,
-        )
 
     # Validate all URLs are Twitter/X status URLs
     invalid_urls = [url for url in links if not TWITTER_URL_PATTERN.match(url)]
@@ -623,104 +809,102 @@ def videos_download():
     video_dir = config.output_dir / "videos"
 
     # Resilient download settings — prioritize completion over speed
-    VIDEO_BASE_DELAY = 12  # seconds between successful downloads
+    VIDEO_BASE_DELAY = 3  # seconds between successful downloads
     VIDEO_MAX_RETRIES = 3  # retries per video before giving up
     VIDEO_RETRY_DELAYS = [30, 60, 120]  # escalating retry waits (seconds)
-    VIDEO_TIMEOUT = 300  # 5 min per download attempt
-
-    def _sleep_with_keepalive(seconds):
-        """Sleep while yielding SSE keepalives to prevent connection drops."""
-        events = []
-        elapsed = 0
-        while elapsed < seconds:
-            chunk = min(15, seconds - elapsed)
-            time.sleep(chunk)
-            elapsed += chunk
-            events.append(": keepalive\n\n")
-        return events
 
     def vid_generate():
         """Generator function for SSE stream."""
         import random
 
-        from ..sources.video_downloader import VideoDownloader
+        from ..sources.video_downloader import download_video
 
-        downloader = VideoDownloader(cookies=cookies)
         videos = []
         errors = []
         total = len(links)
         consecutive_failures = 0
 
-        yield f"data: {json_module.dumps({'type': 'start', 'total': total})}\n\n"
+        try:
+            yield f"data: {json_module.dumps({'type': 'start', 'total': total})}\n\n"
 
-        for i, url in enumerate(links, 1):
-            if i > 1:
-                # Adaptive delay: slow down more after failures
-                delay = VIDEO_BASE_DELAY + random.uniform(0, 5)
-                if consecutive_failures > 0:
-                    delay += consecutive_failures * 15
-                log.info("video_throttle_delay", delay=round(delay, 1), item=f"{i}/{total}")
+            for i, url in enumerate(links, 1):
+                if i > 1:
+                    # Adaptive delay: slow down more after failures
+                    delay = VIDEO_BASE_DELAY + random.uniform(0, 5)
+                    if consecutive_failures > 0:
+                        delay += consecutive_failures * 15
+                    log.info("video_throttle_delay", delay=round(delay, 1), item=f"{i}/{total}")
 
-                yield f"data: {json_module.dumps({'type': 'waiting', 'current': i, 'total': total, 'seconds': round(delay)})}\n\n"
-                for evt in _sleep_with_keepalive(delay):
-                    yield evt
+                    yield f"data: {json_module.dumps({'type': 'waiting', 'current': i, 'total': total, 'seconds': round(delay)})}\n\n"
+                    yield from _sleep_with_keepalive(delay)
 
-            yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing'})}\n\n"
+                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing'})}\n\n"
 
-            succeeded = False
-            last_error = None
+                succeeded = False
+                last_error = None
 
-            for attempt in range(VIDEO_MAX_RETRIES + 1):
-                try:
-                    log.info(
-                        "downloading_video_stream",
+                for attempt in range(VIDEO_MAX_RETRIES + 1):
+                    try:
+                        log.info(
+                            "downloading_video_stream",
+                            url=url,
+                            progress=f"{i}/{total}",
+                            attempt=attempt + 1,
+                        )
+                        video_path = download_video(url, video_dir, cookies=cookies)
+                        filename = video_path.name
+                        size_bytes = video_path.stat().st_size
+
+                        videos.append({"url": url, "filename": filename, "size_bytes": size_bytes})
+
+                        yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'filename': filename})}\n\n"
+
+                        succeeded = True
+                        consecutive_failures = 0
+                        break
+
+                    except Exception as e:
+                        last_error = str(e)
+                        log.warning(
+                            "video_download_attempt_failed",
+                            url=url,
+                            attempt=attempt + 1,
+                            max_attempts=VIDEO_MAX_RETRIES + 1,
+                            error=last_error,
+                        )
+
+                        if attempt < VIDEO_MAX_RETRIES:
+                            retry_delay = VIDEO_RETRY_DELAYS[attempt] + random.uniform(0, 10)
+                            log.info("video_retry_wait", seconds=round(retry_delay, 1))
+
+                            yield f"data: {json_module.dumps({'type': 'retry', 'current': i, 'total': total, 'url': url, 'attempt': attempt + 2, 'max_attempts': VIDEO_MAX_RETRIES + 1, 'wait_seconds': round(retry_delay)})}\n\n"
+                            yield from _sleep_with_keepalive(retry_delay)
+
+                if not succeeded:
+                    consecutive_failures += 1
+                    log.error(
+                        "video_download_failed_all_retries",
                         url=url,
-                        progress=f"{i}/{total}",
-                        attempt=attempt + 1,
-                    )
-                    video_path = run_async(
-                        downloader.download(url, video_dir), timeout=VIDEO_TIMEOUT
-                    )
-                    filename = video_path.name
-                    size_bytes = video_path.stat().st_size
-
-                    videos.append({"url": url, "filename": filename, "size_bytes": size_bytes})
-
-                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'filename': filename})}\n\n"
-
-                    succeeded = True
-                    consecutive_failures = 0
-                    break
-
-                except Exception as e:
-                    last_error = str(e)
-                    log.warning(
-                        "video_download_attempt_failed",
-                        url=url,
-                        attempt=attempt + 1,
-                        max_attempts=VIDEO_MAX_RETRIES + 1,
                         error=last_error,
+                        retries=VIDEO_MAX_RETRIES,
                     )
+                    errors.append({"url": url, "error": last_error})
 
-                    if attempt < VIDEO_MAX_RETRIES:
-                        retry_delay = VIDEO_RETRY_DELAYS[attempt] + random.uniform(0, 10)
-                        log.info("video_retry_wait", seconds=round(retry_delay, 1))
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': last_error})}\n\n"
 
-                        yield f"data: {json_module.dumps({'type': 'retry', 'current': i, 'total': total, 'url': url, 'attempt': attempt + 2, 'max_attempts': VIDEO_MAX_RETRIES + 1, 'wait_seconds': round(retry_delay)})}\n\n"
-                        for evt in _sleep_with_keepalive(retry_delay):
-                            yield evt
-
-            if not succeeded:
-                consecutive_failures += 1
-                log.error(
-                    "video_download_failed_all_retries",
-                    url=url,
-                    error=last_error,
-                    retries=VIDEO_MAX_RETRIES,
-                )
-                errors.append({"url": url, "error": last_error})
-
-                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': last_error})}\n\n"
+        except GeneratorExit:
+            log.warning(
+                "video_stream_client_disconnected",
+                completed=len(videos),
+                remaining=total - len(videos) - len(errors),
+            )
+            return
+        except Exception as e:
+            log.error("video_stream_fatal_error", error=str(e), completed=len(videos))
+            try:
+                yield f"data: {json_module.dumps({'type': 'error', 'error': f'Server error: {str(e)}'})}\n\n"
+            except GeneratorExit:
+                return
 
         final_result = {
             "type": "complete",
@@ -734,4 +918,8 @@ def videos_download():
         }
         yield f"data: {json_module.dumps(final_result)}\n\n"
 
-    return Response(vid_generate(), mimetype="text/event-stream")
+    response = Response(vid_generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.headers["Connection"] = "keep-alive"
+    return response

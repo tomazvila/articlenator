@@ -61,7 +61,11 @@ class AsyncRunner:
         self._ensure_loop()
         assert self._loop is not None  # Guaranteed by _ensure_loop
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=timeout)
+        try:
+            return future.result(timeout=timeout)
+        except TimeoutError:
+            future.cancel()  # Cancel the underlying asyncio task to free resources
+            raise
 
 
 # Global async runner instance

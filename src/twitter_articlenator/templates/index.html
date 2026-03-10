@@ -191,6 +191,10 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
                     if (data.type === 'start') {
                         statusText.textContent = `Processing ${data.total} link(s)...`;
                         progressInfo.textContent = `0 / ${data.total}`;
+                    } else if (data.type === 'waiting') {
+                        statusText.textContent = `Waiting ${data.seconds}s before next URL (${data.current}/${data.total})...`;
+                    } else if (data.type === 'retry') {
+                        statusText.textContent = `Retrying (attempt ${data.attempt}/${data.max_attempts}, waiting ${data.wait_seconds}s)...`;
                     } else if (data.type === 'progress') {
                         const percent = (data.current / data.total) * 100;
                         progressBar.style.width = `${percent}%`;

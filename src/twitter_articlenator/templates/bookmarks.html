@@ -443,6 +443,10 @@ document.getElementById('convert-btn').addEventListener('click', async () => {
                     if (data.type === 'start') {
                         convertStatusText.textContent = `Processing ${data.total} URL(s)...`;
                         progressInfo.textContent = `0 / ${data.total}`;
+                    } else if (data.type === 'waiting') {
+                        convertStatusText.textContent = `Waiting ${data.seconds}s before next URL (${data.current}/${data.total})...`;
+                    } else if (data.type === 'retry') {
+                        convertStatusText.textContent = `Retrying (attempt ${data.attempt}/${data.max_attempts}, waiting ${data.wait_seconds}s)...`;
                     } else if (data.type === 'progress') {
                         const percent = (data.current / data.total) * 100;
                         progressBar.style.width = `${percent}%`;
