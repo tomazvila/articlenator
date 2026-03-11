@@ -1,14 +1,18 @@
 """API routes blueprint."""
 
+import hashlib
 import json as json_module
 import re
+import shutil
 import time
+import uuid
 
 import structlog
 from flask import Blueprint, Response, jsonify, request, current_app
 from ..config import get_config, parse_cookie_input, validate_cookies
 from ..pdf.generator import generate_combined_pdf
 from ..sources import get_source_for_url
+from ..sources.base import Article
 from ..sources.twitter_playwright import TwitterPlaywrightSource
 
 # Delay between processing URLs to avoid rate limiting (seconds)
@@ -60,6 +64,68 @@ def _sleep_with_keepalive(seconds):
         time.sleep(chunk)
         elapsed += chunk
         yield ": keepalive\n\n"
+
+
+def _get_session_dir(session_id):
+    """Get or create session directory for accumulating articles across reconnections."""
+    config = get_config()
+    session_dir = config.output_dir / "sessions" / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    return session_dir
+
+
+def _save_article(session_dir, url, article):
+    """Save a fetched article to the session directory for reconnection support."""
+    url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
+    data = {
+        "url": url,
+        "title": article.title,
+        "author": article.author,
+        "content": article.content,
+        "published_at": article.published_at.isoformat() if article.published_at else None,
+        "source_url": article.source_url,
+        "source_type": article.source_type,
+    }
+    (session_dir / f"{url_hash}.json").write_text(
+        json_module.dumps(data, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _load_session_articles(session_dir):
+    """Load all previously saved articles from a session directory.
+
+    Returns:
+        Dict mapping URL to Article object.
+    """
+    from datetime import datetime
+
+    articles = {}
+    for path in session_dir.glob("*.json"):
+        data = json_module.loads(path.read_text(encoding="utf-8"))
+        published_at = None
+        if data.get("published_at"):
+            try:
+                published_at = datetime.fromisoformat(data["published_at"])
+            except (ValueError, TypeError):
+                pass
+        article = Article(
+            title=data["title"],
+            author=data["author"],
+            content=data["content"],
+            published_at=published_at,
+            source_url=data["source_url"],
+            source_type=data["source_type"],
+        )
+        articles[data["url"]] = article
+    return articles
+
+
+def _cleanup_session(session_dir):
+    """Remove session directory after PDF generation."""
+    try:
+        shutil.rmtree(session_dir)
+    except Exception:
+        pass
 
 
 @api_bp.route("/health")
@@ -275,6 +341,13 @@ def convert_stream():
 
     cookies = _get_cookies_from_request()
 
+    # Session support: reuse session_id on reconnect to resume where we left off
+    if request.is_json:
+        session_id = (request.get_json() or {}).get("session_id") or str(uuid.uuid4())
+    else:
+        session_id = str(uuid.uuid4())
+    session_dir = _get_session_dir(session_id)
+
     # Build sources for all URLs (lenient — unsupported URLs get source=None and are
     # skipped during processing instead of blocking the entire batch)
     sources_for_urls = []
@@ -299,15 +372,23 @@ def convert_stream():
 
     def generate():
         """Generator function for SSE stream with resilient retry/backoff."""
-        articles = []
+        # Load articles already fetched in previous connections (reconnection support)
+        saved = _load_session_articles(session_dir)
+        articles = [{"url": u, "article": a} for u, a in saved.items()]
+        saved_urls = set(saved.keys())
         errors = []
         total = len(sources_for_urls)
         consecutive_failures = 0
 
         try:
-            yield f"data: {json_module.dumps({'type': 'start', 'total': total})}\n\n"
+            yield f"data: {json_module.dumps({'type': 'start', 'total': total, 'session_id': session_id, 'already_done': len(saved_urls)})}\n\n"
 
             for i, (url, source) in enumerate(sources_for_urls, 1):
+                # Skip URLs already fetched in a previous connection
+                if url in saved_urls:
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': saved[url].title, 'resumed': True})}\n\n"
+                    continue
+
                 # Adaptive delay between requests to avoid rate limiting
                 if i > 1:
                     is_twitter = source is not None and isinstance(source, TwitterPlaywrightSource)
@@ -372,6 +453,7 @@ def convert_stream():
                         article = fetch_result[1]
 
                         articles.append({"url": url, "article": article})
+                        _save_article(session_dir, url, article)
 
                         yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
 
@@ -477,6 +559,7 @@ def convert_stream():
                             "failed": len(errors),
                         },
                     }
+                    _cleanup_session(session_dir)
                     yield f"data: {json_module.dumps(final_result)}\n\n"
                 else:
                     yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {pdf_result[1]}'})}\n\n"
@@ -646,6 +729,13 @@ def bookmarks_convert():
 
     cookies = _get_cookies_from_request()
 
+    # Session support for reconnection
+    if request.is_json:
+        session_id = (request.get_json() or {}).get("session_id") or str(uuid.uuid4())
+    else:
+        session_id = str(uuid.uuid4())
+    session_dir = _get_session_dir(session_id)
+
     # Build sources for all URLs
     sources_for_urls = []
     for url in urls:
@@ -654,15 +744,21 @@ def bookmarks_convert():
 
     def generate():
         """Generator function for SSE stream with resilient retry/backoff."""
-        articles = []
+        saved = _load_session_articles(session_dir)
+        articles = [{"url": u, "article": a} for u, a in saved.items()]
+        saved_urls = set(saved.keys())
         errors = []
         total = len(sources_for_urls)
         consecutive_failures = 0
 
         try:
-            yield f"data: {json_module.dumps({'type': 'start', 'total': total})}\n\n"
+            yield f"data: {json_module.dumps({'type': 'start', 'total': total, 'session_id': session_id, 'already_done': len(saved_urls)})}\n\n"
 
             for i, (url, source) in enumerate(sources_for_urls, 1):
+                if url in saved_urls:
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': saved[url].title, 'resumed': True})}\n\n"
+                    continue
+
                 # Adaptive delay between requests
                 if i > 1:
                     is_twitter = source is not None and isinstance(source, TwitterPlaywrightSource)
@@ -721,6 +817,7 @@ def bookmarks_convert():
                         article = fetch_result[1]
 
                         articles.append({"url": url, "article": article})
+                        _save_article(session_dir, url, article)
 
                         yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
 
@@ -812,6 +909,7 @@ def bookmarks_convert():
                             "failed": len(errors),
                         },
                     }
+                    _cleanup_session(session_dir)
                     yield f"data: {json_module.dumps(final_result)}\n\n"
                 else:
                     yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {pdf_result[1]}'})}\n\n"
