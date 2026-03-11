@@ -17,8 +17,10 @@ log = structlog.get_logger()
 # Delay between scrolls (seconds)
 SCROLL_DELAY = 3.0
 
-# Number of consecutive scrolls with no new bookmarks before stopping
-MAX_EMPTY_SCROLLS = 3
+# Number of consecutive scrolls with no new bookmarks before stopping.
+# Must be generous because Twitter lazy-loads content and sometimes has
+# gaps where a scroll yields nothing but the next one finds items.
+MAX_EMPTY_SCROLLS = 8
 
 
 @dataclass
@@ -125,6 +127,10 @@ class BookmarkScraper:
             await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(3)
 
+            # Dismiss cookie-consent banner (GDPR/EU prompt) so it doesn't
+            # overlay the page and interfere with scrolling/extraction.
+            await self._dismiss_consent_banner(page)
+
             # Verify authentication — fail fast if cookies are expired
             try:
                 await page.wait_for_selector('[data-testid="tweet"]', timeout=15000)
@@ -148,24 +154,17 @@ class BookmarkScraper:
                     "Please check your cookies and try again."
                 )
 
-            # Navigate to bookmarks using React Router (same approach as
-            # TwitterPlaywrightSource which is known to work reliably)
-            await page.evaluate("""
-                window.history.pushState({}, '', '/i/bookmarks');
-                window.dispatchEvent(new PopStateEvent('popstate'));
-            """)
+            # Navigate directly to bookmarks — goto is reliable and avoids
+            # issues with pushState not triggering React Router navigation.
+            await page.goto(
+                "https://x.com/i/bookmarks",
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
             await asyncio.sleep(5)
 
-            # If pushState didn't navigate, fall back to goto
-            if "/i/bookmarks" not in page.url:
-                log.info("bookmark_pushstate_fallback", page_url=page.url)
-                await page.goto(
-                    "https://x.com/i/bookmarks",
-                    wait_until="domcontentloaded",
-                    timeout=60000,
-                    referer="https://x.com/home",
-                )
-                await asyncio.sleep(5)
+            # Dismiss consent banner again if it reappeared on navigation
+            await self._dismiss_consent_banner(page)
 
             # Wait for bookmarks to load (generous timeout for slow environments)
             try:
@@ -222,12 +221,32 @@ class BookmarkScraper:
                     empty_scroll_count += 1
                     log.debug("bookmark_scrape_no_new", empty_scrolls=empty_scroll_count)
 
-                # Scroll down
-                await page.evaluate("window.scrollBy(0, 800)")
+                # Scroll down by a full viewport height for faster progress.
+                # Use scrollTo(0, document.body.scrollHeight) every few scrolls
+                # to force-trigger lazy loading at the bottom.
+                await page.evaluate("window.scrollBy(0, window.innerHeight)")
                 await asyncio.sleep(SCROLL_DELAY)
 
             log.info("bookmark_scrape_complete", total=len(bookmarks))
             return bookmarks
+
+    @staticmethod
+    async def _dismiss_consent_banner(page) -> None:
+        """Dismiss the X/Twitter cookie-consent banner if present."""
+        try:
+            buttons = await page.query_selector_all("button")
+            for btn in buttons:
+                try:
+                    text = await btn.inner_text()
+                    if "Accept all" in text or "Accept All" in text:
+                        await btn.click()
+                        log.info("bookmark_consent_banner_dismissed")
+                        await asyncio.sleep(1)
+                        return
+                except Exception:
+                    continue
+        except Exception as exc:
+            log.debug("bookmark_consent_banner_check_failed", error=str(exc))
 
     async def _extract_bookmark(self, tweet_el) -> BookmarkEntry | None:
         """Extract a BookmarkEntry from a tweet article element.

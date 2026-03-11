@@ -281,30 +281,41 @@ def validate_cookies_endpoint():
                     name, value = part.split("=", 1)
                     cookie_dict[name.strip()] = value.strip()
 
+            # Use a lightweight page fetch to check auth — the v1.1 REST API
+            # has been fully deprecated by X (returns 404).  Instead, request
+            # the minimal HTML for the home timeline; an authenticated session
+            # will return 200, while expired cookies get a 302/401 to /login.
             resp = httpx.get(
-                "https://api.x.com/1.1/account/verify_credentials.json",
+                "https://x.com/home",
                 headers={
-                    "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
-                    "x-csrf-token": cookie_dict.get("ct0", ""),
+                    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 },
                 cookies=cookie_dict,
-                timeout=10,
+                timeout=15,
+                follow_redirects=False,
             )
             if resp.status_code == 200:
-                data = resp.json()
-                screen_name = data.get("screen_name", "unknown")
                 result["live"] = True
-                result["screen_name"] = screen_name
-                result["message"] = f"Cookies valid — authenticated as @{screen_name}"
-                log.info("cookies_live_valid", screen_name=screen_name)
+                result["message"] = "Cookies valid — authentication confirmed."
+                log.info("cookies_live_valid")
+            elif resp.status_code in (301, 302, 303, 307, 308):
+                location = resp.headers.get("location", "")
+                if "login" in location:
+                    result["valid"] = False
+                    result["live"] = False
+                    result["status"] = "expired"
+                    result["message"] = (
+                        "Cookies have expired or are invalid. Please get fresh cookies from Twitter."
+                    )
+                    log.warning("cookies_live_invalid", status_code=resp.status_code, location=location)
+                else:
+                    result["live"] = True
+                    result["message"] = "Cookies valid — authentication confirmed."
+                    log.info("cookies_live_valid_redirect", location=location)
             else:
-                result["valid"] = False
-                result["live"] = False
-                result["status"] = "expired"
-                result["message"] = (
-                    "Cookies have expired or are invalid. Please get fresh cookies from Twitter."
-                )
-                log.warning("cookies_live_invalid", status_code=resp.status_code)
+                result["live"] = None
+                result["message"] += " (Could not verify live — unexpected status)"
+                log.warning("cookies_live_unexpected", status_code=resp.status_code)
         except Exception as e:
             log.warning("cookies_live_check_failed", error=str(e))
             # Don't fail validation — just skip live check
@@ -608,37 +619,10 @@ def bookmarks_fetch():
     if not validation["valid"]:
         return jsonify({"error": validation["message"]}), 400
 
-    # Quick live check — verify cookies work before launching expensive scraper
-    import httpx
-
-    try:
-        cookie_dict = {}
-        for part in cookies.split(";"):
-            part = part.strip()
-            if "=" in part:
-                name, value = part.split("=", 1)
-                cookie_dict[name.strip()] = value.strip()
-
-        resp = httpx.get(
-            "https://api.x.com/1.1/account/verify_credentials.json",
-            headers={
-                "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
-                "x-csrf-token": cookie_dict.get("ct0", ""),
-            },
-            cookies=cookie_dict,
-            timeout=10,
-        )
-        if resp.status_code != 200:
-            log.warning("bookmark_preflight_auth_failed", status_code=resp.status_code)
-            return jsonify(
-                {
-                    "error": "Your Twitter cookies have expired or are invalid. Please go to Setup and enter fresh cookies.",
-                    "setup_url": "/setup",
-                }
-            ), 401
-    except Exception as e:
-        log.warning("bookmark_preflight_check_failed", error=str(e))
-        # Network error — proceed anyway, let the scraper handle it
+    # Skip preflight API check — Twitter v1.1 API is deprecated (returns 404).
+    # Authentication is verified by the Playwright scraper itself when it loads
+    # x.com/home and checks for tweet elements.
+    log.info("bookmark_fetch_starting", cookies_present=bool(cookies))
 
     from ..sources.bookmarks import BookmarkScraper
 
