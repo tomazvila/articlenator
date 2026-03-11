@@ -345,7 +345,32 @@ def convert_stream():
                             progress=f"{i}/{total}",
                             attempt=attempt + 1,
                         )
-                        article = run_async(source.fetch(url))
+
+                        # Run fetch in a thread so we can send keepalive
+                        # comments while it blocks (up to 120s), preventing
+                        # the SSE connection from being dropped.
+                        fetch_q = queue_module.Queue()
+
+                        def _do_fetch(src=source, u=url):
+                            try:
+                                a = run_async(src.fetch(u))
+                                fetch_q.put(("ok", a))
+                            except Exception as exc:
+                                fetch_q.put(("err", exc))
+
+                        threading.Thread(target=_do_fetch, daemon=True).start()
+
+                        while True:
+                            try:
+                                fetch_result = fetch_q.get(timeout=10)
+                                break
+                            except queue_module.Empty:
+                                yield ": keepalive\n\n"
+
+                        if fetch_result[0] == "err":
+                            raise fetch_result[1]
+                        article = fetch_result[1]
+
                         articles.append({"url": url, "article": article})
 
                         yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
@@ -669,7 +694,32 @@ def bookmarks_convert():
                             progress=f"{i}/{total}",
                             attempt=attempt + 1,
                         )
-                        article = run_async(source.fetch(url))
+
+                        # Run fetch in a thread so we can send keepalive
+                        # comments while it blocks (up to 120s), preventing
+                        # the SSE connection from being dropped.
+                        fetch_q = queue_module.Queue()
+
+                        def _do_fetch(src=source, u=url):
+                            try:
+                                a = run_async(src.fetch(u))
+                                fetch_q.put(("ok", a))
+                            except Exception as exc:
+                                fetch_q.put(("err", exc))
+
+                        threading.Thread(target=_do_fetch, daemon=True).start()
+
+                        while True:
+                            try:
+                                fetch_result = fetch_q.get(timeout=10)
+                                break
+                            except queue_module.Empty:
+                                yield ": keepalive\n\n"
+
+                        if fetch_result[0] == "err":
+                            raise fetch_result[1]
+                        article = fetch_result[1]
+
                         articles.append({"url": url, "article": article})
 
                         yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
