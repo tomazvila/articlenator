@@ -1,11 +1,14 @@
 """PDF generation using WeasyPrint."""
 
+import gc
 import re
+import tempfile
 import unicodedata
 from datetime import datetime
 from pathlib import Path
 
 import structlog
+from pypdf import PdfWriter
 from weasyprint import HTML
 
 from twitter_articlenator.config import get_config
@@ -18,6 +21,10 @@ MAX_SLUG_LENGTH = 80
 
 # Maximum content size in bytes to prevent memory issues
 MAX_CONTENT_SIZE = 500_000_000  # 500MB
+
+# Number of articles per batch when generating large PDFs.
+# Keeps WeasyPrint memory usage bounded (~50-100MB per batch).
+PDF_BATCH_SIZE = 50
 
 
 class ContentTooLargeError(Exception):
@@ -49,6 +56,9 @@ def generate_pdf(article: Article, output_dir: Path | None = None) -> Path:
 
 def generate_combined_pdf(articles: list[Article], output_dir: Path | None = None) -> Path:
     """Generate a single PDF from multiple articles.
+
+    For large article lists, generates in batches to avoid OOM and merges
+    the partial PDFs using pypdf (lightweight, streaming merge).
 
     Args:
         articles: List of articles to combine into one PDF.
@@ -91,9 +101,6 @@ def generate_combined_pdf(articles: list[Article], output_dir: Path | None = Non
     filename = f"{slug}{date_str}.pdf"
     pdf_path = output_dir / filename
 
-    # Render combined HTML
-    html_content = _render_combined_html(articles)
-
     log.info(
         "generating_combined_pdf",
         article_count=len(articles),
@@ -101,10 +108,60 @@ def generate_combined_pdf(articles: list[Article], output_dir: Path | None = Non
         output_path=str(pdf_path),
     )
 
-    HTML(string=html_content).write_pdf(pdf_path)
+    # Small batches: render directly in one go
+    if len(articles) <= PDF_BATCH_SIZE:
+        html_content = _render_combined_html(articles)
+        HTML(string=html_content).write_pdf(pdf_path)
+        log.info("pdf_generated", path=str(pdf_path), size=pdf_path.stat().st_size)
+        return pdf_path
+
+    # Large batches: render in chunks to avoid OOM, then merge
+    log.info(
+        "pdf_batched_generation",
+        batch_size=PDF_BATCH_SIZE,
+        num_batches=(len(articles) + PDF_BATCH_SIZE - 1) // PDF_BATCH_SIZE,
+    )
+
+    partial_paths = []
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp = Path(tmp_dir)
+            for batch_idx in range(0, len(articles), PDF_BATCH_SIZE):
+                batch = articles[batch_idx : batch_idx + PDF_BATCH_SIZE]
+                batch_num = batch_idx // PDF_BATCH_SIZE + 1
+                partial_path = tmp / f"batch_{batch_num:04d}.pdf"
+
+                log.info(
+                    "pdf_batch_rendering",
+                    batch=batch_num,
+                    articles=len(batch),
+                    start=batch_idx + 1,
+                    end=batch_idx + len(batch),
+                )
+
+                html_content = _render_combined_html(batch)
+                HTML(string=html_content).write_pdf(partial_path)
+                partial_paths.append(partial_path)
+
+                # Free memory between batches
+                del html_content
+                gc.collect()
+
+            # Merge all partial PDFs
+            log.info("pdf_merging", num_parts=len(partial_paths))
+            writer = PdfWriter()
+            for part in partial_paths:
+                writer.append(str(part))
+            writer.write(str(pdf_path))
+            writer.close()
+
+    except Exception:
+        # Clean up partial output on failure
+        if pdf_path.exists():
+            pdf_path.unlink()
+        raise
 
     log.info("pdf_generated", path=str(pdf_path), size=pdf_path.stat().st_size)
-
     return pdf_path
 
 
@@ -326,6 +383,52 @@ def _get_ereader_css() -> str:
             height: auto;
             margin: 0.5em 0;
             border-radius: 8px;
+        }
+
+        .article-image {
+            margin: 1.5em 0;
+            text-align: center;
+        }
+
+        .article-image img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+        }
+
+        .code-block {
+            margin: 1.2em 0;
+            background: #f6f8fa;
+            border: 1px solid #e1e4e8;
+            border-radius: 6px;
+            overflow: hidden;
+            page-break-inside: avoid;
+        }
+
+        .code-lang {
+            font-family: 'Courier New', monospace;
+            font-size: 0.75em;
+            color: #6a737d;
+            background: #eef0f2;
+            padding: 0.3em 0.8em;
+            border-bottom: 1px solid #e1e4e8;
+        }
+
+        .code-block pre {
+            margin: 0;
+            padding: 0.8em;
+            overflow-x: auto;
+            font-size: 0.8em;
+            line-height: 1.45;
+            background: #f6f8fa;
+        }
+
+        .code-block code {
+            font-family: 'Courier New', Consolas, monospace;
+            font-size: 1em;
+            background: transparent;
+            padding: 0;
+            white-space: pre;
         }
 
         .main-tweet {

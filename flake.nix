@@ -23,6 +23,7 @@
             flask
             playwright
             weasyprint
+            pypdf
             beautifulsoup4
             lxml
             structlog
@@ -92,6 +93,8 @@
                 pkgs.coreutils
                 pkgs.bash
                 pkgs.cacert
+                # Video downloading
+                pkgs.yt-dlp
               ];
 
               fontsConf = pkgs.makeFontsConf {
@@ -175,6 +178,7 @@
             flask
             playwright
             weasyprint
+            pypdf
             beautifulsoup4
             lxml
             structlog
@@ -229,6 +233,8 @@
               pkgs.noto-fonts
               # Playwright browsers
               pkgs.playwright-driver.browsers
+              # Video downloading
+              pkgs.yt-dlp
             ];
 
             shellHook = ''
