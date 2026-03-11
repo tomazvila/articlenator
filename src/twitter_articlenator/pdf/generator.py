@@ -10,11 +10,15 @@ from pathlib import Path
 import structlog
 from pypdf import PdfWriter
 from weasyprint import HTML
+from weasyprint.urls import default_url_fetcher
 
 from twitter_articlenator.config import get_config
 from twitter_articlenator.sources.base import Article
 
 log = structlog.get_logger()
+
+# Timeout for fetching remote resources (images, etc.)
+URL_FETCH_TIMEOUT = 30
 
 # Maximum slug length for filenames
 MAX_SLUG_LENGTH = 80
@@ -25,6 +29,32 @@ MAX_CONTENT_SIZE = 500_000_000  # 500MB
 # Number of articles per batch when generating large PDFs.
 # Keeps WeasyPrint memory usage bounded (~50-100MB per batch).
 PDF_BATCH_SIZE = 50
+
+
+def _browser_url_fetcher(url, timeout=URL_FETCH_TIMEOUT, **kwargs):
+    """URL fetcher with browser-like headers to avoid CDN blocks."""
+    if url.startswith("http"):
+        from urllib.request import Request, urlopen
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+        }
+        try:
+            req = Request(url, headers=headers)
+            response = urlopen(req, timeout=timeout)  # noqa: S310
+            return {
+                "string": response.read(),
+                "mime_type": response.headers.get_content_type(),
+                "redirected_url": response.url,
+            }
+        except Exception as e:
+            log.debug("url_fetch_failed", url=url[:120], error=str(e))
+            return default_url_fetcher(url, timeout=timeout)
+    return default_url_fetcher(url, timeout=timeout)
 
 
 class ContentTooLargeError(Exception):
@@ -111,7 +141,7 @@ def generate_combined_pdf(articles: list[Article], output_dir: Path | None = Non
     # Small batches: render directly in one go
     if len(articles) <= PDF_BATCH_SIZE:
         html_content = _render_combined_html(articles)
-        HTML(string=html_content).write_pdf(pdf_path)
+        HTML(string=html_content, url_fetcher=_browser_url_fetcher).write_pdf(pdf_path)
         log.info("pdf_generated", path=str(pdf_path), size=pdf_path.stat().st_size)
         return pdf_path
 
@@ -123,6 +153,7 @@ def generate_combined_pdf(articles: list[Article], output_dir: Path | None = Non
     )
 
     partial_paths = []
+    skipped = 0
     try:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp = Path(tmp_dir)
@@ -139,13 +170,45 @@ def generate_combined_pdf(articles: list[Article], output_dir: Path | None = Non
                     end=batch_idx + len(batch),
                 )
 
-                html_content = _render_combined_html(batch)
-                HTML(string=html_content).write_pdf(partial_path)
-                partial_paths.append(partial_path)
+                try:
+                    html_content = _render_combined_html(batch)
+                    HTML(string=html_content, url_fetcher=_browser_url_fetcher).write_pdf(
+                        partial_path
+                    )
+                    partial_paths.append(partial_path)
+                except Exception as batch_err:
+                    # Batch failed - try each article individually
+                    log.warning(
+                        "pdf_batch_failed_retrying_individually",
+                        batch=batch_num,
+                        error=str(batch_err),
+                    )
+                    for j, article in enumerate(batch):
+                        article_num = batch_idx + j + 1
+                        individual_path = tmp / f"article_{article_num:04d}.pdf"
+                        try:
+                            html_content = _render_combined_html([article])
+                            HTML(string=html_content, url_fetcher=_browser_url_fetcher).write_pdf(
+                                individual_path
+                            )
+                            partial_paths.append(individual_path)
+                        except Exception as art_err:
+                            skipped += 1
+                            log.warning(
+                                "pdf_article_skipped",
+                                article_num=article_num,
+                                title=article.title[:80],
+                                error=str(art_err),
+                            )
 
                 # Free memory between batches
-                del html_content
                 gc.collect()
+
+            if not partial_paths:
+                raise RuntimeError("All articles failed PDF rendering")
+
+            if skipped:
+                log.info("pdf_skipped_articles", count=skipped)
 
             # Merge all partial PDFs
             log.info("pdf_merging", num_parts=len(partial_paths))
@@ -163,6 +226,17 @@ def generate_combined_pdf(articles: list[Article], output_dir: Path | None = Non
 
     log.info("pdf_generated", path=str(pdf_path), size=pdf_path.stat().st_size)
     return pdf_path
+
+
+def _sanitize_html(content: str) -> str:
+    """Sanitize HTML content to prevent WeasyPrint/cssselect2 crashes.
+
+    Strips XML namespace-prefixed tags (e.g. <x:xmpmeta>, <dc:title>, <rdf:li>)
+    that cause cssselect2 AssertionError when it expects Clark notation.
+    """
+    # Remove namespace-prefixed tags and their content where possible
+    content = re.sub(r"</?[a-zA-Z]+:[a-zA-Z]+[^>]*>", "", content)
+    return content
 
 
 def _render_combined_html(articles: list[Article]) -> str:
@@ -186,6 +260,8 @@ def _render_combined_html(articles: list[Article]) -> str:
         # Add page-break-before for all articles except the first
         page_break = 'style="page-break-before: always;"' if i > 0 else ""
 
+        sanitized_content = _sanitize_html(article.content)
+
         section = f"""
         <article {page_break}>
             <header>
@@ -197,7 +273,7 @@ def _render_combined_html(articles: list[Article]) -> str:
                 </div>
             </header>
             <main class="content">
-                {article.content}
+                {sanitized_content}
             </main>
             <footer>
                 <p class="source-url">Original: <a href="{article.source_url}">{article.source_url}</a></p>
@@ -269,7 +345,7 @@ def _render_html(article: Article) -> str:
             </div>
         </header>
         <main class="content">
-            {article.content}
+            {_sanitize_html(article.content)}
         </main>
         <footer>
             <p class="source-url">Original: <a href="{article.source_url}">{article.source_url}</a></p>

@@ -1,6 +1,7 @@
 """Twitter/X content source using Playwright browser automation."""
 
 import asyncio
+import html
 import re
 from datetime import datetime
 
@@ -11,6 +12,11 @@ from .base import Article, ContentSource
 from .browser_pool import get_browser_pool
 
 log = structlog.get_logger()
+
+
+def _escape_html(text: str) -> str:
+    """Escape HTML special characters in text content."""
+    return html.escape(text, quote=False)
 
 
 class TwitterPlaywrightSource(ContentSource):
@@ -232,9 +238,13 @@ class TwitterPlaywrightSource(ContentSource):
         images = []
 
         if is_article:
-            # Extract article content
+            # Scroll through the article to trigger lazy-loading of images
+            log.info("scrolling_article_for_images")
+            await self._scroll_article(page, article_element)
+
+            # Extract article content with images preserved
             log.info("extracting_article_content")
-            content = await article_element.inner_text()
+            content, images = await self._extract_article_content(article_element, page)
 
             # Try to get article title from the article header or cover
             try:
@@ -329,6 +339,237 @@ class TwitterPlaywrightSource(ContentSource):
         except Exception as e:
             log.warning("image_extraction_failed", error=str(e))
         return images
+
+    async def _scroll_article(self, page, article_element) -> None:
+        """Scroll through article to trigger lazy-loading of images."""
+        try:
+            scroll_height = await page.evaluate("(el) => el.scrollHeight", article_element)
+            viewport_height = await page.evaluate("window.innerHeight")
+            steps = max(1, scroll_height // viewport_height)
+            for i in range(steps + 1):
+                await page.evaluate(f"window.scrollTo(0, {i * viewport_height})")
+                await asyncio.sleep(0.3)
+            # Scroll back to top
+            await page.evaluate("window.scrollTo(0, 0)")
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            log.warning("article_scroll_failed", error=str(e))
+
+    async def _extract_article_content(self, article_element, page) -> tuple[str, list[str]]:
+        """Extract structured content from a long-form article.
+
+        Preserves images, code blocks, headings, lists, and blockquotes
+        in their natural document order.
+
+        Args:
+            article_element: Playwright element for the longformRichTextComponent.
+            page: Playwright page object.
+
+        Returns:
+            Tuple of (html_content, image_urls).
+        """
+        blocks = await page.evaluate(
+            """(element) => {
+            const blocks = [];
+            const seenTexts = new Set();
+            const seenImages = new Set();
+
+            // Navigate into wrapper div if present
+            let wrapper = element;
+            if (element.children.length === 1
+                && element.children[0].tagName === 'DIV') {
+                wrapper = element.children[0];
+            }
+
+            function addText(content) {
+                const trimmed = content.trim();
+                if (trimmed && !seenTexts.has(trimmed)) {
+                    seenTexts.add(trimmed);
+                    blocks.push({type: 'text', content: trimmed});
+                }
+            }
+
+            function addImage(src) {
+                if (src && !seenImages.has(src)) {
+                    seenImages.add(src);
+                    blocks.push({type: 'image', src: src});
+                }
+            }
+
+            function processElement(el) {
+                if (!el || !el.tagName) return;
+                const tag = el.tagName.toLowerCase();
+
+                // Code block: <section> with markdown-code-block inside,
+                // or any element containing <pre>/<code> with monospace text
+                if (tag === 'section' || tag === 'div') {
+                    const codeBlock = el.querySelector(
+                        '[data-testid="markdown-code-block"], pre, code'
+                    );
+                    if (codeBlock) {
+                        let lang = '';
+                        const langSpan = el.querySelector(
+                            '[data-testid="markdown-code-block"] div > span'
+                        );
+                        if (langSpan) lang = langSpan.textContent.trim();
+
+                        let code = '';
+                        const codeEl = el.querySelector('code');
+                        if (codeEl) {
+                            code = codeEl.innerText;
+                        } else {
+                            const pre = el.querySelector('pre');
+                            code = pre ? pre.innerText : codeBlock.innerText;
+                        }
+                        if (code.trim()) {
+                            blocks.push({
+                                type: 'code', language: lang, content: code
+                            });
+                            return;
+                        }
+                    }
+                }
+
+                // Direct image
+                if (tag === 'img') {
+                    const src = el.src || '';
+                    if (src && src.startsWith('http')) {
+                        addImage(src);
+                    }
+                    return;
+                }
+
+                // Check for heading inside this element
+                const heading = el.querySelector('h1,h2,h3,h4,h5,h6');
+                if (heading) {
+                    const level = parseInt(heading.tagName[1]);
+                    const text = heading.innerText.trim();
+                    if (text) {
+                        blocks.push({
+                            type: 'heading', level: level, content: text
+                        });
+                    }
+                    return;
+                }
+
+                // Ordered list
+                if (tag === 'ol') {
+                    const items = Array.from(el.querySelectorAll('li'))
+                        .map(li => li.innerText.trim())
+                        .filter(t => t);
+                    if (items.length) {
+                        blocks.push({type: 'ordered_list', items: items});
+                    }
+                    return;
+                }
+
+                // Unordered list
+                if (tag === 'ul') {
+                    const items = Array.from(el.querySelectorAll('li'))
+                        .map(li => li.innerText.trim())
+                        .filter(t => t);
+                    if (items.length) {
+                        blocks.push({type: 'unordered_list', items: items});
+                    }
+                    return;
+                }
+
+                // Blockquote
+                if (tag === 'blockquote') {
+                    const text = el.innerText?.trim();
+                    if (text) {
+                        blocks.push({type: 'blockquote', content: text});
+                    }
+                    return;
+                }
+
+                // Check if this element contains images
+                const imgs = el.querySelectorAll('img');
+                const hasImages = Array.from(imgs).some(
+                    img => (img.src || '').startsWith('http')
+                );
+
+                if (hasImages) {
+                    for (const child of el.children) {
+                        processElement(child);
+                    }
+                    return;
+                }
+
+                // Regular text block
+                const text = el.innerText?.trim();
+                if (text) {
+                    addText(text);
+                }
+            }
+
+            for (const child of wrapper.children) {
+                processElement(child);
+            }
+
+            return blocks;
+        }""",
+            article_element,
+        )
+
+        # Convert blocks to clean HTML
+        html_parts = []
+        images = []
+
+        for block in blocks:
+            btype = block["type"]
+            if btype == "text":
+                paragraphs = block["content"].split("\n")
+                for p in paragraphs:
+                    p = p.strip()
+                    if p:
+                        html_parts.append(f"        <p>{_escape_html(p)}</p>")
+            elif btype == "heading":
+                level = block["level"]
+                html_parts.append(f"        <h{level}>{_escape_html(block['content'])}</h{level}>")
+            elif btype == "code":
+                lang = _escape_html(block.get("language", ""))
+                code = _escape_html(block["content"])
+                lang_attr = f' class="language-{lang}"' if lang else ""
+                lang_label = f'<div class="code-lang">{lang}</div>' if lang else ""
+                html_parts.append(
+                    f'        <div class="code-block">{lang_label}'
+                    f"<pre><code{lang_attr}>{code}</code></pre></div>"
+                )
+            elif btype == "ordered_list":
+                items_html = "\n".join(
+                    f"            <li>{_escape_html(item)}</li>" for item in block["items"]
+                )
+                html_parts.append(f"        <ol>\n{items_html}\n        </ol>")
+            elif btype == "unordered_list":
+                items_html = "\n".join(
+                    f"            <li>{_escape_html(item)}</li>" for item in block["items"]
+                )
+                html_parts.append(f"        <ul>\n{items_html}\n        </ul>")
+            elif btype == "blockquote":
+                html_parts.append(
+                    f"        <blockquote><p>{_escape_html(block['content'])}</p></blockquote>"
+                )
+            elif btype == "image":
+                src = block["src"]
+                if "name=" in src:
+                    src = re.sub(r"name=\w+", "name=large", src)
+                images.append(src)
+                html_parts.append(
+                    f'        <div class="article-image">'
+                    f'<img src="{src}" alt="Article image">'
+                    f"</div>"
+                )
+
+        log.info(
+            "article_content_extracted",
+            block_count=len(blocks),
+            image_count=len(images),
+            text_blocks=sum(1 for b in blocks if b["type"] == "text"),
+            code_blocks=sum(1 for b in blocks if b["type"] == "code"),
+        )
+
+        return "\n".join(html_parts), images
 
     async def _extract_replies(self, page, main_author: str) -> list[dict]:
         """Extract replies from the conversation thread.
@@ -463,11 +704,8 @@ class TwitterPlaywrightSource(ContentSource):
         date_str = timestamp.strftime("%Y-%m-%d %H:%M") if timestamp else ""
 
         if is_article:
-            paragraphs = content.split("\n")
-            formatted_paragraphs = "\n".join(
-                f"        <p>{p.strip()}</p>" for p in paragraphs if p.strip()
-            )
-
+            # Content already contains structured HTML with images from
+            # _extract_article_content, so use it directly.
             html_content = f"""<article class="twitter-article">
     <header class="article-header">
         <h1>{title}</h1>
@@ -478,7 +716,7 @@ class TwitterPlaywrightSource(ContentSource):
         </div>
     </header>
     <div class="article-content">
-{formatted_paragraphs}
+{content}
     </div>
 </article>"""
         else:
