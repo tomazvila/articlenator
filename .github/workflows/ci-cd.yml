@@ -145,7 +145,7 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
+            type=sha,prefix=,format=long
 
       - name: Create and push multi-arch manifest
         run: |
@@ -187,13 +187,9 @@ jobs:
 
       - name: Update image in deployment
         run: |
-          # Use 'main' tag for branch pushes, or version tag for releases
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-            TAG="main"
-          else
-            TAG="${{ github.ref_name }}"
-          fi
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+          # Use commit SHA tag to guarantee a unique image ref on every deploy,
+          # ensuring kubectl always triggers a new rollout.
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
           echo "Deploying image: $IMAGE"
           kubectl apply -f k8s/twitter-app.yaml
           kubectl set image deployment/twitter-articlenator \

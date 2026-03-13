@@ -33,7 +33,7 @@ spec:
       #   - name: ghcr-secret
       containers:
         - name: twitter-articlenator
-          image: ghcr.io/tomazvila/twitterarticlenator:main
+          image: ghcr.io/tomazvila/articlenator:main
           imagePullPolicy: Always
           ports:
             - containerPort: 5001
