@@ -1,4 +1,9 @@
-"""Bookmark scraper using Playwright browser automation."""
+"""Bookmark scraper using Playwright with GraphQL API interception.
+
+Instead of parsing DOM elements (which misses article URLs due to t.co
+shortening), this intercepts Twitter's GraphQL API responses to get
+expanded URLs and structured tweet data directly.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,7 @@ import asyncio
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import structlog
 from playwright.async_api._generated import SetCookieParam
@@ -14,13 +20,12 @@ from .browser_pool import get_browser_pool
 
 log = structlog.get_logger()
 
-# Delay between scrolls (seconds)
-SCROLL_DELAY = 3.0
+# Delay between scrolls (seconds) — fast enough to paginate 500+ bookmarks
+SCROLL_DELAY = 1.5
 
-# Number of consecutive scrolls with no new bookmarks before stopping.
-# Must be generous because Twitter lazy-loads content and sometimes has
-# gaps where a scroll yields nothing but the next one finds items.
-MAX_EMPTY_SCROLLS = 8
+# Consecutive scrolls with no new bookmarks before stopping.
+# Generous to handle Twitter's lazy-loading gaps.
+MAX_EMPTY_SCROLLS = 15
 
 
 @dataclass
@@ -53,15 +58,16 @@ class BookmarkEntry:
 class BookmarkScraper:
     """Scrape bookmarks from x.com/i/bookmarks using Playwright.
 
-    Uses the same browser pool and cookie approach as TwitterPlaywrightSource.
+    Intercepts GraphQL API responses for reliable data extraction.
+    This captures expanded URLs (not t.co) and structured tweet data
+    directly from Twitter's API responses.
     """
 
-    # Max text preview length
     MAX_PREVIEW_LENGTH = 200
 
-    # URLs to ignore when extracting article links
+    # Internal Twitter/X URLs to ignore (not external articles)
     IGNORE_URL_PATTERNS = re.compile(
-        r"https?://(?:www\.)?(?:twitter\.com|x\.com|t\.co)/",
+        r"https?://(?:www\.)?(?:twitter\.com|x\.com)/",
     )
 
     # Pattern matching X Article URLs (native long-form articles on X)
@@ -70,11 +76,6 @@ class BookmarkScraper:
     )
 
     def __init__(self, cookies: str) -> None:
-        """Initialize with cookie string.
-
-        Args:
-            cookies: Twitter authentication cookies (auth_token=...; ct0=...).
-        """
         self._cookies_str = cookies
 
     def _parse_cookies(self) -> list[SetCookieParam]:
@@ -104,16 +105,13 @@ class BookmarkScraper:
 
     async def scrape(
         self,
-        on_bookmark: "Callable[[BookmarkEntry, int], None] | None" = None,
+        on_bookmark: Callable[[BookmarkEntry, int], None] | None = None,
     ) -> list[BookmarkEntry]:
         """Scrape all bookmarks from x.com/i/bookmarks.
 
-        Args:
-            on_bookmark: Optional callback invoked for each new bookmark found.
-                         Receives (entry, running_total).
-
-        Returns:
-            List of BookmarkEntry objects.
+        Intercepts GraphQL API responses while scrolling the page to
+        trigger pagination. Returns BookmarkEntry objects with expanded
+        (real) URLs extracted from the API data.
         """
         log.info("bookmark_scrape_starting")
 
@@ -123,12 +121,34 @@ class BookmarkScraper:
         async with pool.get_context(cookies=cookies) as context:
             page = await context.new_page()
 
-            # Establish session by visiting home first (same as TwitterPlaywrightSource)
+            # Collect entries intercepted from GraphQL API responses
+            intercepted: list[BookmarkEntry] = []
+
+            async def on_response(response):
+                try:
+                    url = response.url
+                    if "/graphql/" not in url or "Bookmark" not in url:
+                        return
+                    if response.status != 200:
+                        return
+                    body = await response.json()
+                    entries = self._parse_graphql_response(body)
+                    if entries:
+                        intercepted.extend(entries)
+                        log.info(
+                            "bookmark_api_intercepted",
+                            count=len(entries),
+                            total=len(intercepted),
+                        )
+                except Exception as e:
+                    log.debug("bookmark_response_handler_error", error=str(e))
+
+            page.on("response", on_response)
+
+            # Establish session by visiting home first
             await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(3)
 
-            # Dismiss cookie-consent banner (GDPR/EU prompt) so it doesn't
-            # overlay the page and interfere with scrolling/extraction.
             await self._dismiss_consent_banner(page)
 
             # Verify authentication — fail fast if cookies are expired
@@ -143,7 +163,6 @@ class BookmarkScraper:
                     page_url=page_url,
                     page_title=page_title,
                 )
-                # Detect login redirect — cookies are expired
                 if "login" in page_url or "Log in" in page_title:
                     raise ValueError(
                         "Authentication failed — your Twitter cookies have expired. "
@@ -154,8 +173,7 @@ class BookmarkScraper:
                     "Please check your cookies and try again."
                 )
 
-            # Navigate directly to bookmarks — goto is reliable and avoids
-            # issues with pushState not triggering React Router navigation.
+            # Navigate to bookmarks (triggers first GraphQL Bookmarks call)
             await page.goto(
                 "https://x.com/i/bookmarks",
                 wait_until="domcontentloaded",
@@ -163,27 +181,23 @@ class BookmarkScraper:
             )
             await asyncio.sleep(5)
 
-            # Dismiss consent banner again if it reappeared on navigation
             await self._dismiss_consent_banner(page)
 
-            # Wait for bookmarks to load (generous timeout for slow environments)
+            # Wait for bookmarks page to load
             try:
                 await page.wait_for_selector('[data-testid="tweet"]', timeout=30000)
             except Exception:
-                # Check if it's an empty bookmarks page
                 page_text = await page.inner_text("body")
                 if "haven't added any" in page_text or "Save posts for later" in page_text:
                     log.info("bookmark_scrape_empty")
                     return []
 
-                # Save debug info before raising
                 try:
                     await page.screenshot(path="/tmp/bookmark_debug.png")
                     log.error(
                         "bookmark_page_load_failed",
                         page_url=page.url,
                         page_title=await page.title(),
-                        screenshot="/tmp/bookmark_debug.png",
                     )
                 except Exception:
                     pass
@@ -195,19 +209,24 @@ class BookmarkScraper:
 
             log.info("bookmark_scrape_page_loaded")
 
-            # Scroll and collect
+            # Give time for the initial API response handler to complete
+            await asyncio.sleep(2)
+
+            # Scroll and collect from intercepted API responses
             bookmarks: list[BookmarkEntry] = []
             seen_ids: set[str] = set()
             empty_scroll_count = 0
+            last_intercepted_len = 0
 
             while empty_scroll_count < MAX_EMPTY_SCROLLS:
-                # Extract all visible tweet elements
-                tweet_elements = await page.query_selector_all('article[data-testid="tweet"]')
+                # Process new entries from API interception
+                current_len = len(intercepted)
+                new_entries = intercepted[last_intercepted_len:current_len]
+                last_intercepted_len = current_len
 
                 new_count = 0
-                for tweet_el in tweet_elements:
-                    entry = await self._extract_bookmark(tweet_el)
-                    if entry and entry.tweet_id not in seen_ids:
+                for entry in new_entries:
+                    if entry.tweet_id not in seen_ids:
                         seen_ids.add(entry.tweet_id)
                         bookmarks.append(entry)
                         new_count += 1
@@ -216,15 +235,20 @@ class BookmarkScraper:
 
                 if new_count > 0:
                     empty_scroll_count = 0
-                    log.info("bookmark_scrape_progress", total=len(bookmarks), new=new_count)
+                    log.info(
+                        "bookmark_scrape_progress",
+                        total=len(bookmarks),
+                        new=new_count,
+                    )
                 else:
                     empty_scroll_count += 1
-                    log.debug("bookmark_scrape_no_new", empty_scrolls=empty_scroll_count)
+                    log.debug(
+                        "bookmark_scrape_no_new",
+                        empty_scrolls=empty_scroll_count,
+                    )
 
-                # Scroll down by a full viewport height for faster progress.
-                # Use scrollTo(0, document.body.scrollHeight) every few scrolls
-                # to force-trigger lazy loading at the bottom.
-                await page.evaluate("window.scrollBy(0, window.innerHeight)")
+                # Scroll 2x viewport height for faster pagination
+                await page.evaluate("window.scrollBy(0, window.innerHeight * 2)")
                 await asyncio.sleep(SCROLL_DELAY)
 
             log.info("bookmark_scrape_complete", total=len(bookmarks))
@@ -248,114 +272,151 @@ class BookmarkScraper:
         except Exception as exc:
             log.debug("bookmark_consent_banner_check_failed", error=str(exc))
 
-    async def _extract_bookmark(self, tweet_el) -> BookmarkEntry | None:
-        """Extract a BookmarkEntry from a tweet article element.
+    def _extract_urls_from_entities(self, entities: dict, article_urls: list[str]) -> bool:
+        """Extract article URLs from tweet entities.
 
-        Args:
-            tweet_el: Playwright element handle for an article[data-testid="tweet"].
-
-        Returns:
-            BookmarkEntry or None if extraction fails.
+        Returns True if an X Article URL was found.
         """
+        is_article = False
+        for url_entity in entities.get("urls", []):
+            expanded = url_entity.get("expanded_url", "")
+            if not expanded:
+                continue
+            if self.X_ARTICLE_URL_PATTERN.match(expanded):
+                is_article = True
+                if expanded not in article_urls:
+                    article_urls.append(expanded)
+            elif not self.IGNORE_URL_PATTERNS.match(expanded):
+                if expanded not in article_urls:
+                    article_urls.append(expanded)
+        return is_article
+
+    def _parse_graphql_response(self, data: dict) -> list[BookmarkEntry]:
+        """Parse bookmark entries from a Twitter GraphQL API response."""
+        entries: list[BookmarkEntry] = []
         try:
-            # Extract tweet URL (contains /status/ID)
-            tweet_url = ""
-            tweet_id = ""
-            status_links = await tweet_el.query_selector_all('a[href*="/status/"]')
-            for link in status_links:
-                href = await link.get_attribute("href")
-                if (
-                    href
-                    and "/status/" in href
-                    and "/analytics" not in href
-                    and "/photo/" not in href
-                ):
-                    # Normalize to full URL
-                    if href.startswith("/"):
-                        href = f"https://x.com{href}"
-                    tweet_url = href
-                    # Extract tweet ID
-                    match = re.search(r"/status/(\d+)", href)
-                    if match:
-                        tweet_id = match.group(1)
+            data_root = data.get("data", {})
+            timeline = None
+            for key in ("bookmark_timeline_v2", "bookmark_timeline"):
+                if key in data_root:
+                    timeline = data_root[key].get("timeline", {})
                     break
 
+            if not timeline:
+                return entries
+
+            for instruction in timeline.get("instructions", []):
+                inst_type = instruction.get("type", "")
+                if inst_type == "TimelineAddEntries":
+                    for entry in instruction.get("entries", []):
+                        bookmark = self._parse_timeline_entry(entry)
+                        if bookmark:
+                            entries.append(bookmark)
+                elif inst_type == "TimelineAddToModule":
+                    for item in instruction.get("moduleItems", []):
+                        entry_item = item.get("item", {})
+                        bookmark = self._parse_item_content(entry_item.get("itemContent", {}))
+                        if bookmark:
+                            entries.append(bookmark)
+        except Exception as e:
+            log.warning("bookmark_graphql_parse_error", error=str(e))
+
+        return entries
+
+    def _parse_timeline_entry(self, entry: dict) -> BookmarkEntry | None:
+        """Parse a single timeline entry from the GraphQL response."""
+        try:
+            content = entry.get("content", {})
+            entry_type = content.get("entryType", "") or content.get("__typename", "")
+
+            if entry_type == "TimelineTimelineItem":
+                return self._parse_item_content(content.get("itemContent", {}))
+            elif entry_type == "TimelineTimelineModule":
+                for item in content.get("items", []):
+                    result = self._parse_item_content(item.get("item", {}).get("itemContent", {}))
+                    if result:
+                        return result
+        except Exception as e:
+            log.debug("bookmark_entry_parse_failed", error=str(e))
+        return None
+
+    def _parse_item_content(self, item_content: dict) -> BookmarkEntry | None:
+        """Parse tweet data from an itemContent object."""
+        if not item_content:
+            return None
+
+        item_type = item_content.get("itemType", "") or item_content.get("__typename", "")
+        if item_type != "TimelineTweet":
+            return None
+
+        result = item_content.get("tweet_results", {}).get("result", {})
+        return self._parse_tweet_result(result)
+
+    def _parse_tweet_result(self, tweet: dict) -> BookmarkEntry | None:
+        """Parse a tweet result object into a BookmarkEntry."""
+        try:
+            typename = tweet.get("__typename", "")
+            if typename == "TweetWithVisibilityResults":
+                tweet = tweet.get("tweet", {})
+            elif typename == "TweetTombstone":
+                return None
+
+            tweet_id = tweet.get("rest_id", "")
             if not tweet_id:
                 return None
 
-            # Extract author
-            author = ""
-            display_name = ""
-            username_el = await tweet_el.query_selector('[data-testid="User-Name"]')
-            if username_el:
-                # Display name is the first span
-                name_span = await username_el.query_selector("span")
-                if name_span:
-                    display_name = await name_span.inner_text()
+            # User info
+            user_legacy = (
+                tweet.get("core", {}).get("user_results", {}).get("result", {}).get("legacy", {})
+            )
+            author = user_legacy.get("screen_name", "")
+            display_name = user_legacy.get("name", "")
 
-                # Username is in the link href
-                author_link = await username_el.query_selector("a")
-                if author_link:
-                    href = await author_link.get_attribute("href")
-                    if href:
-                        author = href.strip("/").split("/")[0]
+            # Tweet content
+            legacy = tweet.get("legacy", {})
+            full_text = legacy.get("full_text", "")
 
-            # Extract tweet text
-            text_preview = ""
-            text_el = await tweet_el.query_selector('[data-testid="tweetText"]')
-            if text_el:
-                full_text = await text_el.inner_text()
-                text_preview = full_text[: self.MAX_PREVIEW_LENGTH]
-                if len(full_text) > self.MAX_PREVIEW_LENGTH:
-                    text_preview += "..."
+            # Check for extended text (Twitter Blue long-form tweets)
+            note_tweet = tweet.get("note_tweet", {}).get("note_tweet_results", {}).get("result", {})
+            if note_tweet:
+                note_text = note_tweet.get("text", "")
+                if note_text and len(note_text) > len(full_text):
+                    full_text = note_text
 
-            # Extract external article URLs (non-Twitter links)
-            article_urls = []
-            if text_el:
-                links = await text_el.query_selector_all("a")
-                for link in links:
-                    href = await link.get_attribute("href")
-                    if (
-                        href
-                        and href.startswith("http")
-                        and not self.IGNORE_URL_PATTERNS.match(href)
-                    ):
-                        article_urls.append(href)
+            text_preview = full_text[: self.MAX_PREVIEW_LENGTH]
+            if len(full_text) > self.MAX_PREVIEW_LENGTH:
+                text_preview += "..."
 
-            # Also check for card links (preview cards for articles)
-            card_links = await tweet_el.query_selector_all('[data-testid="card.wrapper"] a[href]')
-            is_article = False
-            for card_link in card_links:
-                href = await card_link.get_attribute("href")
-                if not href or not href.startswith("http"):
-                    continue
-                # Check if this is a native X Article link
-                if self.X_ARTICLE_URL_PATTERN.match(href):
+            tweet_url = f"https://x.com/{author}/status/{tweet_id}"
+
+            # Extract expanded URLs from entities (real URLs, not t.co)
+            article_urls: list[str] = []
+            is_article = self._extract_urls_from_entities(legacy.get("entities", {}), article_urls)
+
+            # Also check note_tweet entities
+            if note_tweet:
+                if self._extract_urls_from_entities(note_tweet.get("entity_set", {}), article_urls):
                     is_article = True
-                    if href not in article_urls:
-                        article_urls.append(href)
-                elif not self.IGNORE_URL_PATTERNS.match(href):
-                    if href not in article_urls:
-                        article_urls.append(href)
 
-            # Also detect X Articles by looking for all links with /article/ pattern
-            # (may appear outside card wrappers)
-            all_links = await tweet_el.query_selector_all("a[href]")
-            for link in all_links:
-                href = await link.get_attribute("href")
-                if href:
-                    if href.startswith("/"):
-                        href = f"https://x.com{href}"
-                    if self.X_ARTICLE_URL_PATTERN.match(href):
+            # Check quoted tweet for additional article URLs
+            quoted = tweet.get("quoted_status_result", {}).get("result", {})
+            if quoted:
+                q_typename = quoted.get("__typename", "")
+                if q_typename == "TweetWithVisibilityResults":
+                    quoted = quoted.get("tweet", {})
+                if q_typename != "TweetTombstone":
+                    q_legacy = quoted.get("legacy", {})
+                    if self._extract_urls_from_entities(q_legacy.get("entities", {}), article_urls):
                         is_article = True
-                        if href not in article_urls:
-                            article_urls.append(href)
 
-            # Extract timestamp
-            bookmarked_at = None
-            time_el = await tweet_el.query_selector("time")
-            if time_el:
-                bookmarked_at = await time_el.get_attribute("datetime")
+            # Timestamp
+            bookmarked_at = legacy.get("created_at")
+            if bookmarked_at:
+                try:
+                    dt = datetime.strptime(bookmarked_at, "%a %b %d %H:%M:%S %z %Y")
+                    bookmarked_at = dt.isoformat()
+                except (ValueError, TypeError):
+                    pass
 
             return BookmarkEntry(
                 tweet_id=tweet_id,
@@ -369,5 +430,5 @@ class BookmarkScraper:
             )
 
         except Exception as e:
-            log.warning("bookmark_extract_failed", error=str(e))
+            log.warning("bookmark_tweet_parse_failed", error=str(e))
             return None

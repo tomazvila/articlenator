@@ -641,12 +641,12 @@ def bookmarks_fetch():
     def _run_scrape():
         """Run the scraper in a background thread so the SSE generator can stream."""
         try:
-            # Use a long timeout — scraping 300+ bookmarks can take 15+ minutes
-            bookmarks = run_async(scraper.scrape(on_bookmark=_on_bookmark), timeout=1200)
+            # Use a long timeout — scraping 500+ bookmarks with API interception
+            bookmarks = run_async(scraper.scrape(on_bookmark=_on_bookmark), timeout=1800)
             bookmark_queue.put(("complete", len(bookmarks), None))
         except TimeoutError:
             log.error("bookmark_fetch_timeout")
-            bookmark_queue.put(("error", "Bookmark scrape timed out (20 min limit)", None))
+            bookmark_queue.put(("error", "Bookmark scrape timed out (30 min limit)", None))
         except Exception as e:
             log.error("bookmark_fetch_failed", error=str(e))
             bookmark_queue.put(("error", str(e) or type(e).__name__, None))
