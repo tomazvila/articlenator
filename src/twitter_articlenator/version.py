@@ -1,11 +1,37 @@
-"""Version information for the application."""
+"""Version information for the application.
+
+Version is read from pyproject.toml (single source of truth).
+"""
 
 import os
+import re
 import subprocess
 from functools import lru_cache
+from pathlib import Path
 
-# Application version
-__version__ = "0.2.0"
+
+def _get_version() -> str:
+    """Read version from installed metadata, falling back to pyproject.toml."""
+    try:
+        from importlib.metadata import version
+
+        return version("twitter-articlenator")
+    except Exception:
+        pass
+
+    # Fallback: read pyproject.toml directly (dev shell / uninstalled)
+    try:
+        pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+        match = re.search(r'version\s*=\s*"([^"]+)"', pyproject.read_text())
+        if match:
+            return match.group(1)
+    except Exception:
+        pass
+
+    return "0.0.0"
+
+
+__version__ = _get_version()
 
 
 @lru_cache(maxsize=1)
@@ -41,7 +67,7 @@ def get_version_string() -> str:
     """Get full version string including git commit.
 
     Returns:
-        Version string like '0.1.0 (abc12345)'.
+        Version string like '0.2.3 (abc12345)'.
     """
     commit = get_git_commit()
     return f"{__version__} ({commit})"

@@ -141,6 +141,11 @@ def create_app(test_config: dict | None = None) -> Flask:
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
         return response
 
+    # Serve favicon.ico from root for Safari compatibility
+    @app.route("/favicon.ico")
+    def favicon():
+        return app.send_static_file("favicon.ico")
+
     # Store run_async in app config for blueprints to access
     app.config["RUN_ASYNC"] = run_async
 

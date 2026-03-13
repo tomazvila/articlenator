@@ -13,6 +13,11 @@
       isDockerSystem = system: builtins.elem system dockerSystems;
       # Git commit hash (8 chars) - uses shortRev if available, "dirty" otherwise
       gitCommit = if self ? shortRev then self.shortRev else "dirty";
+      # Read version from pyproject.toml (single source of truth)
+      pyprojectVersion = let
+        content = builtins.readFile ./pyproject.toml;
+        matched = builtins.match ".*version = \"([^\"]+)\".*" content;
+      in builtins.head matched;
     in {
       packages = forAllSystems (system:
         let
@@ -37,7 +42,7 @@
           # Build the application package
           app = pkgs.python3Packages.buildPythonApplication {
             pname = "twitter-articlenator";
-            version = "0.2.0";
+            version = pyprojectVersion;
             format = "pyproject";
 
             src = ./.;
