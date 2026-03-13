@@ -39,6 +39,7 @@ class BookmarkEntry:
     text_preview: str
     article_urls: list[str] = field(default_factory=list)
     is_article: bool = False
+    has_video: bool = False
     bookmarked_at: str | None = None
 
     def to_dict(self) -> dict:
@@ -51,6 +52,7 @@ class BookmarkEntry:
             "text_preview": self.text_preview,
             "article_urls": self.article_urls,
             "is_article": self.is_article,
+            "has_video": self.has_video,
             "bookmarked_at": self.bookmarked_at,
         }
 
@@ -398,7 +400,14 @@ class BookmarkScraper:
                 if self._extract_urls_from_entities(note_tweet.get("entity_set", {}), article_urls):
                     is_article = True
 
-            # Check quoted tweet for additional article URLs
+            # Detect video content from extended_entities
+            extended_entities = legacy.get("extended_entities", {})
+            has_video = any(
+                m.get("type") in ("video", "animated_gif")
+                for m in extended_entities.get("media", [])
+            )
+
+            # Check quoted tweet for additional article URLs and videos
             quoted = tweet.get("quoted_status_result", {}).get("result", {})
             if quoted:
                 q_typename = quoted.get("__typename", "")
@@ -408,6 +417,12 @@ class BookmarkScraper:
                     q_legacy = quoted.get("legacy", {})
                     if self._extract_urls_from_entities(q_legacy.get("entities", {}), article_urls):
                         is_article = True
+                    if not has_video:
+                        q_extended = q_legacy.get("extended_entities", {})
+                        has_video = any(
+                            m.get("type") in ("video", "animated_gif")
+                            for m in q_extended.get("media", [])
+                        )
 
             # Timestamp
             bookmarked_at = legacy.get("created_at")
@@ -426,6 +441,7 @@ class BookmarkScraper:
                 text_preview=text_preview,
                 article_urls=article_urls,
                 is_article=is_article,
+                has_video=has_video,
                 bookmarked_at=bookmarked_at,
             )
 

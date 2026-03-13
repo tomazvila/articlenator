@@ -841,6 +841,11 @@ footer .version {
     border: 1px solid var(--border);
 }
 
+.badge-video {
+    background-color: #9333ea;
+    color: #fff;
+}
+
 .bookmark-text {
     font-size: 13px;
     color: var(--fg);

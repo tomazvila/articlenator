@@ -10,6 +10,7 @@
     <div class="button-group">
         <button type="button" id="fetch-btn">Fetch Bookmarks</button>
         <button type="button" id="convert-btn" class="secondary" disabled>Convert Selected to PDF</button>
+        <button type="button" id="download-videos-btn" class="secondary" disabled style="display: none;">Download Videos</button>
     </div>
 </div>
 
@@ -31,11 +32,30 @@
     <ul id="convert-progress-list" class="progress-list"></ul>
 </div>
 
+<div id="video-download-status" class="status-message" style="display: none;">
+    <span class="spinner"></span>
+    <span id="video-download-status-text">Processing...</span>
+</div>
+
+<div id="video-download-progress" class="progress-section" style="display: none;">
+    <div class="progress-bar-container">
+        <div id="video-download-progress-bar" class="progress-bar" style="width: 0%"></div>
+    </div>
+    <div id="video-download-progress-info" class="progress-info"></div>
+    <ul id="video-download-progress-list" class="progress-list"></ul>
+</div>
+
+<div id="video-results" class="results-section" style="display: none;">
+    <h2>Downloaded Videos</h2>
+    <ul id="video-download-list"></ul>
+</div>
+
 <div id="bookmarks-section" style="display: none;">
     <div class="bookmarks-header">
         <h2 id="bookmarks-title">Bookmarks</h2>
         <div class="bookmarks-filter">
             <button type="button" class="filter-btn active" data-filter="articles">Articles Only</button>
+            <button type="button" class="filter-btn" data-filter="videos">Videos</button>
             <button type="button" class="filter-btn" data-filter="all">All</button>
             <button type="button" class="filter-btn" data-filter="tweets">Tweets Only</button>
         </div>
@@ -68,7 +88,7 @@
 const BOOKMARKS_KEY = 'articlenator_bookmarks';
 
 let bookmarksData = [];
-let currentFilter = 'articles'; // 'articles', 'all', 'tweets'
+let currentFilter = 'articles'; // 'articles', 'videos', 'all', 'tweets'
 
 // Browser notifications
 function requestNotificationPermission() {
@@ -94,6 +114,10 @@ function sendNotification(title, body) {
 
 function isArticle(b) {
     return b.is_article || (b.article_urls && b.article_urls.length > 0);
+}
+
+function isVideo(b) {
+    return b.has_video === true;
 }
 
 // Load saved bookmarks from localStorage on page load
@@ -125,27 +149,37 @@ function renderBookmarks() {
     list.innerHTML = '';
 
     const articleCount = bookmarksData.filter(isArticle).length;
-    const tweetCount = bookmarksData.length - articleCount;
+    const videoCount = bookmarksData.filter(isVideo).length;
+    const tweetCount = bookmarksData.filter(b => !isArticle(b) && !isVideo(b)).length;
 
     // Update title based on filter
     if (currentFilter === 'articles') {
         title.textContent = `Articles (${articleCount} of ${bookmarksData.length} bookmarks)`;
+    } else if (currentFilter === 'videos') {
+        title.textContent = `Videos (${videoCount} of ${bookmarksData.length} bookmarks)`;
     } else if (currentFilter === 'tweets') {
         title.textContent = `Tweets (${tweetCount} of ${bookmarksData.length} bookmarks)`;
     } else {
         title.textContent = `All Bookmarks (${bookmarksData.length})`;
     }
 
+    // Show/hide action buttons based on filter
+    const downloadVideosBtn = document.getElementById('download-videos-btn');
+    downloadVideosBtn.style.display = currentFilter === 'videos' ? '' : 'none';
+    convertBtn.style.display = currentFilter === 'videos' ? 'none' : '';
+
     let visibleCount = 0;
     for (let i = 0; i < bookmarksData.length; i++) {
         const b = bookmarksData[i];
         const article = isArticle(b);
+        const video = isVideo(b);
         const hasLinks = b.article_urls && b.article_urls.length > 0;
         const nativeArticle = b.is_article;
 
         // Apply filter
         if (currentFilter === 'articles' && !article) continue;
-        if (currentFilter === 'tweets' && article) continue;
+        if (currentFilter === 'videos' && !video) continue;
+        if (currentFilter === 'tweets' && (article || video)) continue;
 
         visibleCount++;
         const li = document.createElement('li');
@@ -159,17 +193,20 @@ function renderBookmarks() {
             linksHtml = `<a href="${b.tweet_url}" target="_blank" class="article-link">X Article</a>`;
         }
 
-        // Badge for article type
+        // Badge for content type
         let badge = '';
+        if (video) {
+            badge = '<span class="bookmark-badge badge-video">Video</span>';
+        }
         if (nativeArticle) {
-            badge = '<span class="bookmark-badge badge-article">X Article</span>';
+            badge += '<span class="bookmark-badge badge-article">X Article</span>';
         } else if (hasLinks) {
-            badge = '<span class="bookmark-badge badge-link">Has Links</span>';
+            badge += '<span class="bookmark-badge badge-link">Has Links</span>';
         }
 
         li.innerHTML = `
             <label class="bookmark-label">
-                <input type="checkbox" class="bookmark-check" data-index="${i}" ${article ? 'checked' : ''}>
+                <input type="checkbox" class="bookmark-check" data-index="${i}" ${currentFilter === 'videos' ? (video ? 'checked' : '') : (article ? 'checked' : '')}>
                 <div class="bookmark-content">
                     <div class="bookmark-meta">
                         <span class="bookmark-author">@${b.author}</span>
@@ -221,6 +258,16 @@ function updateSelectionCount() {
 
     const convertBtn = document.getElementById('convert-btn');
     convertBtn.disabled = checked.length === 0;
+    const downloadVideosBtn = document.getElementById('download-videos-btn');
+    downloadVideosBtn.disabled = checked.length === 0;
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 // Filter buttons
@@ -553,6 +600,177 @@ document.getElementById('convert-btn').addEventListener('click', async () => {
         convertBtn.disabled = false;
         if (convertStatus.style.display !== 'none') {
             convertStatus.style.display = 'none';
+        }
+    }
+});
+
+// Download selected videos
+document.getElementById('download-videos-btn').addEventListener('click', async () => {
+    const cookies = localStorage.getItem(COOKIES_KEY);
+
+    requestNotificationPermission();
+
+    // Collect selected tweet URLs for video download
+    const selectedUrls = [];
+    document.querySelectorAll('.bookmark-check:checked').forEach(c => {
+        const idx = parseInt(c.dataset.index);
+        const b = bookmarksData[idx];
+        if (b && b.has_video) {
+            selectedUrls.push(b.tweet_url);
+        }
+    });
+
+    if (selectedUrls.length === 0) {
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error-text').textContent = 'No video bookmarks selected';
+        return;
+    }
+
+    const downloadVideosBtn = document.getElementById('download-videos-btn');
+    const videoStatus = document.getElementById('video-download-status');
+    const videoStatusText = document.getElementById('video-download-status-text');
+    const videoProgress = document.getElementById('video-download-progress');
+    const videoProgressBar = document.getElementById('video-download-progress-bar');
+    const videoProgressInfo = document.getElementById('video-download-progress-info');
+    const videoProgressList = document.getElementById('video-download-progress-list');
+    const videoResults = document.getElementById('video-results');
+    const videoDownloadList = document.getElementById('video-download-list');
+    const errorDiv = document.getElementById('error');
+    const errorText = document.getElementById('error-text');
+    const warningDiv = document.getElementById('warning');
+    const warningText = document.getElementById('warning-text');
+
+    // Reset UI
+    errorDiv.style.display = 'none';
+    warningDiv.style.display = 'none';
+    videoResults.style.display = 'none';
+    videoProgress.style.display = 'none';
+    videoProgressList.innerHTML = '';
+    videoDownloadList.innerHTML = '';
+    videoProgressBar.style.width = '0%';
+    downloadVideosBtn.disabled = true;
+    videoStatus.style.display = 'flex';
+    videoStatusText.textContent = 'Starting...';
+
+    try {
+        const payload = {links: selectedUrls};
+        if (cookies) payload.cookies = cookies;
+
+        const response = await fetch('/api/videos/download', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            if (data.error) {
+                errorDiv.style.display = 'block';
+                errorText.textContent = data.error;
+                return;
+            }
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        videoProgress.style.display = 'block';
+
+        while (true) {
+            const {value, done} = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, {stream: true});
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = JSON.parse(line.slice(6));
+
+                    if (data.type === 'start') {
+                        videoStatusText.textContent = `Downloading ${data.total} video(s)...`;
+                        videoProgressInfo.textContent = `0 / ${data.total}`;
+                    } else if (data.type === 'waiting') {
+                        videoStatusText.textContent = `Throttling... next video in ${data.seconds}s (${data.current} / ${data.total})`;
+                    } else if (data.type === 'retry') {
+                        videoStatusText.textContent = `Retry ${data.attempt}/${data.max_attempts} in ${data.wait_seconds}s...`;
+                        let li = document.getElementById(`vp-${data.current}`);
+                        if (li) {
+                            li.className = 'progress-item processing';
+                            li.innerHTML = `<span class="status-icon">\u23F3</span> Retry ${data.attempt}/${data.max_attempts} - ${data.url}`;
+                        }
+                    } else if (data.type === 'progress') {
+                        const percent = (data.current / data.total) * 100;
+                        videoProgressBar.style.width = `${percent}%`;
+                        videoProgressInfo.textContent = `${data.current} / ${data.total}`;
+
+                        let li = document.getElementById(`vp-${data.current}`);
+                        if (!li) {
+                            li = document.createElement('li');
+                            li.id = `vp-${data.current}`;
+                            videoProgressList.appendChild(li);
+                        }
+
+                        if (data.status === 'processing') {
+                            li.className = 'progress-item processing';
+                            li.innerHTML = `<span class="status-icon">\u23F3</span> ${data.url}`;
+                            videoStatusText.textContent = `Downloading ${data.current}/${data.total}: ${data.url.substring(0, 50)}...`;
+                        } else if (data.status === 'success') {
+                            li.className = 'progress-item success';
+                            li.innerHTML = `<span class="status-icon">\u2713</span> ${data.filename}`;
+                        } else if (data.status === 'failed') {
+                            li.className = 'progress-item failed';
+                            li.innerHTML = `<span class="status-icon">\u2717</span> ${data.url}<br><small class="error-detail">${data.error}</small>`;
+                        }
+                    } else if (data.type === 'complete') {
+                        videoStatus.style.display = 'none';
+
+                        if (data.videos && data.videos.length > 0) {
+                            videoResults.style.display = 'block';
+                            for (const video of data.videos) {
+                                const li = document.createElement('li');
+                                const a = document.createElement('a');
+                                a.href = `/download/video/${video.filename}`;
+                                a.textContent = `${video.filename} (${formatFileSize(video.size_bytes)})`;
+                                li.appendChild(a);
+                                videoDownloadList.appendChild(li);
+                            }
+                        }
+
+                        if (data.summary) {
+                            const summaryLi = document.createElement('li');
+                            summaryLi.className = 'summary';
+                            summaryLi.textContent = `Summary: ${data.summary.succeeded} downloaded, ${data.summary.failed} failed of ${data.summary.total} total`;
+                            videoDownloadList.appendChild(summaryLi);
+                        }
+
+                        if (data.errors && data.errors.length > 0) {
+                            warningDiv.style.display = 'block';
+                            const failedUrls = data.errors.map(e => `${e.url}:\n  ${e.error}`).join('\n\n');
+                            warningText.textContent = `${data.errors.length} video(s) failed:\n\n${failedUrls}`;
+                        }
+
+                        const count = data.summary ? data.summary.succeeded : 0;
+                        sendNotification('Videos Ready!', `${count} video${count !== 1 ? 's' : ''} downloaded from bookmarks`);
+                    } else if (data.type === 'error') {
+                        videoStatus.style.display = 'none';
+                        errorDiv.style.display = 'block';
+                        errorText.textContent = data.error;
+                    }
+                }
+            }
+        }
+    } catch (err) {
+        console.error('Video download error:', err);
+        errorDiv.style.display = 'block';
+        errorText.textContent = 'Failed to connect to server: ' + err.message;
+    } finally {
+        downloadVideosBtn.disabled = false;
+        if (videoStatus.style.display !== 'none') {
+            videoStatus.style.display = 'none';
         }
     }
 });
