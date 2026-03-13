@@ -62,6 +62,7 @@
         <div class="bookmarks-actions">
             <button type="button" id="select-all-btn" class="small-btn">Select All Visible</button>
             <button type="button" id="select-none-btn" class="small-btn">Select None</button>
+            <button type="button" id="copy-list-btn" class="small-btn">Copy List</button>
             <span id="selection-count" class="selection-count"></span>
         </div>
     </div>
@@ -284,6 +285,37 @@ document.getElementById('select-all-btn').addEventListener('click', () => {
 document.getElementById('select-none-btn').addEventListener('click', () => {
     document.querySelectorAll('.bookmark-check').forEach(c => c.checked = false);
     updateSelectionCount();
+});
+
+// Copy visible bookmark list to clipboard
+document.getElementById('copy-list-btn').addEventListener('click', async () => {
+    const lines = [];
+    document.querySelectorAll('.bookmark-check').forEach(c => {
+        const idx = parseInt(c.dataset.index);
+        const b = bookmarksData[idx];
+        if (!b) return;
+
+        // For videos filter: tweet URL. For articles: article URLs. Otherwise: tweet URL.
+        if (currentFilter === 'videos') {
+            lines.push(b.tweet_url);
+        } else if (b.article_urls && b.article_urls.length > 0) {
+            b.article_urls.forEach(url => lines.push(url));
+        } else {
+            lines.push(b.tweet_url);
+        }
+    });
+
+    if (lines.length === 0) return;
+
+    try {
+        await navigator.clipboard.writeText(lines.join('\n'));
+        const btn = document.getElementById('copy-list-btn');
+        const original = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = original, 1500);
+    } catch (err) {
+        console.error('Copy failed:', err);
+    }
 });
 
 // Delegate checkbox changes for selection count
