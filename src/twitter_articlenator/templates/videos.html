@@ -140,19 +140,14 @@ document.getElementById('download-form').addEventListener('submit', async (e) =>
         return;
     }
 
-    if (!cookies) {
-        errorDiv.style.display = 'block';
-        errorText.textContent = 'No cookies configured. Go to Setup first.';
-        statusDiv.style.display = 'none';
-        submitBtn.disabled = false;
-        return;
-    }
-
     try {
+        const payload = {links: links};
+        if (cookies) payload.cookies = cookies;
+
         const response = await fetch('/api/videos/download', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({links: links, cookies: cookies})
+            body: JSON.stringify(payload)
         });
 
         // Check for non-stream error responses

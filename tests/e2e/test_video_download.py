@@ -49,8 +49,8 @@ class TestVideosPage:
         expect(nav_link).to_be_visible()
         expect(nav_link).to_have_text("Videos")
 
-    def test_download_without_cookies_shows_error(self, page: Page, base_url):
-        """Test downloading without cookies shows error."""
+    def test_download_without_cookies_starts_processing(self, page: Page, base_url):
+        """Test downloading without cookies still starts processing (yt-dlp handles it)."""
         page.goto(f"{base_url}/videos")
         page.evaluate(f"localStorage.removeItem('{COOKIES_KEY}')")
         page.reload()
@@ -59,8 +59,8 @@ class TestVideosPage:
         videos.enter_links([TEST_VIDEO_URL])
         videos.click_download()
 
-        expect(videos.error_div).to_be_visible(timeout=5000)
-        expect(videos.error_div).to_contain_text("cookie")
+        # Should start processing without requiring cookies
+        expect(videos.status_div).to_be_visible(timeout=10000)
 
     def test_download_with_empty_links_shows_error(self, page: Page, base_url):
         """Test downloading with empty links shows error."""
