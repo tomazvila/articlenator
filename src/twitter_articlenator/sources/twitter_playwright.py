@@ -101,6 +101,10 @@ class TwitterPlaywrightSource(ContentSource):
         if not self._cookies_str:
             raise ValueError("Cookies are required to fetch tweets")
 
+        # Normalize to https (pushState fails with http on https origin)
+        if url.startswith("http://"):
+            url = "https://" + url[7:]
+
         match = self.TWITTER_URL_PATTERN.match(url)
         if not match:
             raise ValueError(f"Invalid Twitter URL: {url}")
