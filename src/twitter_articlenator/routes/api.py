@@ -603,8 +603,10 @@ def convert_stream():
 
         except GeneratorExit:
             _update_session_status(
-                session_dir, "interrupted",
-                processed=len(processed_urls), errors=len(errors),
+                session_dir,
+                "interrupted",
+                processed=len(processed_urls),
+                errors=len(errors),
             )
             log.warning(
                 "convert_stream_client_disconnected",
@@ -942,8 +944,10 @@ def bookmarks_convert():
 
         except GeneratorExit:
             _update_session_status(
-                session_dir, "interrupted",
-                processed=len(processed_urls), errors=len(errors),
+                session_dir,
+                "interrupted",
+                processed=len(processed_urls),
+                errors=len(errors),
             )
             log.warning(
                 "bookmark_convert_client_disconnected",
@@ -1203,14 +1207,16 @@ def list_sessions():
             continue
         meta = _load_session_meta(session_dir)
         saved = _count_session_articles(session_dir)
-        sessions.append({
-            "id": session_dir.name,
-            "total": meta.get("total", 0) if meta else 0,
-            "saved": saved,
-            "status": meta.get("status", "unknown") if meta else "unknown",
-            "created_at": meta.get("created_at") if meta else None,
-            "updated_at": meta.get("updated_at") if meta else None,
-        })
+        sessions.append(
+            {
+                "id": session_dir.name,
+                "total": meta.get("total", 0) if meta else 0,
+                "saved": saved,
+                "status": meta.get("status", "unknown") if meta else "unknown",
+                "created_at": meta.get("created_at") if meta else None,
+                "updated_at": meta.get("updated_at") if meta else None,
+            }
+        )
 
     return jsonify({"sessions": sessions})
 
@@ -1231,16 +1237,18 @@ def get_session(session_id):
     all_urls = meta.get("urls", []) if meta else []
     remaining_urls = [u for u in all_urls if u not in saved_urls]
 
-    return jsonify({
-        "id": session_id,
-        "total": meta.get("total", 0) if meta else len(saved_urls),
-        "saved": len(saved_urls),
-        "status": meta.get("status", "unknown") if meta else "unknown",
-        "saved_urls": list(saved_urls),
-        "remaining_urls": remaining_urls,
-        "created_at": meta.get("created_at") if meta else None,
-        "updated_at": meta.get("updated_at") if meta else None,
-    })
+    return jsonify(
+        {
+            "id": session_id,
+            "total": meta.get("total", 0) if meta else len(saved_urls),
+            "saved": len(saved_urls),
+            "status": meta.get("status", "unknown") if meta else "unknown",
+            "saved_urls": list(saved_urls),
+            "remaining_urls": remaining_urls,
+            "created_at": meta.get("created_at") if meta else None,
+            "updated_at": meta.get("updated_at") if meta else None,
+        }
+    )
 
 
 @api_bp.route("/sessions/<session_id>/pdf", methods=["POST"])
@@ -1262,11 +1270,13 @@ def session_pdf(session_id):
 
         _update_session_status(session_dir, "completed")
 
-        return jsonify({
-            "success": True,
-            "filename": pdf_path.name,
-            "article_count": len(article_objects),
-        })
+        return jsonify(
+            {
+                "success": True,
+                "filename": pdf_path.name,
+                "article_count": len(article_objects),
+            }
+        )
     except Exception as e:
         log.error("session_pdf_failed", session_id=session_id, error=str(e))
         return jsonify({"error": f"PDF generation failed: {str(e)}"}), 500
@@ -1394,8 +1404,10 @@ def resume_session(session_id):
 
         except GeneratorExit:
             _update_session_status(
-                session_dir, "interrupted",
-                processed=len(processed_urls), errors=len(errors),
+                session_dir,
+                "interrupted",
+                processed=len(processed_urls),
+                errors=len(errors),
             )
             return
         except Exception as e:
