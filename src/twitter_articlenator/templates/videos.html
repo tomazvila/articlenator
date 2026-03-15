@@ -3,10 +3,12 @@
 {% block title %}Video Downloader{% endblock %}
 
 {% block content %}
-<h1>Video Downloader</h1>
-<p>Paste Twitter/X video links below (one per line) to download them as separate MP4 files.</p>
+<section class="panel">
+    <h1>Video Downloader</h1>
+    <p>Paste Twitter/X video links below (one per line) to download them as separate MP4 files.</p>
+</section>
 
-<form id="download-form">
+<form id="download-form" class="panel">
     <div class="form-group">
         <label for="video-links-input">Video Links:</label>
         <textarea
@@ -23,30 +25,30 @@ https://x.com/anotheruser/status/987654321"
     </div>
 </form>
 
-<div id="status" class="status-message" style="display: none;">
-    <span class="spinner"></span>
+<div id="status" class="status-message" style="display: none;" aria-live="polite">
+    <span class="spinner" aria-label="Loading"></span>
     <span id="status-text">Processing...</span>
 </div>
 
-<div id="progress-details" class="progress-section" style="display: none;">
+<div id="progress-details" class="progress-section" style="display: none;" aria-live="polite">
     <div class="progress-bar-container">
-        <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+        <div id="progress-bar" class="progress-bar" style="width: 0%" role="progressbar" aria-valuenow="0" aria-valuemax="100"></div>
     </div>
     <div id="progress-info" class="progress-info"></div>
     <ul id="progress-list" class="progress-list"></ul>
 </div>
 
-<div id="results" class="results-section" style="display: none;">
+<div id="results" class="results-section" style="display: none;" aria-live="polite">
     <h2>Downloaded Videos</h2>
     <ul id="download-list"></ul>
 </div>
 
-<div id="warning" class="warning-message" style="display: none;">
+<div id="warning" class="warning-message" style="display: none;" aria-live="polite">
     <strong>Warning:</strong>
     <pre id="warning-text"></pre>
 </div>
 
-<div id="error" class="error-message" style="display: none;">
+<div id="error" class="error-message" style="display: none;" aria-live="polite">
     <strong>Error:</strong>
     <pre id="error-text"></pre>
 </div>
@@ -201,6 +203,7 @@ document.getElementById('download-form').addEventListener('submit', async (e) =>
                     } else if (data.type === 'progress') {
                         const percent = (data.current / data.total) * 100;
                         progressBar.style.width = `${percent}%`;
+                        progressBar.setAttribute('aria-valuenow', Math.round(percent));
                         progressInfo.textContent = `${data.current} / ${data.total}`;
 
                         let li = document.getElementById(`progress-${data.current}`);

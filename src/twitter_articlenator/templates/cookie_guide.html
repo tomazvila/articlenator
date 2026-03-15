@@ -3,10 +3,12 @@
 {% block title %}Setup Twitter Cookies{% endblock %}
 
 {% block content %}
-<h1>Setup Twitter Cookies</h1>
-<p>To fetch content from Twitter/X, you need to provide your browser cookies.</p>
+<section class="panel">
+    <h1>Setup Twitter Cookies</h1>
+    <p>To fetch content from Twitter/X, you need to provide your browser cookies.</p>
+</section>
 
-<section class="instructions">
+<section class="instructions panel">
     <h2>How to Get Your Cookies</h2>
 
     <h3>Option 1: Chrome / Edge / Brave</h3>
@@ -54,14 +56,14 @@
     </ol>
 </section>
 
-<section class="current-cookies">
+<section class="current-cookies panel">
     <h2>Current Cookies</h2>
     <div id="cookies-display" class="cookies-table">
         <p class="loading-text">Checking...</p>
     </div>
 </section>
 
-<section class="cookie-form">
+<section class="cookie-form panel">
     <h2>Enter New Cookies</h2>
     <p class="form-hint">Choose either format below - both work the same.</p>
 
@@ -74,6 +76,7 @@
                     id="cookie-input-devtools"
                     name="cookies"
                     rows="4"
+                    aria-label="Cookies in DevTools format"
                     placeholder="ct0    abc123...    .x.com    /    2026-01-01    163 B    ✓
 auth_token    xyz789...    .x.com    /    2026-01-01    50 B    ✓    ✓"
                 ></textarea>
@@ -89,6 +92,7 @@ auth_token    xyz789...    .x.com    /    2026-01-01    50 B    ✓    ✓"
                     id="cookie-input-traditional"
                     name="cookies"
                     rows="4"
+                    aria-label="Cookies in traditional format"
                     placeholder="auth_token=abc123...; ct0=xyz789..."
                 ></textarea>
                 <button type="submit" class="save-btn">Save (Traditional Format)</button>
@@ -100,17 +104,17 @@ auth_token    xyz789...    .x.com    /    2026-01-01    50 B    ✓    ✓"
         <button type="button" id="test-cookies-btn" class="secondary">Test Cookies</button>
     </div>
 
-    <div id="save-success" class="success-message" style="display: none;">
+    <div id="save-success" class="success-message" style="display: none;" aria-live="polite">
         Cookies saved successfully! You can now <a href="/">convert articles</a>.
     </div>
-    <div id="save-error" class="error-message" style="display: none;"></div>
+    <div id="save-error" class="error-message" style="display: none;" aria-live="polite"></div>
 
-    <div id="test-status" class="status-message" style="display: none;">
-        <span class="spinner"></span>
+    <div id="test-status" class="status-message" style="display: none;" aria-live="polite">
+        <span class="spinner" aria-label="Loading"></span>
         <span id="test-status-text">Testing cookies...</span>
     </div>
-    <div id="test-success" class="success-message" style="display: none;"></div>
-    <div id="test-error" class="error-message" style="display: none;"></div>
+    <div id="test-success" class="success-message" style="display: none;" aria-live="polite"></div>
+    <div id="test-error" class="error-message" style="display: none;" aria-live="polite"></div>
 </section>
 
 <script>

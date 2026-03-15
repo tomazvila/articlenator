@@ -3,54 +3,53 @@
 {% block title %}Bookmarks{% endblock %}
 
 {% block content %}
-<h1>Bookmarks</h1>
-<p>Fetch your Twitter/X bookmarks, filter for articles, and convert them to PDF.</p>
-
-<div class="bookmarks-controls">
+<section class="panel">
+    <h1>Bookmarks</h1>
+    <p>Fetch your Twitter/X bookmarks, filter for articles, and convert them to PDF.</p>
     <div class="button-group">
         <button type="button" id="fetch-btn">Fetch Bookmarks</button>
         <button type="button" id="convert-btn" class="secondary" disabled>Convert Selected to PDF</button>
         <button type="button" id="download-videos-btn" class="secondary" disabled style="display: none;">Download Videos</button>
     </div>
-</div>
+</section>
 
-<div id="fetch-status" class="status-message" style="display: none;">
-    <span class="spinner"></span>
+<div id="fetch-status" class="status-message" style="display: none;" aria-live="polite">
+    <span class="spinner" aria-label="Loading"></span>
     <span id="fetch-status-text">Starting...</span>
 </div>
 
-<div id="convert-status" class="status-message" style="display: none;">
-    <span class="spinner"></span>
+<div id="convert-status" class="status-message" style="display: none;" aria-live="polite">
+    <span class="spinner" aria-label="Loading"></span>
     <span id="convert-status-text">Processing...</span>
 </div>
 
-<div id="convert-progress" class="progress-section" style="display: none;">
+<div id="convert-progress" class="progress-section" style="display: none;" aria-live="polite">
     <div class="progress-bar-container">
-        <div id="convert-progress-bar" class="progress-bar" style="width: 0%"></div>
+        <div id="convert-progress-bar" class="progress-bar" style="width: 0%" role="progressbar" aria-valuenow="0" aria-valuemax="100"></div>
     </div>
     <div id="convert-progress-info" class="progress-info"></div>
     <ul id="convert-progress-list" class="progress-list"></ul>
 </div>
 
-<div id="video-download-status" class="status-message" style="display: none;">
-    <span class="spinner"></span>
+<div id="video-download-status" class="status-message" style="display: none;" aria-live="polite">
+    <span class="spinner" aria-label="Loading"></span>
     <span id="video-download-status-text">Processing...</span>
 </div>
 
-<div id="video-download-progress" class="progress-section" style="display: none;">
+<div id="video-download-progress" class="progress-section" style="display: none;" aria-live="polite">
     <div class="progress-bar-container">
-        <div id="video-download-progress-bar" class="progress-bar" style="width: 0%"></div>
+        <div id="video-download-progress-bar" class="progress-bar" style="width: 0%" role="progressbar" aria-valuenow="0" aria-valuemax="100"></div>
     </div>
     <div id="video-download-progress-info" class="progress-info"></div>
     <ul id="video-download-progress-list" class="progress-list"></ul>
 </div>
 
-<div id="video-results" class="results-section" style="display: none;">
+<div id="video-results" class="results-section" style="display: none;" aria-live="polite">
     <h2>Downloaded Videos</h2>
     <ul id="video-download-list"></ul>
 </div>
 
-<div id="bookmarks-section" style="display: none;">
+<div id="bookmarks-section" class="panel" style="display: none;" aria-live="polite">
     <div class="bookmarks-header">
         <h2 id="bookmarks-title">Bookmarks</h2>
         <div class="bookmarks-filter">
@@ -69,17 +68,17 @@
     <ul id="bookmarks-list" class="bookmarks-list"></ul>
 </div>
 
-<div id="results" class="results-section" style="display: none;">
+<div id="results" class="results-section" style="display: none;" aria-live="polite">
     <h2>Generated PDF</h2>
     <ul id="download-list"></ul>
 </div>
 
-<div id="warning" class="warning-message" style="display: none;">
+<div id="warning" class="warning-message" style="display: none;" aria-live="polite">
     <strong>Warning:</strong>
     <pre id="warning-text"></pre>
 </div>
 
-<div id="error" class="error-message" style="display: none;">
+<div id="error" class="error-message" style="display: none;" aria-live="polite">
     <strong>Error:</strong>
     <pre id="error-text"></pre>
 </div>
@@ -545,6 +544,7 @@ async function startBkmkStream(url, body, sessionId) {
                         } else if (data.type === 'progress') {
                             const percent = (data.current / data.total) * 100;
                             progressBar.style.width = `${percent}%`;
+                            progressBar.setAttribute('aria-valuenow', Math.round(percent));
                             progressInfo.textContent = `${data.current} / ${data.total}`;
 
                             let li = document.getElementById(`cp-${data.current}`);
@@ -568,6 +568,7 @@ async function startBkmkStream(url, body, sessionId) {
                         } else if (data.type === 'generating_pdf') {
                             convertStatusText.textContent = 'Generating PDF...';
                             progressBar.style.width = '100%';
+                            progressBar.setAttribute('aria-valuenow', 100);
                         } else if (data.type === 'complete') {
                             completed = true;
                             clearBkmkSession();
@@ -783,6 +784,7 @@ document.getElementById('download-videos-btn').addEventListener('click', async (
                     } else if (data.type === 'progress') {
                         const percent = (data.current / data.total) * 100;
                         videoProgressBar.style.width = `${percent}%`;
+                        videoProgressBar.setAttribute('aria-valuenow', Math.round(percent));
                         videoProgressInfo.textContent = `${data.current} / ${data.total}`;
 
                         let li = document.getElementById(`vp-${data.current}`);

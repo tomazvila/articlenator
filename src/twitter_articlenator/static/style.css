@@ -4,7 +4,7 @@
     --bg-medium: #24283b;
     --bg-light: #414868;
     --fg: #a9b1d6;
-    --fg-dark: #565f89;
+    --fg-dark: #7f8cca;
     --fg-bright: #c0caf5;
     --red: #f7768e;
     --orange: #ff9e64;
@@ -15,6 +15,11 @@
     --purple: #bb9af7;
     --magenta: #c0caf5;
     --border: #414868;
+    --accent: var(--blue);
+    --panel-bg: rgba(36, 40, 59, 0.82);
+    --panel-border: rgba(65, 72, 104, 0.5);
+    --panel-blur: 20px;
+    --radius: 8px;
 }
 
 /* Base styles */
@@ -24,21 +29,44 @@
     padding: 0;
 }
 
+html {
+    background-color: var(--bg-dark);
+    min-height: 100%;
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
     line-height: 1.6;
     max-width: 800px;
     margin: 0 auto;
     padding: 20px;
-    background-color: var(--bg-dark);
     color: var(--fg);
+    min-height: 100vh;
+    position: relative;
+    z-index: 0;
+}
+
+/* Background image: B&W photo re-colored into Tokyo Night's blue-purple palette.
+   Filter chain: darken -> sepia base -> boost color -> rotate hue to blue */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background: url('/static/bg.webp') center/cover no-repeat;
+    filter: brightness(0.25) sepia(1) saturate(2) hue-rotate(190deg);
+    pointer-events: none;
 }
 
 /* Header */
 header {
-    margin-bottom: 30px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--border);
+    background: var(--panel-bg);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
+    border-radius: var(--radius);
+    border: 1px solid var(--panel-border);
+    padding: 12px 20px;
+    margin-bottom: 20px;
 }
 
 nav {
@@ -60,13 +88,30 @@ nav a:hover {
     text-decoration: underline;
 }
 
-/* Main content */
+/* Panel - frosted glass container */
+.panel {
+    background: var(--panel-bg);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
+    border-radius: var(--radius);
+    border: 1px solid var(--panel-border);
+    padding: 24px;
+}
+
+.panel > h1:first-child,
+.panel > h2:first-child {
+    margin-top: 0;
+}
+
+.panel > *:last-child {
+    margin-bottom: 0;
+}
+
+/* Main content - flex column, panels provide their own backgrounds */
 main {
-    background: var(--bg-medium);
-    padding: 30px;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
 }
 
 h1 {
@@ -96,6 +141,16 @@ a {
 
 a:hover {
     color: var(--cyan);
+}
+
+/* Focus indicator for keyboard navigation */
+:focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 2px;
+}
+
+textarea:focus-visible {
+    outline: none;
 }
 
 /* Forms */
@@ -138,7 +193,7 @@ button {
     color: var(--bg-dark);
     padding: 12px 24px;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius);
     font-size: 16px;
     font-weight: 600;
     cursor: pointer;
@@ -169,11 +224,12 @@ button.secondary:hover {
 
 /* Results section */
 .results-section {
-    margin-top: 30px;
     padding: 20px;
-    background-color: rgba(158, 206, 106, 0.1);
+    background: var(--panel-bg);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
     border: 1px solid var(--green);
-    border-radius: 4px;
+    border-radius: var(--radius);
 }
 
 .results-section h2 {
@@ -208,29 +264,32 @@ button.secondary:hover {
 
 /* Messages */
 .success-message {
-    margin-top: 20px;
     padding: 15px;
-    background-color: rgba(158, 206, 106, 0.15);
+    background: var(--panel-bg);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
     color: var(--green);
-    border-radius: 4px;
+    border-radius: var(--radius);
     border: 1px solid var(--green);
 }
 
 .error-message {
-    margin-top: 20px;
     padding: 15px;
-    background-color: rgba(247, 118, 142, 0.15);
+    background: var(--panel-bg);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
     color: var(--red);
-    border-radius: 4px;
+    border-radius: var(--radius);
     border: 1px solid var(--red);
 }
 
 .warning-message {
-    margin-top: 20px;
     padding: 15px;
-    background-color: rgba(224, 175, 104, 0.15);
+    background: var(--panel-bg);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
     color: var(--yellow);
-    border-radius: 4px;
+    border-radius: var(--radius);
     border: 1px solid var(--yellow);
 }
 
@@ -253,11 +312,12 @@ button.secondary:hover {
 }
 
 .status-message {
-    margin-top: 20px;
     padding: 15px;
-    background-color: rgba(122, 162, 247, 0.15);
+    background: var(--panel-bg);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
     color: var(--blue);
-    border-radius: 4px;
+    border-radius: var(--radius);
     border: 1px solid var(--blue);
     display: flex;
     align-items: center;
@@ -280,11 +340,12 @@ button.secondary:hover {
 
 /* Progress section */
 .progress-section {
-    margin-top: 20px;
     padding: 15px;
-    background-color: var(--bg-dark);
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    background: var(--panel-bg);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
 }
 
 .progress-bar-container {
@@ -297,7 +358,7 @@ button.secondary:hover {
 
 .progress-bar {
     height: 100%;
-    background: linear-gradient(90deg, var(--blue), var(--cyan));
+    background: var(--blue);
     border-radius: 4px;
     transition: width 0.3s ease;
 }
@@ -322,7 +383,7 @@ button.secondary:hover {
     margin-bottom: 5px;
     border-radius: 4px;
     font-size: 13px;
-    word-break: break-all;
+    overflow-wrap: break-word;
 }
 
 .progress-item .status-icon {
@@ -374,14 +435,9 @@ button:disabled {
 .supported-sources {
     font-size: 14px;
     color: var(--fg-dark);
-    margin-bottom: 20px;
 }
 
 /* Instructions */
-.instructions {
-    margin-bottom: 30px;
-}
-
 .instructions ol {
     margin-left: 20px;
     margin-bottom: 15px;
@@ -407,11 +463,12 @@ button:disabled {
 
 /* Hints */
 .setup-hint {
-    margin-top: 30px;
     padding: 15px;
-    background-color: rgba(224, 175, 104, 0.15);
+    background: var(--panel-bg);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
     border: 1px solid var(--yellow);
-    border-radius: 4px;
+    border-radius: var(--radius);
     font-size: 14px;
     color: var(--yellow);
 }
@@ -422,9 +479,13 @@ button:disabled {
 
 /* Footer */
 footer {
-    margin-top: 30px;
-    padding-top: 20px;
-    border-top: 1px solid var(--border);
+    background: var(--panel-bg);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
+    border-radius: var(--radius);
+    border: 1px solid var(--panel-border);
+    margin-top: 20px;
+    padding: 16px 20px;
     text-align: center;
     color: var(--fg-dark);
     font-size: 14px;
@@ -432,7 +493,7 @@ footer {
 
 footer .version {
     font-size: 11px;
-    color: var(--bg-light);
+    color: var(--fg-dark);
     margin-top: 5px;
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
 }
@@ -529,10 +590,6 @@ footer .version {
 }
 
 /* Cookie form section */
-.cookie-form {
-    margin-top: 30px;
-}
-
 .form-hint {
     color: var(--fg-dark);
     font-size: 14px;
@@ -550,7 +607,7 @@ footer .version {
 .input-option {
     background-color: var(--bg-dark);
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius);
     padding: 15px;
 }
 
@@ -589,11 +646,6 @@ footer .version {
 }
 
 /* Current cookies display */
-.current-cookies {
-    margin-top: 30px;
-    margin-bottom: 30px;
-}
-
 .cookies-table {
     background-color: var(--bg-dark);
     border-radius: 4px;
@@ -661,7 +713,7 @@ footer .version {
     padding: 10px;
     background-color: rgba(247, 118, 142, 0.15);
     border: 1px solid var(--red);
-    border-radius: 4px;
+    border-radius: var(--radius);
     color: var(--red);
     font-size: 14px;
 }
@@ -671,7 +723,7 @@ footer .version {
     padding: 10px;
     background-color: rgba(158, 206, 106, 0.15);
     border: 1px solid var(--green);
-    border-radius: 4px;
+    border-radius: var(--radius);
     color: var(--green);
     font-size: 14px;
 }
@@ -686,10 +738,6 @@ footer .version {
 }
 
 /* Bookmarks page */
-.bookmarks-controls {
-    margin-bottom: 20px;
-}
-
 .bookmarks-header {
     display: flex;
     justify-content: space-between;
@@ -714,7 +762,7 @@ footer .version {
     color: var(--fg-dark);
     padding: 5px 14px;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius);
     font-size: 13px;
     cursor: pointer;
     transition: background-color 0.2s, border-color 0.2s;
@@ -727,7 +775,7 @@ footer .version {
 
 .filter-btn.active {
     background-color: var(--accent);
-    color: #fff;
+    color: var(--bg-dark);
     border-color: var(--accent);
 }
 
@@ -748,7 +796,7 @@ footer .version {
     color: var(--fg);
     padding: 4px 10px;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius);
     font-size: 12px;
     cursor: pointer;
     transition: background-color 0.2s;
@@ -777,7 +825,7 @@ footer .version {
     margin-bottom: 6px;
     background-color: var(--bg-dark);
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--radius);
     transition: border-color 0.2s;
 }
 
@@ -832,7 +880,7 @@ footer .version {
 
 .badge-article {
     background-color: var(--blue);
-    color: #fff;
+    color: var(--bg-dark);
 }
 
 .badge-link {
@@ -842,8 +890,8 @@ footer .version {
 }
 
 .badge-video {
-    background-color: #9333ea;
-    color: #fff;
+    background-color: var(--purple);
+    color: var(--bg-dark);
 }
 
 .bookmark-text {
@@ -851,7 +899,7 @@ footer .version {
     color: var(--fg);
     line-height: 1.4;
     margin-bottom: 4px;
-    word-break: break-word;
+    overflow-wrap: break-word;
 }
 
 .bookmark-links {
@@ -876,11 +924,12 @@ footer .version {
 
 /* Resume banner */
 .resume-banner {
-    background: var(--bg-medium);
+    background: var(--panel-bg);
+    backdrop-filter: blur(var(--panel-blur));
+    -webkit-backdrop-filter: blur(var(--panel-blur));
     border: 1px solid var(--yellow);
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 20px;
+    border-radius: var(--radius);
+    padding: 16px 24px;
     color: var(--fg-bright);
 }
 
@@ -894,8 +943,8 @@ footer .version {
         padding: 10px;
     }
 
-    main {
-        padding: 20px;
+    .panel {
+        padding: 16px;
     }
 
     .button-group {
@@ -904,5 +953,49 @@ footer .version {
 
     .cookie-status .status-text {
         display: none;
+    }
+
+    .small-btn {
+        padding: 10px 14px;
+        font-size: 14px;
+    }
+
+    .filter-btn {
+        padding: 10px 16px;
+        font-size: 14px;
+    }
+}
+
+/* Scrollbar styling for dark theme */
+.bookmarks-list,
+.progress-list {
+    scrollbar-width: thin;
+    scrollbar-color: var(--bg-light) transparent;
+}
+
+.bookmarks-list::-webkit-scrollbar,
+.progress-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.bookmarks-list::-webkit-scrollbar-track,
+.progress-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.bookmarks-list::-webkit-scrollbar-thumb,
+.progress-list::-webkit-scrollbar-thumb {
+    background-color: var(--bg-light);
+    border-radius: 3px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
     }
 }

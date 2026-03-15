@@ -3,9 +3,11 @@
 {% block title %}Article to PDF Converter{% endblock %}
 
 {% block content %}
-<h1>Article to PDF</h1>
-<p>Paste article links below (one per line) to convert them to e-reader friendly PDFs.</p>
-<p class="supported-sources">Supported: Twitter/X, Blog articles (Bear Blog, Substack, etc.)</p>
+<section class="panel">
+    <h1>Article to PDF</h1>
+    <p>Paste article links below (one per line) to convert them to e-reader friendly PDFs.</p>
+    <p class="supported-sources">Supported: Twitter/X, Blog articles (Bear Blog, Substack, etc.)</p>
+</section>
 
 <div id="resume-banner" class="resume-banner" style="display: none;">
     <span id="resume-text"></span>
@@ -16,7 +18,7 @@
     </div>
 </div>
 
-<form id="convert-form">
+<form id="convert-form" class="panel">
     <div class="form-group">
         <label for="links-input">Article Links:</label>
         <textarea
@@ -34,30 +36,30 @@ https://substack.com/@author/post-title"
     </div>
 </form>
 
-<div id="status" class="status-message" style="display: none;">
-    <span class="spinner"></span>
+<div id="status" class="status-message" style="display: none;" aria-live="polite">
+    <span class="spinner" aria-label="Loading"></span>
     <span id="status-text">Processing...</span>
 </div>
 
-<div id="progress-details" class="progress-section" style="display: none;">
+<div id="progress-details" class="progress-section" style="display: none;" aria-live="polite">
     <div class="progress-bar-container">
-        <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+        <div id="progress-bar" class="progress-bar" style="width: 0%" role="progressbar" aria-valuenow="0" aria-valuemax="100"></div>
     </div>
     <div id="progress-info" class="progress-info"></div>
     <ul id="progress-list" class="progress-list"></ul>
 </div>
 
-<div id="results" class="results-section" style="display: none;">
+<div id="results" class="results-section" style="display: none;" aria-live="polite">
     <h2>Generated PDFs</h2>
     <ul id="download-list"></ul>
 </div>
 
-<div id="warning" class="warning-message" style="display: none;">
+<div id="warning" class="warning-message" style="display: none;" aria-live="polite">
     <strong>Warning:</strong>
     <pre id="warning-text"></pre>
 </div>
 
-<div id="error" class="error-message" style="display: none;">
+<div id="error" class="error-message" style="display: none;" aria-live="polite">
     <strong>Error:</strong>
     <pre id="error-text"></pre>
 </div>
@@ -293,6 +295,7 @@ async function startStream(url, body, sessionId) {
                         } else if (data.type === 'progress') {
                             const percent = (data.current / data.total) * 100;
                             progressBar.style.width = `${percent}%`;
+                            progressBar.setAttribute('aria-valuenow', Math.round(percent));
                             progressInfo.textContent = `${data.current} / ${data.total}`;
 
                             let li = document.getElementById(`progress-${data.current}`);
@@ -316,6 +319,7 @@ async function startStream(url, body, sessionId) {
                         } else if (data.type === 'generating_pdf') {
                             statusText.textContent = 'Generating PDF...';
                             progressBar.style.width = '100%';
+                            progressBar.setAttribute('aria-valuenow', 100);
                         } else if (data.type === 'complete') {
                             completed = true;
                             clearSession();
