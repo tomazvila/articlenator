@@ -425,38 +425,49 @@ document.getElementById('fetch-btn').addEventListener('click', async () => {
     }
 });
 
-// Convert selected bookmarks to PDF
-document.getElementById('convert-btn').addEventListener('click', async () => {
-    const cookies = localStorage.getItem(COOKIES_KEY);
-    if (!cookies) {
-        document.getElementById('error').style.display = 'block';
-        document.getElementById('error-text').textContent = 'No cookies configured. Go to Setup first.';
-        return;
-    }
+// Session persistence for bookmarks convert
+const BKMK_SESSION_KEY = 'articlenator_bkmk_session';
 
-    requestNotificationPermission();
-
-    // Collect selected URLs
-    const selectedUrls = [];
-    document.querySelectorAll('.bookmark-check:checked').forEach(c => {
-        const idx = parseInt(c.dataset.index);
-        const b = bookmarksData[idx];
-        if (b) {
-            if (b.article_urls && b.article_urls.length > 0) {
-                // Use the article URLs
-                selectedUrls.push(...b.article_urls);
-            } else {
-                // Use the tweet URL itself
-                selectedUrls.push(b.tweet_url);
-            }
+function saveBkmkSession(sessionId, urls) {
+    localStorage.setItem(BKMK_SESSION_KEY, JSON.stringify({sessionId, urls, timestamp: Date.now()}));
+}
+function clearBkmkSession() {
+    localStorage.removeItem(BKMK_SESSION_KEY);
+}
+function loadBkmkSession() {
+    try {
+        const raw = localStorage.getItem(BKMK_SESSION_KEY);
+        if (!raw) return null;
+        const session = JSON.parse(raw);
+        if (Date.now() - session.timestamp > 7 * 24 * 60 * 60 * 1000) {
+            clearBkmkSession();
+            return null;
         }
-    });
+        return session;
+    } catch { return null; }
+}
 
-    if (selectedUrls.length === 0) {
-        document.getElementById('error').style.display = 'block';
-        document.getElementById('error-text').textContent = 'No bookmarks selected';
-        return;
-    }
+// Check for resumable bookmark session on page load
+async function checkBkmkResume() {
+    const session = loadBkmkSession();
+    if (!session) return;
+    try {
+        const resp = await fetch(`/api/sessions/${session.sessionId}`);
+        if (resp.status !== 200) { clearBkmkSession(); return; }
+        const data = await resp.json();
+        if (data.status === 'completed' || (data.saved === 0 && data.remaining_urls.length === 0)) {
+            clearBkmkSession();
+            return;
+        }
+        if (confirm(`Previous bookmark conversion: ${data.saved}/${data.total} articles saved. Resume or generate PDF from saved?`)) {
+            const cookies = localStorage.getItem(COOKIES_KEY) || '';
+            startBkmkStream(`/api/sessions/${session.sessionId}/resume`, {cookies}, session.sessionId);
+        }
+    } catch { clearBkmkSession(); }
+}
+
+async function startBkmkStream(url, body, sessionId) {
+    requestNotificationPermission();
 
     const convertBtn = document.getElementById('convert-btn');
     const convertStatus = document.getElementById('convert-status');
@@ -472,7 +483,6 @@ document.getElementById('convert-btn').addEventListener('click', async () => {
     const warningDiv = document.getElementById('warning');
     const warningText = document.getElementById('warning-text');
 
-    // Reset UI
     errorDiv.style.display = 'none';
     warningDiv.style.display = 'none';
     resultsDiv.style.display = 'none';
@@ -484,17 +494,16 @@ document.getElementById('convert-btn').addEventListener('click', async () => {
     convertStatus.style.display = 'flex';
     convertStatusText.textContent = 'Starting...';
 
-    const sessionId = crypto.randomUUID();
-    const MAX_RECONNECTS = 10;
+    const MAX_RECONNECTS = 30;
     let reconnectCount = 0;
     let completed = false;
 
     async function processStream() {
         try {
-            const response = await fetch('/api/bookmarks/convert', {
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({urls: selectedUrls, cookies: cookies, session_id: sessionId})
+                body: JSON.stringify(body)
             });
 
             const contentType = response.headers.get('content-type');
@@ -561,6 +570,7 @@ document.getElementById('convert-btn').addEventListener('click', async () => {
                             progressBar.style.width = '100%';
                         } else if (data.type === 'complete') {
                             completed = true;
+                            clearBkmkSession();
                             convertStatus.style.display = 'none';
                             resultsDiv.style.display = 'block';
 
@@ -609,16 +619,17 @@ document.getElementById('convert-btn').addEventListener('click', async () => {
 
             if (!completed && reconnectCount < MAX_RECONNECTS) {
                 reconnectCount++;
+                const backoff = Math.min(3000 * Math.pow(1.5, reconnectCount - 1), 30000);
                 convertStatusText.textContent = `Connection lost. Reconnecting (${reconnectCount}/${MAX_RECONNECTS})...`;
                 convertStatus.style.display = 'flex';
                 errorDiv.style.display = 'none';
-                await new Promise(r => setTimeout(r, 3000));
+                await new Promise(r => setTimeout(r, backoff));
                 return processStream();
             }
 
             errorDiv.style.display = 'block';
             if (reconnectCount >= MAX_RECONNECTS) {
-                errorText.textContent = 'Connection lost after ' + MAX_RECONNECTS + ' reconnection attempts.';
+                errorText.textContent = 'Connection lost after ' + MAX_RECONNECTS + ' reconnection attempts. Your progress is saved — refresh the page to resume.';
             } else {
                 errorText.textContent = 'Failed to connect to server: ' + err.message;
             }
@@ -634,6 +645,41 @@ document.getElementById('convert-btn').addEventListener('click', async () => {
             convertStatus.style.display = 'none';
         }
     }
+}
+
+// Convert selected bookmarks to PDF
+document.getElementById('convert-btn').addEventListener('click', async () => {
+    const cookies = localStorage.getItem(COOKIES_KEY);
+    if (!cookies) {
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error-text').textContent = 'No cookies configured. Go to Setup first.';
+        return;
+    }
+
+    // Collect selected URLs
+    const selectedUrls = [];
+    document.querySelectorAll('.bookmark-check:checked').forEach(c => {
+        const idx = parseInt(c.dataset.index);
+        const b = bookmarksData[idx];
+        if (b) {
+            if (b.article_urls && b.article_urls.length > 0) {
+                selectedUrls.push(...b.article_urls);
+            } else {
+                selectedUrls.push(b.tweet_url);
+            }
+        }
+    });
+
+    if (selectedUrls.length === 0) {
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error-text').textContent = 'No bookmarks selected';
+        return;
+    }
+
+    const sessionId = crypto.randomUUID();
+    saveBkmkSession(sessionId, selectedUrls);
+
+    startBkmkStream('/api/bookmarks/convert', {urls: selectedUrls, cookies, session_id: sessionId}, sessionId);
 });
 
 // Download selected videos
@@ -809,5 +855,6 @@ document.getElementById('download-videos-btn').addEventListener('click', async (
 
 // Load saved bookmarks on page load
 loadSavedBookmarks();
+checkBkmkResume();
 </script>
 {% endblock %}

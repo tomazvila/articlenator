@@ -23,6 +23,12 @@ ARTICLE_BASE_DELAY = 2  # seconds between fetches (base)
 ARTICLE_MAX_RETRIES = 3  # retries per URL before giving up
 ARTICLE_RETRY_DELAYS = [15, 30, 60]  # escalating retry waits (seconds)
 
+# Timeout for a single article fetch (seconds) — kills stuck Playwright fetches
+FETCH_TIMEOUT = 120
+
+# Auto-cleanup sessions older than this many days
+SESSION_TTL_DAYS = 7
+
 # Pattern for valid Twitter/X video URLs
 TWITTER_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:twitter\.com|x\.com)/(\w+)/status/(\d+)")
 
@@ -101,6 +107,8 @@ def _load_session_articles(session_dir):
 
     articles = {}
     for path in session_dir.glob("*.json"):
+        if path.name == "_meta.json":
+            continue
         data = json_module.loads(path.read_text(encoding="utf-8"))
         published_at = None
         if data.get("published_at"):
@@ -126,6 +134,85 @@ def _cleanup_session(session_dir):
         shutil.rmtree(session_dir)
     except Exception:
         pass
+
+
+def _save_session_meta(session_dir, urls, status="running"):
+    """Save session metadata for recovery and management."""
+    from datetime import datetime as dt, timezone
+
+    now = dt.now(timezone.utc).isoformat()
+    meta = {
+        "urls": urls,
+        "total": len(urls),
+        "status": status,
+        "created_at": now,
+        "updated_at": now,
+    }
+    (session_dir / "_meta.json").write_text(
+        json_module.dumps(meta, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _load_session_meta(session_dir):
+    """Load session metadata. Returns None if not found or invalid."""
+    meta_path = session_dir / "_meta.json"
+    if not meta_path.exists():
+        return None
+    try:
+        return json_module.loads(meta_path.read_text(encoding="utf-8"))
+    except (json_module.JSONDecodeError, OSError):
+        return None
+
+
+def _update_session_status(session_dir, status, **extra):
+    """Update session status and timestamp."""
+    from datetime import datetime as dt, timezone
+
+    meta = _load_session_meta(session_dir) or {}
+    meta["status"] = status
+    meta["updated_at"] = dt.now(timezone.utc).isoformat()
+    meta.update(extra)
+    (session_dir / "_meta.json").write_text(
+        json_module.dumps(meta, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _cleanup_stale_sessions():
+    """Remove session directories older than SESSION_TTL_DAYS."""
+    from datetime import datetime as dt, timedelta, timezone
+
+    config = get_config()
+    sessions_dir = config.output_dir / "sessions"
+    if not sessions_dir.exists():
+        return
+
+    cutoff = dt.now(timezone.utc) - timedelta(days=SESSION_TTL_DAYS)
+    for session_dir in sessions_dir.iterdir():
+        if not session_dir.is_dir():
+            continue
+        meta = _load_session_meta(session_dir)
+        if meta and meta.get("updated_at"):
+            try:
+                updated = dt.fromisoformat(meta["updated_at"])
+                if updated < cutoff:
+                    shutil.rmtree(session_dir)
+                    log.info("stale_session_cleaned", session_id=session_dir.name)
+            except (ValueError, TypeError):
+                pass
+        else:
+            # No meta — check directory mtime
+            try:
+                mtime = dt.fromtimestamp(session_dir.stat().st_mtime, tz=timezone.utc)
+                if mtime < cutoff:
+                    shutil.rmtree(session_dir)
+                    log.info("stale_session_cleaned_no_meta", session_id=session_dir.name)
+            except OSError:
+                pass
+
+
+def _count_session_articles(session_dir):
+    """Count saved article files in a session directory."""
+    return len([f for f in session_dir.glob("*.json") if f.name != "_meta.json"])
 
 
 @api_bp.route("/health")
@@ -386,20 +473,26 @@ def convert_stream():
     def generate():
         """Generator function for SSE stream with resilient retry/backoff."""
         # Load articles already fetched in previous connections (reconnection support)
+        # Only track URLs and titles — don't keep full article content in memory
+        # to avoid OOM on large batches (600+ articles).
         saved = _load_session_articles(session_dir)
-        articles = [{"url": u, "article": a} for u, a in saved.items()]
-        saved_urls = set(saved.keys())
+        processed_urls = set(saved.keys())
+        processed_titles = {u: a.title for u, a in saved.items()}
+        del saved  # Free article content from memory
         errors = []
         total = len(sources_for_urls)
         consecutive_failures = 0
 
+        # Save session metadata for recovery
+        _save_session_meta(session_dir, links, status="running")
+
         try:
-            yield f"data: {json_module.dumps({'type': 'start', 'total': total, 'session_id': session_id, 'already_done': len(saved_urls)})}\n\n"
+            yield f"data: {json_module.dumps({'type': 'start', 'total': total, 'session_id': session_id, 'already_done': len(processed_urls)})}\n\n"
 
             for i, (url, source) in enumerate(sources_for_urls, 1):
                 # Skip URLs already fetched in a previous connection
-                if url in saved_urls:
-                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': saved[url].title, 'resumed': True})}\n\n"
+                if url in processed_urls:
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': processed_titles.get(url, ''), 'resumed': True})}\n\n"
                     continue
 
                 # Adaptive delay between requests to avoid rate limiting
@@ -441,8 +534,8 @@ def convert_stream():
                         )
 
                         # Run fetch in a thread so we can send keepalive
-                        # comments while it blocks (up to 120s), preventing
-                        # the SSE connection from being dropped.
+                        # comments while it blocks, preventing the SSE
+                        # connection from being dropped.
                         fetch_q = queue_module.Queue()
 
                         def _do_fetch(src=source, u=url):
@@ -454,19 +547,25 @@ def convert_stream():
 
                         threading.Thread(target=_do_fetch, daemon=True).start()
 
+                        # Wait with hard timeout to kill stuck fetches
+                        fetch_start = time.time()
                         while True:
                             try:
                                 fetch_result = fetch_q.get(timeout=10)
                                 break
                             except queue_module.Empty:
+                                if time.time() - fetch_start > FETCH_TIMEOUT:
+                                    raise TimeoutError(f"Fetch timed out after {FETCH_TIMEOUT}s")
                                 yield ": keepalive\n\n"
 
                         if fetch_result[0] == "err":
                             raise fetch_result[1]
                         article = fetch_result[1]
 
-                        articles.append({"url": url, "article": article})
+                        # Save to disk — don't keep article content in memory
                         _save_article(session_dir, url, article)
+                        processed_urls.add(url)
+                        processed_titles[url] = article.title
 
                         yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
 
@@ -503,31 +602,35 @@ def convert_stream():
                     yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': last_error})}\n\n"
 
         except GeneratorExit:
+            _update_session_status(
+                session_dir, "interrupted",
+                processed=len(processed_urls), errors=len(errors),
+            )
             log.warning(
                 "convert_stream_client_disconnected",
-                completed=len(articles),
-                remaining=total - len(articles) - len(errors),
+                completed=len(processed_urls),
+                remaining=total - len(processed_urls) - len(errors),
             )
             return
         except Exception as e:
-            log.error("convert_stream_fatal_error", error=str(e), completed=len(articles))
+            _update_session_status(session_dir, "error", error=str(e))
+            log.error("convert_stream_fatal_error", error=str(e), completed=len(processed_urls))
             try:
                 yield f"data: {json_module.dumps({'type': 'error', 'error': f'Server error: {str(e)}'})}\n\n"
             except GeneratorExit:
                 return
 
-        # Generate PDF if we have articles
-        if articles:
+        # Generate PDF — reload articles from disk to avoid keeping them in memory
+        if processed_urls:
             try:
                 yield f"data: {json_module.dumps({'type': 'generating_pdf'})}\n\n"
 
-                # Run PDF generation in a background thread so we can send
-                # keepalive comments and prevent the SSE connection from timing out
                 pdf_result_queue = queue_module.Queue()
 
                 def _generate_pdf():
                     try:
-                        article_objects = [a["article"] for a in articles]
+                        saved_articles = _load_session_articles(session_dir)
+                        article_objects = list(saved_articles.values())
                         pdf_path = generate_combined_pdf(article_objects)
                         pdf_result_queue.put(("success", pdf_path))
                     except Exception as exc:
@@ -552,12 +655,11 @@ def convert_stream():
 
                     results = [
                         {
-                            "url": a["url"],
-                            "title": a["article"].title,
-                            "author": a["article"].author,
+                            "url": url,
+                            "title": processed_titles.get(url, ""),
                             "status": "success",
                         }
-                        for a in articles
+                        for url in processed_urls
                     ]
 
                     final_result = {
@@ -568,21 +670,25 @@ def convert_stream():
                         "errors": errors if errors else None,
                         "summary": {
                             "total": total,
-                            "succeeded": len(articles),
+                            "succeeded": len(processed_urls),
                             "failed": len(errors),
                         },
                     }
+                    _update_session_status(session_dir, "completed")
                     _cleanup_session(session_dir)
                     yield f"data: {json_module.dumps(final_result)}\n\n"
                 else:
+                    _update_session_status(session_dir, "pdf_failed", error=pdf_result[1])
                     yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {pdf_result[1]}'})}\n\n"
 
             except GeneratorExit:
+                _update_session_status(session_dir, "interrupted_during_pdf")
                 log.warning("convert_stream_disconnected_during_pdf")
                 return
             except Exception as e:
                 yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {str(e)}'})}\n\n"
         else:
+            _update_session_status(session_dir, "all_failed")
             error_details = [{"url": e["url"], "error": e["error"]} for e in errors]
             yield f"data: {json_module.dumps({'type': 'error', 'error': 'All conversions failed', 'details': error_details})}\n\n"
 
@@ -730,22 +836,25 @@ def bookmarks_convert():
 
     def generate():
         """Generator function for SSE stream with resilient retry/backoff."""
+        # Only track URLs and titles — don't keep full article content in memory
         saved = _load_session_articles(session_dir)
-        articles = [{"url": u, "article": a} for u, a in saved.items()]
-        saved_urls = set(saved.keys())
+        processed_urls = set(saved.keys())
+        processed_titles = {u: a.title for u, a in saved.items()}
+        del saved
         errors = []
         total = len(sources_for_urls)
         consecutive_failures = 0
 
+        _save_session_meta(session_dir, urls, status="running")
+
         try:
-            yield f"data: {json_module.dumps({'type': 'start', 'total': total, 'session_id': session_id, 'already_done': len(saved_urls)})}\n\n"
+            yield f"data: {json_module.dumps({'type': 'start', 'total': total, 'session_id': session_id, 'already_done': len(processed_urls)})}\n\n"
 
             for i, (url, source) in enumerate(sources_for_urls, 1):
-                if url in saved_urls:
-                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': saved[url].title, 'resumed': True})}\n\n"
+                if url in processed_urls:
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': processed_titles.get(url, ''), 'resumed': True})}\n\n"
                     continue
 
-                # Adaptive delay between requests
                 if i > 1:
                     is_twitter = source is not None and isinstance(source, TwitterPlaywrightSource)
                     delay = ARTICLE_BASE_DELAY + random.uniform(0, 2)
@@ -764,7 +873,6 @@ def bookmarks_convert():
                     yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': 'Unsupported URL'})}\n\n"
                     continue
 
-                # Retry loop for each URL
                 succeeded = False
                 last_error = None
 
@@ -777,9 +885,6 @@ def bookmarks_convert():
                             attempt=attempt + 1,
                         )
 
-                        # Run fetch in a thread so we can send keepalive
-                        # comments while it blocks (up to 120s), preventing
-                        # the SSE connection from being dropped.
                         fetch_q = queue_module.Queue()
 
                         def _do_fetch(src=source, u=url):
@@ -791,19 +896,23 @@ def bookmarks_convert():
 
                         threading.Thread(target=_do_fetch, daemon=True).start()
 
+                        fetch_start = time.time()
                         while True:
                             try:
                                 fetch_result = fetch_q.get(timeout=10)
                                 break
                             except queue_module.Empty:
+                                if time.time() - fetch_start > FETCH_TIMEOUT:
+                                    raise TimeoutError(f"Fetch timed out after {FETCH_TIMEOUT}s")
                                 yield ": keepalive\n\n"
 
                         if fetch_result[0] == "err":
                             raise fetch_result[1]
                         article = fetch_result[1]
 
-                        articles.append({"url": url, "article": article})
                         _save_article(session_dir, url, article)
+                        processed_urls.add(url)
+                        processed_titles[url] = article.title
 
                         yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
 
@@ -832,29 +941,34 @@ def bookmarks_convert():
                     yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': last_error})}\n\n"
 
         except GeneratorExit:
+            _update_session_status(
+                session_dir, "interrupted",
+                processed=len(processed_urls), errors=len(errors),
+            )
             log.warning(
                 "bookmark_convert_client_disconnected",
-                completed=len(articles),
-                remaining=total - len(articles) - len(errors),
+                completed=len(processed_urls),
+                remaining=total - len(processed_urls) - len(errors),
             )
             return
         except Exception as e:
-            log.error("bookmark_convert_fatal_error", error=str(e), completed=len(articles))
+            _update_session_status(session_dir, "error", error=str(e))
+            log.error("bookmark_convert_fatal_error", error=str(e), completed=len(processed_urls))
             try:
                 yield f"data: {json_module.dumps({'type': 'error', 'error': f'Server error: {str(e)}'})}\n\n"
             except GeneratorExit:
                 return
 
-        if articles:
+        if processed_urls:
             try:
                 yield f"data: {json_module.dumps({'type': 'generating_pdf'})}\n\n"
 
-                # Background thread for PDF generation with keepalive
                 pdf_result_queue = queue_module.Queue()
 
                 def _generate_pdf():
                     try:
-                        article_objects = [a["article"] for a in articles]
+                        saved_articles = _load_session_articles(session_dir)
+                        article_objects = list(saved_articles.values())
                         pdf_path = generate_combined_pdf(article_objects)
                         pdf_result_queue.put(("success", pdf_path))
                     except Exception as exc:
@@ -875,12 +989,11 @@ def bookmarks_convert():
 
                     results = [
                         {
-                            "url": a["url"],
-                            "title": a["article"].title,
-                            "author": a["article"].author,
+                            "url": url,
+                            "title": processed_titles.get(url, ""),
                             "status": "success",
                         }
-                        for a in articles
+                        for url in processed_urls
                     ]
 
                     final_result = {
@@ -891,21 +1004,25 @@ def bookmarks_convert():
                         "errors": errors if errors else None,
                         "summary": {
                             "total": total,
-                            "succeeded": len(articles),
+                            "succeeded": len(processed_urls),
                             "failed": len(errors),
                         },
                     }
+                    _update_session_status(session_dir, "completed")
                     _cleanup_session(session_dir)
                     yield f"data: {json_module.dumps(final_result)}\n\n"
                 else:
+                    _update_session_status(session_dir, "pdf_failed", error=pdf_result[1])
                     yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {pdf_result[1]}'})}\n\n"
 
             except GeneratorExit:
+                _update_session_status(session_dir, "interrupted_during_pdf")
                 log.warning("bookmark_convert_disconnected_during_pdf")
                 return
             except Exception as e:
                 yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {str(e)}'})}\n\n"
         else:
+            _update_session_status(session_dir, "all_failed")
             error_details = [{"url": e["url"], "error": e["error"]} for e in errors]
             yield f"data: {json_module.dumps({'type': 'error', 'error': 'All conversions failed', 'details': error_details})}\n\n"
 
@@ -1062,6 +1179,292 @@ def videos_download():
         yield f"data: {json_module.dumps(final_result)}\n\n"
 
     response = Response(vid_generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.headers["Connection"] = "keep-alive"
+    return response
+
+
+# --- Session Management Endpoints ---
+
+
+@api_bp.route("/sessions", methods=["GET"])
+def list_sessions():
+    """GET /api/sessions - List all sessions with progress info."""
+    config = get_config()
+    sessions_dir = config.output_dir / "sessions"
+
+    if not sessions_dir.exists():
+        return jsonify({"sessions": []})
+
+    sessions = []
+    for session_dir in sorted(sessions_dir.iterdir(), reverse=True):
+        if not session_dir.is_dir():
+            continue
+        meta = _load_session_meta(session_dir)
+        saved = _count_session_articles(session_dir)
+        sessions.append({
+            "id": session_dir.name,
+            "total": meta.get("total", 0) if meta else 0,
+            "saved": saved,
+            "status": meta.get("status", "unknown") if meta else "unknown",
+            "created_at": meta.get("created_at") if meta else None,
+            "updated_at": meta.get("updated_at") if meta else None,
+        })
+
+    return jsonify({"sessions": sessions})
+
+
+@api_bp.route("/sessions/<session_id>", methods=["GET"])
+def get_session(session_id):
+    """GET /api/sessions/<id> - Get session details including saved/remaining URLs."""
+    config = get_config()
+    session_dir = config.output_dir / "sessions" / session_id
+
+    if not session_dir.exists() or not session_dir.is_dir():
+        return jsonify({"error": "Session not found"}), 404
+
+    meta = _load_session_meta(session_dir)
+    saved_articles = _load_session_articles(session_dir)
+    saved_urls = set(saved_articles.keys())
+
+    all_urls = meta.get("urls", []) if meta else []
+    remaining_urls = [u for u in all_urls if u not in saved_urls]
+
+    return jsonify({
+        "id": session_id,
+        "total": meta.get("total", 0) if meta else len(saved_urls),
+        "saved": len(saved_urls),
+        "status": meta.get("status", "unknown") if meta else "unknown",
+        "saved_urls": list(saved_urls),
+        "remaining_urls": remaining_urls,
+        "created_at": meta.get("created_at") if meta else None,
+        "updated_at": meta.get("updated_at") if meta else None,
+    })
+
+
+@api_bp.route("/sessions/<session_id>/pdf", methods=["POST"])
+def session_pdf(session_id):
+    """POST /api/sessions/<id>/pdf - Generate PDF from existing session articles."""
+    config = get_config()
+    session_dir = config.output_dir / "sessions" / session_id
+
+    if not session_dir.exists() or not session_dir.is_dir():
+        return jsonify({"error": "Session not found"}), 404
+
+    saved_articles = _load_session_articles(session_dir)
+    if not saved_articles:
+        return jsonify({"error": "No articles saved in this session"}), 400
+
+    try:
+        article_objects = list(saved_articles.values())
+        pdf_path = generate_combined_pdf(article_objects)
+
+        _update_session_status(session_dir, "completed")
+
+        return jsonify({
+            "success": True,
+            "filename": pdf_path.name,
+            "article_count": len(article_objects),
+        })
+    except Exception as e:
+        log.error("session_pdf_failed", session_id=session_id, error=str(e))
+        return jsonify({"error": f"PDF generation failed: {str(e)}"}), 500
+
+
+@api_bp.route("/sessions/<session_id>/resume", methods=["POST"])
+def resume_session(session_id):
+    """POST /api/sessions/<id>/resume - Resume processing a session.
+
+    Loads the original URL list from session metadata, skips already-fetched
+    articles, and continues processing the remaining URLs as an SSE stream.
+    Requires cookies in request body.
+    """
+    import queue as queue_module
+    import random
+    import threading
+
+    config = get_config()
+    session_dir = config.output_dir / "sessions" / session_id
+
+    if not session_dir.exists() or not session_dir.is_dir():
+        return jsonify({"error": "Session not found"}), 404
+
+    meta = _load_session_meta(session_dir)
+    if not meta or not meta.get("urls"):
+        return jsonify({"error": "Session has no metadata (cannot determine URL list)"}), 404
+
+    run_async = _get_run_async()
+    cookies = _get_cookies_from_request()
+    urls = meta["urls"]
+
+    sources_for_urls = []
+    for url in urls:
+        source = get_source_for_url(url, cookies=cookies)
+        sources_for_urls.append((url, source))
+
+    def generate():
+        saved = _load_session_articles(session_dir)
+        processed_urls = set(saved.keys())
+        processed_titles = {u: a.title for u, a in saved.items()}
+        del saved
+        errors = []
+        total = len(sources_for_urls)
+        consecutive_failures = 0
+
+        _update_session_status(session_dir, "running")
+
+        try:
+            yield f"data: {json_module.dumps({'type': 'start', 'total': total, 'session_id': session_id, 'already_done': len(processed_urls)})}\n\n"
+
+            for i, (url, source) in enumerate(sources_for_urls, 1):
+                if url in processed_urls:
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': processed_titles.get(url, ''), 'resumed': True})}\n\n"
+                    continue
+
+                if i > 1:
+                    is_twitter = source is not None and isinstance(source, TwitterPlaywrightSource)
+                    delay = ARTICLE_BASE_DELAY + random.uniform(0, 2)
+                    if is_twitter:
+                        delay += 3
+                    if consecutive_failures > 0:
+                        delay += min(consecutive_failures * 10, 120)
+
+                    yield f"data: {json_module.dumps({'type': 'waiting', 'current': i, 'total': total, 'seconds': round(delay)})}\n\n"
+                    yield from _sleep_with_keepalive(delay)
+
+                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing'})}\n\n"
+
+                if source is None:
+                    errors.append({"url": url, "error": "Unsupported URL"})
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': 'Unsupported URL'})}\n\n"
+                    continue
+
+                succeeded = False
+                last_error = None
+
+                for attempt in range(ARTICLE_MAX_RETRIES + 1):
+                    try:
+                        fetch_q = queue_module.Queue()
+
+                        def _do_fetch(src=source, u=url):
+                            try:
+                                a = run_async(src.fetch(u))
+                                fetch_q.put(("ok", a))
+                            except Exception as exc:
+                                fetch_q.put(("err", exc))
+
+                        threading.Thread(target=_do_fetch, daemon=True).start()
+
+                        fetch_start = time.time()
+                        while True:
+                            try:
+                                fetch_result = fetch_q.get(timeout=10)
+                                break
+                            except queue_module.Empty:
+                                if time.time() - fetch_start > FETCH_TIMEOUT:
+                                    raise TimeoutError(f"Fetch timed out after {FETCH_TIMEOUT}s")
+                                yield ": keepalive\n\n"
+
+                        if fetch_result[0] == "err":
+                            raise fetch_result[1]
+                        article = fetch_result[1]
+
+                        _save_article(session_dir, url, article)
+                        processed_urls.add(url)
+                        processed_titles[url] = article.title
+
+                        yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'title': article.title})}\n\n"
+
+                        succeeded = True
+                        consecutive_failures = 0
+                        break
+
+                    except Exception as e:
+                        last_error = str(e)
+                        if attempt < ARTICLE_MAX_RETRIES:
+                            retry_delay = ARTICLE_RETRY_DELAYS[attempt] + random.uniform(0, 5)
+                            yield f"data: {json_module.dumps({'type': 'retry', 'current': i, 'total': total, 'url': url, 'attempt': attempt + 2, 'max_attempts': ARTICLE_MAX_RETRIES + 1, 'wait_seconds': round(retry_delay)})}\n\n"
+                            yield from _sleep_with_keepalive(retry_delay)
+
+                if not succeeded:
+                    consecutive_failures += 1
+                    errors.append({"url": url, "error": last_error})
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': last_error})}\n\n"
+
+        except GeneratorExit:
+            _update_session_status(
+                session_dir, "interrupted",
+                processed=len(processed_urls), errors=len(errors),
+            )
+            return
+        except Exception as e:
+            _update_session_status(session_dir, "error", error=str(e))
+            try:
+                yield f"data: {json_module.dumps({'type': 'error', 'error': f'Server error: {str(e)}'})}\n\n"
+            except GeneratorExit:
+                return
+
+        if processed_urls:
+            try:
+                yield f"data: {json_module.dumps({'type': 'generating_pdf'})}\n\n"
+
+                pdf_result_queue = queue_module.Queue()
+
+                def _generate_pdf():
+                    try:
+                        saved_articles = _load_session_articles(session_dir)
+                        article_objects = list(saved_articles.values())
+                        pdf_path = generate_combined_pdf(article_objects)
+                        pdf_result_queue.put(("success", pdf_path))
+                    except Exception as exc:
+                        pdf_result_queue.put(("error", str(exc)))
+
+                threading.Thread(target=_generate_pdf, daemon=True).start()
+
+                while True:
+                    try:
+                        pdf_result = pdf_result_queue.get(timeout=10)
+                        break
+                    except queue_module.Empty:
+                        yield ": keepalive\n\n"
+
+                if pdf_result[0] == "success":
+                    pdf_path = pdf_result[1]
+                    results = [
+                        {"url": url, "title": processed_titles.get(url, ""), "status": "success"}
+                        for url in processed_urls
+                    ]
+                    final_result = {
+                        "type": "complete",
+                        "success": True,
+                        "filename": pdf_path.name,
+                        "articles": results,
+                        "errors": errors if errors else None,
+                        "summary": {
+                            "total": total,
+                            "succeeded": len(processed_urls),
+                            "failed": len(errors),
+                        },
+                    }
+                    _update_session_status(session_dir, "completed")
+                    _cleanup_session(session_dir)
+                    yield f"data: {json_module.dumps(final_result)}\n\n"
+                else:
+                    _update_session_status(session_dir, "pdf_failed", error=pdf_result[1])
+                    yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {pdf_result[1]}'})}\n\n"
+
+            except GeneratorExit:
+                _update_session_status(session_dir, "interrupted_during_pdf")
+                return
+            except Exception as e:
+                yield f"data: {json_module.dumps({'type': 'error', 'error': f'PDF generation failed: {str(e)}'})}\n\n"
+        else:
+            _update_session_status(session_dir, "all_failed")
+            error_details = [{"url": e["url"], "error": e["error"]} for e in errors]
+            yield f"data: {json_module.dumps({'type': 'error', 'error': 'All conversions failed', 'details': error_details})}\n\n"
+
+    response = Response(generate(), mimetype="text/event-stream")
     response.headers["Cache-Control"] = "no-cache"
     response.headers["X-Accel-Buffering"] = "no"
     response.headers["Connection"] = "keep-alive"

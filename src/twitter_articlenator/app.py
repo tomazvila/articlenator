@@ -153,6 +153,15 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.register_blueprint(pages_bp)
     app.register_blueprint(api_bp)
 
+    # Clean up stale sessions on startup
+    if test_config is None:
+        try:
+            from .routes.api import _cleanup_stale_sessions
+
+            _cleanup_stale_sessions()
+        except Exception as e:
+            log.warning("stale_session_cleanup_failed", error=str(e))
+
     return app
 
 

@@ -7,6 +7,15 @@
 <p>Paste article links below (one per line) to convert them to e-reader friendly PDFs.</p>
 <p class="supported-sources">Supported: Twitter/X, Blog articles (Bear Blog, Substack, etc.)</p>
 
+<div id="resume-banner" class="resume-banner" style="display: none;">
+    <span id="resume-text"></span>
+    <div class="button-group">
+        <button type="button" id="resume-btn">Resume</button>
+        <button type="button" id="resume-pdf-btn" class="secondary">Generate PDF from saved</button>
+        <button type="button" id="dismiss-resume-btn" class="secondary">Dismiss</button>
+    </div>
+</div>
+
 <form id="convert-form">
     <div class="form-group">
         <label for="links-input">Article Links:</label>
@@ -56,6 +65,7 @@ https://substack.com/@author/post-title"
 <script>
 // COOKIES_KEY is defined in base.html
 const LINKS_KEY = 'articlenator_links';
+const SESSION_KEY = 'articlenator_session';
 
 // Persist textarea content to localStorage
 const linksInput = document.getElementById('links-input');
@@ -92,6 +102,100 @@ function sendNotification(title, body) {
     }
 }
 
+// Session persistence for resume across page refreshes
+function saveSession(sessionId, links) {
+    localStorage.setItem(SESSION_KEY, JSON.stringify({sessionId, links, timestamp: Date.now()}));
+}
+function clearSession() {
+    localStorage.removeItem(SESSION_KEY);
+}
+function loadSession() {
+    try {
+        const raw = localStorage.getItem(SESSION_KEY);
+        if (!raw) return null;
+        const session = JSON.parse(raw);
+        // Expire sessions older than 7 days
+        if (Date.now() - session.timestamp > 7 * 24 * 60 * 60 * 1000) {
+            clearSession();
+            return null;
+        }
+        return session;
+    } catch { return null; }
+}
+
+// Check for resumable session on page load
+async function checkResumableSession() {
+    const session = loadSession();
+    if (!session) return;
+
+    try {
+        const resp = await fetch(`/api/sessions/${session.sessionId}`);
+        if (resp.status !== 200) { clearSession(); return; }
+        const data = await resp.json();
+
+        if (data.status === 'completed') { clearSession(); return; }
+        if (data.saved === 0 && data.remaining_urls.length === 0) { clearSession(); return; }
+
+        const banner = document.getElementById('resume-banner');
+        const text = document.getElementById('resume-text');
+        text.textContent = `Previous session: ${data.saved} of ${data.total} articles saved (${data.remaining_urls.length} remaining).`;
+        banner.style.display = 'block';
+    } catch { clearSession(); }
+}
+
+document.getElementById('resume-btn').addEventListener('click', async () => {
+    const session = loadSession();
+    if (!session) return;
+    document.getElementById('resume-banner').style.display = 'none';
+    const cookies = localStorage.getItem(COOKIES_KEY) || '';
+    startStream(`/api/sessions/${session.sessionId}/resume`, {cookies}, session.sessionId);
+});
+
+document.getElementById('resume-pdf-btn').addEventListener('click', async () => {
+    const session = loadSession();
+    if (!session) return;
+    document.getElementById('resume-banner').style.display = 'none';
+    const statusDiv = document.getElementById('status');
+    const statusText = document.getElementById('status-text');
+    const resultsDiv = document.getElementById('results');
+    const downloadList = document.getElementById('download-list');
+    const errorDiv = document.getElementById('error');
+    const errorText = document.getElementById('error-text');
+
+    statusDiv.style.display = 'flex';
+    statusText.textContent = 'Generating PDF from saved articles...';
+
+    try {
+        const resp = await fetch(`/api/sessions/${session.sessionId}/pdf`, {method: 'POST'});
+        const data = await resp.json();
+        statusDiv.style.display = 'none';
+        if (data.success) {
+            clearSession();
+            resultsDiv.style.display = 'block';
+            downloadList.innerHTML = '';
+            const li = document.createElement('li');
+            const a = document.createElement('a');
+            a.href = `/download/${data.filename}`;
+            a.textContent = `Download PDF (${data.article_count} articles)`;
+            li.appendChild(a);
+            downloadList.appendChild(li);
+            sendNotification('PDF Ready!', `${data.article_count} articles converted`);
+        } else {
+            errorDiv.style.display = 'block';
+            errorText.textContent = data.error;
+        }
+    } catch (err) {
+        statusDiv.style.display = 'none';
+        errorDiv.style.display = 'block';
+        errorText.textContent = 'Failed: ' + err.message;
+    }
+});
+
+document.getElementById('dismiss-resume-btn').addEventListener('click', () => {
+    document.getElementById('resume-banner').style.display = 'none';
+    clearSession();
+});
+
 // Clear button
 document.getElementById('clear-btn').addEventListener('click', () => {
     linksInput.value = '';
@@ -104,8 +208,8 @@ document.getElementById('clear-btn').addEventListener('click', () => {
     document.getElementById('progress-bar').style.width = '0%';
 });
 
-document.getElementById('convert-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
+// Shared stream processing function
+async function startStream(url, body, sessionId) {
     requestNotificationPermission();
 
     const resultsDiv = document.getElementById('results');
@@ -122,7 +226,6 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
     const downloadList = document.getElementById('download-list');
     const submitBtn = document.getElementById('convert-btn');
 
-    // Reset UI
     resultsDiv.style.display = 'none';
     errorDiv.style.display = 'none';
     warningDiv.style.display = 'none';
@@ -133,34 +236,18 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
     statusDiv.style.display = 'flex';
     statusText.textContent = 'Starting...';
 
-    // Get links and cookies
-    const links = linksInput.value.trim().split('\n').filter(l => l.trim());
-    const cookies = localStorage.getItem(COOKIES_KEY) || '';
-
-    if (links.length === 0) {
-        errorDiv.style.display = 'block';
-        errorText.textContent = 'Please enter at least one link';
-        statusDiv.style.display = 'none';
-        submitBtn.disabled = false;
-        return;
-    }
-
-    // Session ID for reconnection — server saves articles to disk so
-    // reconnecting with the same session_id skips already-fetched URLs.
-    const sessionId = crypto.randomUUID();
-    const MAX_RECONNECTS = 10;
+    const MAX_RECONNECTS = 30;
     let reconnectCount = 0;
     let completed = false;
 
     async function processStream() {
         try {
-            const response = await fetch('/api/convert/stream', {
+            const response = await fetch(url, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({links: links, cookies: cookies, session_id: sessionId})
+                body: JSON.stringify(body)
             });
 
-            // Check for non-stream error responses
             const contentType = response.headers.get('content-type');
             if (contentType && contentType.includes('application/json')) {
                 const data = await response.json();
@@ -177,7 +264,6 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
                 }
             }
 
-            // Process SSE stream
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
@@ -232,6 +318,7 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
                             progressBar.style.width = '100%';
                         } else if (data.type === 'complete') {
                             completed = true;
+                            clearSession();
                             statusDiv.style.display = 'none';
                             resultsDiv.style.display = 'block';
 
@@ -270,7 +357,7 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
                             if (data.details) {
                                 errorText.textContent += '\n\nDetails:\n' + data.details.map(d => `${d.url}: ${d.error}`).join('\n');
                             }
-                            completed = true; // Server-sent error, don't reconnect
+                            completed = true;
                         }
                     }
                 }
@@ -278,19 +365,20 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
         } catch (err) {
             console.error('Stream error:', err);
 
-            // Auto-reconnect if not completed yet
+            // Auto-reconnect with exponential backoff (covers pod restarts)
             if (!completed && reconnectCount < MAX_RECONNECTS) {
                 reconnectCount++;
+                const backoff = Math.min(3000 * Math.pow(1.5, reconnectCount - 1), 30000);
                 statusText.textContent = `Connection lost. Reconnecting (${reconnectCount}/${MAX_RECONNECTS})...`;
                 statusDiv.style.display = 'flex';
                 errorDiv.style.display = 'none';
-                await new Promise(r => setTimeout(r, 3000));
+                await new Promise(r => setTimeout(r, backoff));
                 return processStream();
             }
 
             errorDiv.style.display = 'block';
             if (reconnectCount >= MAX_RECONNECTS) {
-                errorText.textContent = 'Connection lost after ' + MAX_RECONNECTS + ' reconnection attempts.';
+                errorText.textContent = 'Connection lost after ' + MAX_RECONNECTS + ' reconnection attempts. Your progress is saved — refresh the page to resume.';
             } else {
                 errorText.textContent = 'Failed to connect to server: ' + err.message;
             }
@@ -305,6 +393,27 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
             statusDiv.style.display = 'none';
         }
     }
+}
+
+document.getElementById('convert-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const links = linksInput.value.trim().split('\n').filter(l => l.trim());
+    const cookies = localStorage.getItem(COOKIES_KEY) || '';
+
+    if (links.length === 0) {
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error-text').textContent = 'Please enter at least one link';
+        return;
+    }
+
+    const sessionId = crypto.randomUUID();
+    saveSession(sessionId, links);
+
+    startStream('/api/convert/stream', {links, cookies, session_id: sessionId}, sessionId);
 });
+
+// Check for resumable sessions on page load
+checkResumableSession();
 </script>
 {% endblock %}

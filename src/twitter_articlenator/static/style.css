@@ -874,6 +874,20 @@ footer .version {
     font-style: italic;
 }
 
+/* Resume banner */
+.resume-banner {
+    background: var(--bg-medium);
+    border: 1px solid var(--yellow);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+    color: var(--fg-bright);
+}
+
+.resume-banner .button-group {
+    margin-top: 12px;
+}
+
 /* Responsive */
 @media (max-width: 600px) {
     body {

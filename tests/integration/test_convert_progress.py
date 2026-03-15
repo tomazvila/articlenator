@@ -177,7 +177,7 @@ class TestConvertWithStreaming:
             )
 
         # Should return event stream or JSON with progress
-        assert response.content_type in ["text/event-stream", "application/json"]
+        assert "text/event-stream" in response.content_type or "application/json" in response.content_type
 
     def test_stream_emits_progress_events(self, client):
         """Test streaming endpoint emits progress events."""
