@@ -1,10 +1,8 @@
 """Unit tests for session metadata management."""
 
 import json
-import shutil
 import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -173,10 +171,8 @@ class TestCleanupStaleSessions:
     """Tests for _cleanup_stale_sessions."""
 
     def test_removes_old_sessions(self, sessions_dir, monkeypatch):
-        from twitter_articlenator.routes.api import (
-            _save_session_meta,
-            _cleanup_stale_sessions,
-        )
+        from twitter_articlenator.routes.api import _cleanup_stale_sessions
+
         import twitter_articlenator.config as config_module
 
         # Setup config to use our temp dir

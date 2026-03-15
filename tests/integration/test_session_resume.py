@@ -241,7 +241,7 @@ class TestStreamSessionMeta:
             mock_source.fetch = AsyncMock(return_value=mock_article)
             mock_get_source.return_value = mock_source
 
-            response = client.post(
+            client.post(
                 "/api/convert/stream",
                 json={
                     "links": ["https://example.com/1"],
@@ -270,7 +270,7 @@ class TestStreamSessionMeta:
             mock_source.fetch = AsyncMock(return_value=mock_article)
             mock_get_source.return_value = mock_source
 
-            response = client.post(
+            client.post(
                 "/api/bookmarks/convert",
                 json={
                     "urls": ["https://example.com/1"],
