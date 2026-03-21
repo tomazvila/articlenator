@@ -1,5 +1,17 @@
 for everything nix develop must be used, there are no global dependencies locally
-after changes done, increment build version
+after changes done, increment build version, it must be shown in the footer too
+every change must be implemented top, to bottom:
+- first the research on best ways to do it
+- then mocks to implement the structure
+- then tests covering both the negative and positive space and edge cases
+- then scafolding
+- then implementation till tests pass
+- then very imortant most important, click test with playwright mcp to verify changes work end to end from client and user perspective when clicking through browser
+
+if there is missing data, session tokens you must ask for missing data
+if there is missing dependency it must be added and manage through nix flake
+
+before commiting any changes must run the linter
 
 ## Running the app
 

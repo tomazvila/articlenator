@@ -72,15 +72,14 @@ header {
 nav {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
+    gap: 20px;
 }
 
 nav a {
-    margin-right: 20px;
     color: var(--blue);
     text-decoration: none;
     transition: color 0.2s;
+    white-space: nowrap;
 }
 
 nav a:hover {
@@ -941,6 +940,14 @@ footer .version {
 @media (max-width: 600px) {
     body {
         padding: 10px;
+    }
+
+    nav {
+        gap: 12px;
+    }
+
+    nav a {
+        font-size: 14px;
     }
 
     .panel {
