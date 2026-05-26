@@ -125,6 +125,14 @@
                 ];
               };
 
+              toolPath = pkgs.lib.makeBinPath [
+                ytDlp
+                pkgs.ffmpeg
+                pkgs.nodejs_22
+                pkgs.coreutils
+                pkgs.bash
+              ];
+
               entrypoint = pkgs.writeShellScriptBin "entrypoint" ''
                 export FONTCONFIG_FILE="${fontsConf}"
                 export GI_TYPELIB_PATH="${pkgs.lib.makeSearchPath "lib/girepository-1.0" [
@@ -133,8 +141,10 @@
                 export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath runtimeDeps}"
                 export PLAYWRIGHT_BROWSERS_PATH="${pkgs.playwright-driver.browsers}"
                 export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                export PATH="${toolPath}:''${PATH:-}"
                 export HOME="/tmp"
                 export TWITTER_ARTICLENATOR_OUTPUT_DIR="/data/output"
+                export TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER="''${TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER:-${ytDlp}/bin/yt-dlp}"
 
                 exec ${app}/bin/twitter-articlenator "$@"
               '';
