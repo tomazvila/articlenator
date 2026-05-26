@@ -116,9 +116,7 @@ def iter_youtube_download(
                     if elapsed > timeout_seconds:
                         process.kill()
                         process.wait(timeout=5)
-                        raise TimeoutError(
-                            f"YouTube download exceeded {timeout_seconds} seconds"
-                        )
+                        raise TimeoutError(f"YouTube download exceeded {timeout_seconds} seconds")
 
                     time.sleep(min(keepalive_seconds, max(timeout_seconds - elapsed, 0.1)))
                     yield YouTubeDownloadUpdate(kind="keepalive")

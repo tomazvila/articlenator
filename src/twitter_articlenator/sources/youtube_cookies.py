@@ -234,7 +234,9 @@ class YouTubeCookieStore:
             raise YouTubeCookieEncryptionError("Cookie encryption key is required")
 
         encrypted = bool(self.encryption_key)
-        stored_bytes = self._encrypt(normalized.encode("utf-8")) if encrypted else normalized.encode()
+        stored_bytes = (
+            self._encrypt(normalized.encode("utf-8")) if encrypted else normalized.encode()
+        )
         self._write_private_file(self.cookie_path, stored_bytes)
 
         metadata_dict = metadata.to_dict()
@@ -271,7 +273,9 @@ class YouTubeCookieStore:
                     data[len(ENCRYPTION_PREFIX) :]
                 )
             except (InvalidToken, ValueError) as exc:
-                raise YouTubeCookieEncryptionError("Stored cookie file cannot be decrypted") from exc
+                raise YouTubeCookieEncryptionError(
+                    "Stored cookie file cannot be decrypted"
+                ) from exc
         return data.decode("utf-8")
 
     @contextmanager
@@ -403,7 +407,9 @@ def _canonical_cookie_domain(domain: str) -> str:
 
 
 def _is_allowed_domain(domain: str) -> bool:
-    return any(domain == allowed or domain.endswith(f".{allowed}") for allowed in ALLOWED_COOKIE_DOMAINS)
+    return any(
+        domain == allowed or domain.endswith(f".{allowed}") for allowed in ALLOWED_COOKIE_DOMAINS
+    )
 
 
 def _is_youtube_domain(domain: str) -> bool:
