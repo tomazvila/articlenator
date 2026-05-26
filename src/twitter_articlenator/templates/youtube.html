@@ -1,0 +1,350 @@
+{% extends "base.html" %}
+
+{% block title %}YouTube Downloader{% endblock %}
+
+{% block content %}
+<section class="panel youtube-head">
+    <div>
+        <h1>YouTube Downloads</h1>
+        <p>Batch YouTube video and MP3 downloads with optional session cookies.</p>
+    </div>
+    <span id="youtube-cookie-status" class="youtube-cookie-status">No YouTube session</span>
+</section>
+
+<form id="youtube-download-form" class="panel">
+    <fieldset class="mode-picker" aria-label="Download mode">
+        <legend>Mode</legend>
+        <label class="mode-option">
+            <input type="radio" id="mode-video" name="mode" value="video" checked>
+            <span>
+                <strong>Video</strong>
+                <small>MP4</small>
+            </span>
+        </label>
+        <label class="mode-option">
+            <input type="radio" id="mode-mp3" name="mode" value="mp3">
+            <span>
+                <strong>Audio</strong>
+                <small>MP3</small>
+            </span>
+        </label>
+    </fieldset>
+
+    <div class="form-group">
+        <label for="youtube-links-input">YouTube Links:</label>
+        <textarea
+            id="youtube-links-input"
+            name="links"
+            rows="10"
+            placeholder="https://www.youtube.com/watch?v=fv7TlVMETP0
+https://youtu.be/tc82YJfvXZo"
+        ></textarea>
+    </div>
+
+    <details class="youtube-session">
+        <summary>YouTube session cookies</summary>
+        <div class="form-group">
+            <label for="youtube-cookies-input">cookies.txt:</label>
+            <textarea
+                id="youtube-cookies-input"
+                name="cookies"
+                rows="6"
+                spellcheck="false"
+                placeholder="# Netscape HTTP Cookie File
+.youtube.com	TRUE	/	TRUE	0	SID	..."
+            ></textarea>
+        </div>
+    </details>
+
+    <div class="button-group">
+        <button type="submit" id="youtube-download-btn">Download</button>
+        <button type="button" id="youtube-clear-btn" class="secondary">Clear</button>
+    </div>
+</form>
+
+<div id="status" class="status-message" style="display: none;" aria-live="polite">
+    <span class="spinner" aria-label="Loading"></span>
+    <span id="status-text">Processing...</span>
+</div>
+
+<div id="progress-details" class="progress-section" style="display: none;" aria-live="polite">
+    <div class="progress-bar-container">
+        <div id="progress-bar" class="progress-bar" style="width: 0%" role="progressbar" aria-valuenow="0" aria-valuemax="100"></div>
+    </div>
+    <div id="progress-info" class="progress-info"></div>
+    <ul id="progress-list" class="progress-list"></ul>
+</div>
+
+<div id="results" class="results-section" style="display: none;" aria-live="polite">
+    <h2>Downloads</h2>
+    <ul id="download-list"></ul>
+</div>
+
+<div id="warning" class="warning-message" style="display: none;" aria-live="polite">
+    <strong>Warning:</strong>
+    <pre id="warning-text"></pre>
+</div>
+
+<div id="error" class="error-message" style="display: none;" aria-live="polite">
+    <strong>Error:</strong>
+    <pre id="error-text"></pre>
+</div>
+
+<script>
+const YOUTUBE_LINKS_KEY = 'articlenator_youtube_links';
+const YOUTUBE_COOKIES_KEY = 'articlenator_youtube_cookies';
+const YOUTUBE_MODE_KEY = 'articlenator_youtube_mode';
+
+const linksInput = document.getElementById('youtube-links-input');
+const cookiesInput = document.getElementById('youtube-cookies-input');
+const cookieStatus = document.getElementById('youtube-cookie-status');
+const modeInputs = document.querySelectorAll('input[name="mode"]');
+
+function selectedMode() {
+    return document.querySelector('input[name="mode"]:checked').value;
+}
+
+function updateCookieStatus() {
+    const hasCookies = cookiesInput.value.trim().length > 0;
+    cookieStatus.classList.toggle('configured', hasCookies);
+    cookieStatus.textContent = hasCookies ? 'YouTube session set' : 'No YouTube session';
+}
+
+function restoreState() {
+    linksInput.value = localStorage.getItem(YOUTUBE_LINKS_KEY) || '';
+    cookiesInput.value = localStorage.getItem(YOUTUBE_COOKIES_KEY) || '';
+    const savedMode = localStorage.getItem(YOUTUBE_MODE_KEY) || 'video';
+    const savedModeInput = document.querySelector(`input[name="mode"][value="${savedMode}"]`);
+    if (savedModeInput) savedModeInput.checked = true;
+    updateCookieStatus();
+}
+
+linksInput.addEventListener('input', () => {
+    localStorage.setItem(YOUTUBE_LINKS_KEY, linksInput.value);
+});
+
+cookiesInput.addEventListener('input', () => {
+    localStorage.setItem(YOUTUBE_COOKIES_KEY, cookiesInput.value);
+    updateCookieStatus();
+});
+
+for (const input of modeInputs) {
+    input.addEventListener('change', () => {
+        localStorage.setItem(YOUTUBE_MODE_KEY, selectedMode());
+    });
+}
+
+function requestNotificationPermission() {
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+}
+
+function sendNotification(title, body) {
+    if ('Notification' in window && Notification.permission === 'granted') {
+        const notification = new Notification(title, {
+            body: body,
+            icon: '/static/icon-192.png',
+            tag: 'youtube-ready'
+        });
+        setTimeout(() => notification.close(), 5000);
+        notification.onclick = () => {
+            window.focus();
+            notification.close();
+        };
+    }
+}
+
+function resetMessages() {
+    document.getElementById('results').style.display = 'none';
+    document.getElementById('warning').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+    document.getElementById('status').style.display = 'none';
+    document.getElementById('progress-details').style.display = 'none';
+    document.getElementById('progress-list').innerHTML = '';
+    document.getElementById('download-list').innerHTML = '';
+    document.getElementById('progress-bar').style.width = '0%';
+    document.getElementById('progress-bar').setAttribute('aria-valuenow', '0');
+}
+
+document.getElementById('youtube-clear-btn').addEventListener('click', () => {
+    linksInput.value = '';
+    cookiesInput.value = '';
+    document.getElementById('mode-video').checked = true;
+    localStorage.removeItem(YOUTUBE_LINKS_KEY);
+    localStorage.removeItem(YOUTUBE_COOKIES_KEY);
+    localStorage.setItem(YOUTUBE_MODE_KEY, 'video');
+    updateCookieStatus();
+    resetMessages();
+});
+
+function setProgressItem(data, className, text, detail) {
+    let li = document.getElementById(`progress-${data.current}`);
+    if (!li) {
+        li = document.createElement('li');
+        li.id = `progress-${data.current}`;
+        document.getElementById('progress-list').appendChild(li);
+    }
+    li.className = `progress-item ${className}`;
+    li.textContent = text;
+    if (detail) {
+        const small = document.createElement('small');
+        small.className = 'error-detail';
+        small.textContent = detail;
+        li.appendChild(document.createElement('br'));
+        li.appendChild(small);
+    }
+}
+
+document.getElementById('youtube-download-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    requestNotificationPermission();
+
+    const resultsDiv = document.getElementById('results');
+    const errorDiv = document.getElementById('error');
+    const errorText = document.getElementById('error-text');
+    const warningDiv = document.getElementById('warning');
+    const warningText = document.getElementById('warning-text');
+    const statusDiv = document.getElementById('status');
+    const statusText = document.getElementById('status-text');
+    const progressDetails = document.getElementById('progress-details');
+    const progressBar = document.getElementById('progress-bar');
+    const progressInfo = document.getElementById('progress-info');
+    const downloadList = document.getElementById('download-list');
+    const submitBtn = document.getElementById('youtube-download-btn');
+
+    resetMessages();
+
+    const links = linksInput.value.trim().split('\n').map(l => l.trim()).filter(Boolean);
+    const mode = selectedMode();
+    const cookies = cookiesInput.value.trim();
+
+    if (links.length === 0) {
+        errorDiv.style.display = 'block';
+        errorText.textContent = 'Please enter at least one YouTube link';
+        return;
+    }
+
+    submitBtn.disabled = true;
+    statusDiv.style.display = 'flex';
+    statusText.textContent = 'Starting...';
+
+    try {
+        const payload = {links: links, mode: mode};
+        if (cookies) payload.cookies = cookies;
+
+        const response = await fetch('/api/youtube/download', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            if (data.error) {
+                errorDiv.style.display = 'block';
+                errorText.textContent = data.error;
+                statusDiv.style.display = 'none';
+                return;
+            }
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        progressDetails.style.display = 'block';
+
+        while (true) {
+            const {value, done} = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, {stream: true});
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const data = JSON.parse(line.slice(6));
+
+                if (data.type === 'start') {
+                    const label = data.mode === 'mp3' ? 'audio file(s)' : 'video file(s)';
+                    statusText.textContent = `Downloading ${data.total} ${label}...`;
+                    progressInfo.textContent = `0 / ${data.total}`;
+                } else if (data.type === 'keepalive') {
+                    statusText.textContent = `Still downloading ${data.current}/${data.total}...`;
+                } else if (data.type === 'progress') {
+                    const percent = (data.current / data.total) * 100;
+                    progressBar.style.width = `${percent}%`;
+                    progressBar.setAttribute('aria-valuenow', Math.round(percent));
+                    progressInfo.textContent = `${data.current} / ${data.total}`;
+
+                    if (data.status === 'processing') {
+                        setProgressItem(data, 'processing', data.url);
+                        statusText.textContent = `Downloading ${data.current}/${data.total}: ${data.url.substring(0, 70)}...`;
+                    } else if (data.status === 'success') {
+                        setProgressItem(data, 'success', data.filename);
+                    } else if (data.status === 'failed') {
+                        setProgressItem(data, 'failed', data.url, data.error);
+                    }
+                } else if (data.type === 'complete') {
+                    statusDiv.style.display = 'none';
+
+                    if (data.downloads && data.downloads.length > 0) {
+                        resultsDiv.style.display = 'block';
+                        for (const item of data.downloads) {
+                            const li = document.createElement('li');
+                            const a = document.createElement('a');
+                            const folder = item.mode === 'mp3' ? 'audio' : 'video';
+                            a.href = `/download/youtube/${folder}/${item.filename}`;
+                            a.textContent = `${item.filename} (${formatFileSize(item.size_bytes)})`;
+                            li.appendChild(a);
+                            downloadList.appendChild(li);
+                        }
+                    }
+
+                    if (data.summary) {
+                        const summaryLi = document.createElement('li');
+                        summaryLi.className = 'summary';
+                        summaryLi.textContent = `Summary: ${data.summary.succeeded} downloaded, ${data.summary.failed} failed of ${data.summary.total} total`;
+                        downloadList.appendChild(summaryLi);
+                    }
+
+                    if (data.errors && data.errors.length > 0) {
+                        warningDiv.style.display = 'block';
+                        const failedUrls = data.errors.map(err => `${err.url}:\n  ${err.error}`).join('\n\n');
+                        warningText.textContent = `${data.errors.length} download(s) failed:\n\n${failedUrls}`;
+                    }
+
+                    const count = data.summary ? data.summary.succeeded : 0;
+                    sendNotification('YouTube Downloads Ready', `${count} file${count !== 1 ? 's' : ''} downloaded`);
+                } else if (data.type === 'error') {
+                    statusDiv.style.display = 'none';
+                    errorDiv.style.display = 'block';
+                    errorText.textContent = data.error;
+                }
+            }
+        }
+    } catch (err) {
+        console.error('YouTube download error:', err);
+        errorDiv.style.display = 'block';
+        errorText.textContent = 'Failed to connect to server: ' + err.message;
+    } finally {
+        submitBtn.disabled = false;
+        if (statusDiv.style.display !== 'none') {
+            statusDiv.style.display = 'none';
+        }
+    }
+});
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+restoreState();
+</script>
+{% endblock %}

@@ -30,6 +30,16 @@ class TestConfigProperties:
         assert hasattr(config, "json_logging")
         assert isinstance(config.json_logging, bool)
 
+    def test_config_has_youtube_downloader_settings(self):
+        """Test Config has YouTube downloader settings."""
+        from twitter_articlenator.config import Config
+
+        config = Config()
+        assert hasattr(config, "youtube_downloader_bin")
+        assert hasattr(config, "youtube_download_timeout")
+        assert isinstance(config.youtube_downloader_bin, str)
+        assert isinstance(config.youtube_download_timeout, int)
+
 
 class TestConfigDefaults:
     """Tests for Config default values."""
@@ -79,6 +89,17 @@ class TestConfigEnvOverrides:
 
         config = Config()
         assert config.json_logging is False
+
+    def test_config_env_override_youtube_downloader(self, monkeypatch):
+        """Test YouTube downloader settings can be overridden by env vars."""
+        from twitter_articlenator.config import Config
+
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER", "/tmp/fake-ytdlp")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_TIMEOUT", "42")
+
+        config = Config()
+        assert config.youtube_downloader_bin == "/tmp/fake-ytdlp"
+        assert config.youtube_download_timeout == 42
 
 
 class TestGetConfig:

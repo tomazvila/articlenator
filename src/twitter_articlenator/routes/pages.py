@@ -32,6 +32,12 @@ def videos():
     return render_template("videos.html")
 
 
+@pages_bp.route("/youtube")
+def youtube():
+    """GET /youtube - YouTube downloader."""
+    return render_template("youtube.html")
+
+
 @pages_bp.route("/download/<filename>")
 def download(filename: str):
     """GET /download/<filename> - Download generated PDF."""
@@ -78,3 +84,45 @@ def download_video(filename: str):
         return jsonify({"error": "File not found"}), 404
 
     return send_from_directory(video_dir, safe_filename, mimetype="video/mp4", as_attachment=True)
+
+
+@pages_bp.route("/download/youtube/<mode>/<filename>")
+def download_youtube(mode: str, filename: str):
+    """GET /download/youtube/<mode>/<filename> - Download a YouTube file."""
+    allowed = {
+        "video": {
+            "directory": "videos",
+            "extension": ".mp4",
+            "mimetype": "video/mp4",
+        },
+        "audio": {
+            "directory": "audio",
+            "extension": ".mp3",
+            "mimetype": "audio/mpeg",
+        },
+    }
+    if mode not in allowed:
+        return jsonify({"error": "Invalid YouTube download type"}), 400
+
+    safe_filename = secure_filename(filename)
+    expected_extension = allowed[mode]["extension"]
+
+    if not safe_filename.endswith(expected_extension):
+        return jsonify({"error": f"Only {expected_extension} files can be downloaded"}), 400
+
+    if not safe_filename or safe_filename != filename:
+        return jsonify({"error": "Invalid filename"}), 400
+
+    config = get_config()
+    youtube_dir = config.output_dir / "youtube" / allowed[mode]["directory"]
+
+    youtube_path = youtube_dir / safe_filename
+    if not youtube_path.exists():
+        return jsonify({"error": "File not found"}), 404
+
+    return send_from_directory(
+        youtube_dir,
+        safe_filename,
+        mimetype=allowed[mode]["mimetype"],
+        as_attachment=True,
+    )

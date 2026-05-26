@@ -110,6 +110,24 @@ class TestBookmarksRoute:
         assert "convert" in html.lower()
 
 
+class TestYouTubeRoute:
+    """Tests for GET /youtube route."""
+
+    def test_youtube_returns_200(self, client):
+        """Test GET /youtube returns 200."""
+        response = client.get("/youtube")
+        assert response.status_code == 200
+
+    def test_youtube_contains_download_form(self, client):
+        """Test YouTube page has expected form controls."""
+        response = client.get("/youtube")
+        html = response.data.decode("utf-8")
+
+        assert "youtube-download-form" in html
+        assert "youtube-links-input" in html
+        assert "mode-mp3" in html
+
+
 class TestHealthRoute:
     """Tests for GET /api/health route."""
 
@@ -235,6 +253,82 @@ class TestDownloadRoute:
 
         response = client.get("/download/test.txt")
         assert response.status_code in [400, 404]
+
+
+class TestYouTubeDownloadRoute:
+    """Tests for GET /download/youtube/<mode>/<filename> route."""
+
+    def test_download_youtube_rejects_invalid_mode(self, client):
+        """Test YouTube download route rejects invalid mode."""
+        response = client.get("/download/youtube/other/file.mp4")
+        assert response.status_code == 400
+
+    def test_download_youtube_rejects_path_traversal(self, client):
+        """Test YouTube download route rejects path traversal attempts."""
+        response = client.get("/download/youtube/video/../../../etc/passwd")
+        assert response.status_code in [400, 404]
+
+    def test_download_youtube_serves_mp4(self, client, tmp_path, monkeypatch):
+        """Test YouTube video download route serves MP4 files."""
+        output_dir = tmp_path / "output"
+        video_dir = output_dir / "youtube" / "videos"
+        video_dir.mkdir(parents=True, exist_ok=True)
+        (video_dir / "sample.mp4").write_bytes(b"fake mp4")
+
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_OUTPUT_DIR", str(output_dir))
+        import twitter_articlenator.config as config_module
+
+        config_module._config_instance = None
+
+        response = client.get("/download/youtube/video/sample.mp4")
+        assert response.status_code == 200
+        assert response.content_type == "video/mp4"
+
+    def test_download_youtube_serves_mp3(self, client, tmp_path, monkeypatch):
+        """Test YouTube audio download route serves MP3 files."""
+        output_dir = tmp_path / "output"
+        audio_dir = output_dir / "youtube" / "audio"
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        (audio_dir / "sample.mp3").write_bytes(b"fake mp3")
+
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_OUTPUT_DIR", str(output_dir))
+        import twitter_articlenator.config as config_module
+
+        config_module._config_instance = None
+
+        response = client.get("/download/youtube/audio/sample.mp3")
+        assert response.status_code == 200
+        assert response.content_type == "audio/mpeg"
+
+    def test_download_youtube_rejects_wrong_extension(self, client):
+        """Test YouTube download route rejects unsupported extensions."""
+        response = client.get("/download/youtube/audio/sample.mp4")
+        assert response.status_code == 400
+
+
+class TestYouTubeDownloadApi:
+    """Tests for POST /api/youtube/download validation."""
+
+    def test_youtube_download_requires_links(self, client):
+        """Test YouTube download API requires links."""
+        response = client.post("/api/youtube/download", json={"links": []})
+        assert response.status_code == 400
+
+    def test_youtube_download_rejects_invalid_mode(self, client):
+        """Test YouTube download API rejects invalid mode."""
+        response = client.post(
+            "/api/youtube/download",
+            json={"links": ["https://youtu.be/abc"], "mode": "wav"},
+        )
+        assert response.status_code == 400
+
+    def test_youtube_download_rejects_non_youtube_url(self, client):
+        """Test YouTube download API validates URL type."""
+        response = client.post(
+            "/api/youtube/download",
+            json={"links": ["https://example.com/watch?v=abc"], "mode": "video"},
+        )
+        assert response.status_code == 400
 
 
 class TestSecurityHeaders:

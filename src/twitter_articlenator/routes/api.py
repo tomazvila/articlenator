@@ -32,6 +32,8 @@ SESSION_TTL_DAYS = 7
 # Pattern for valid Twitter/X video URLs
 TWITTER_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:twitter\.com|x\.com)/(\w+)/status/(\d+)")
 
+YOUTUBE_DOWNLOAD_MODES = {"video": "videos", "mp3": "audio"}
+
 log = structlog.get_logger()
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -1183,6 +1185,131 @@ def videos_download():
         yield f"data: {json_module.dumps(final_result)}\n\n"
 
     response = Response(vid_generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.headers["Connection"] = "keep-alive"
+    return response
+
+
+@api_bp.route("/youtube/download", methods=["POST"])
+def youtube_download():
+    """POST /api/youtube/download - Download YouTube video or MP3 files."""
+    if request.is_json:
+        data = request.get_json() or {}
+        links = data.get("links", [])
+        mode = data.get("mode", "video")
+        cookies = data.get("cookies", "")
+    else:
+        links_text = request.form.get("links", "")
+        links = [line.strip() for line in links_text.split("\n") if line.strip()]
+        mode = request.form.get("mode", "video")
+        cookies = request.form.get("cookies", "")
+
+    links = [link.strip() for link in links if link and link.strip()]
+    cookies = cookies.strip() if cookies else None
+
+    if not links:
+        return jsonify({"error": "No links provided"}), 400
+
+    if mode not in YOUTUBE_DOWNLOAD_MODES:
+        return jsonify({"error": "Invalid mode. Use 'video' or 'mp3'."}), 400
+
+    from ..sources.youtube_downloader import is_supported_youtube_url, iter_youtube_download
+
+    invalid_urls = [url for url in links if not is_supported_youtube_url(url)]
+    if invalid_urls:
+        return (
+            jsonify(
+                {
+                    "error": "Invalid YouTube URLs: "
+                    f"{', '.join(invalid_urls)}. "
+                    "Only individual watch, youtu.be, shorts, live, or embed URLs are supported."
+                }
+            ),
+            400,
+        )
+
+    config = get_config()
+    output_dir = config.output_dir / "youtube" / YOUTUBE_DOWNLOAD_MODES[mode]
+
+    def generate():
+        """Generator function for YouTube SSE stream."""
+        downloads = []
+        errors = []
+        total = len(links)
+
+        try:
+            yield f"data: {json_module.dumps({'type': 'start', 'total': total, 'mode': mode})}\n\n"
+
+            for i, url in enumerate(links, 1):
+                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing', 'mode': mode})}\n\n"
+
+                try:
+                    output_path = None
+                    for update in iter_youtube_download(
+                        url,
+                        output_dir,
+                        mode=mode,
+                        cookies=cookies,
+                        downloader_bin=config.youtube_downloader_bin,
+                        timeout_seconds=config.youtube_download_timeout,
+                        keepalive_seconds=1.0,
+                    ):
+                        if update.kind == "keepalive":
+                            yield f"data: {json_module.dumps({'type': 'keepalive', 'current': i, 'total': total, 'url': url, 'mode': mode})}\n\n"
+                        elif update.kind == "complete":
+                            output_path = update.path
+
+                    if output_path is None:
+                        raise RuntimeError("yt-dlp completed without an output file")
+
+                    filename = output_path.name
+                    size_bytes = output_path.stat().st_size
+                    downloads.append(
+                        {
+                            "url": url,
+                            "filename": filename,
+                            "size_bytes": size_bytes,
+                            "mode": mode,
+                        }
+                    )
+
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'filename': filename, 'mode': mode})}\n\n"
+
+                except Exception as e:
+                    error = str(e)
+                    log.warning("youtube_download_failed", url=url, mode=mode, error=error)
+                    errors.append({"url": url, "error": error})
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': error, 'mode': mode})}\n\n"
+
+        except GeneratorExit:
+            log.warning(
+                "youtube_stream_client_disconnected",
+                completed=len(downloads),
+                total=total,
+            )
+            return
+        except Exception as e:
+            log.error("youtube_stream_fatal_error", error=str(e), completed=len(downloads))
+            try:
+                yield f"data: {json_module.dumps({'type': 'error', 'error': f'Server error: {str(e)}'})}\n\n"
+            except GeneratorExit:
+                return
+
+        final_result = {
+            "type": "complete",
+            "downloads": downloads,
+            "errors": errors if errors else None,
+            "summary": {
+                "total": total,
+                "succeeded": len(downloads),
+                "failed": len(errors),
+            },
+            "mode": mode,
+        }
+        yield f"data: {json_module.dumps(final_result)}\n\n"
+
+    response = Response(generate(), mimetype="text/event-stream")
     response.headers["Cache-Control"] = "no-cache"
     response.headers["X-Accel-Buffering"] = "no"
     response.headers["Connection"] = "keep-alive"

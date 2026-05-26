@@ -28,6 +28,14 @@ class Config:
         json_logging_env = os.environ.get("TWITTER_ARTICLENATOR_JSON_LOGGING", "true")
         self._json_logging = json_logging_env.lower() in ("true", "1", "yes")
 
+        # YouTube downloader settings
+        self._youtube_downloader_bin = os.environ.get(
+            "TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER", "yt-dlp"
+        )
+        self._youtube_download_timeout = int(
+            os.environ.get("TWITTER_ARTICLENATOR_YOUTUBE_TIMEOUT", "14400")
+        )
+
     @property
     def output_dir(self) -> Path:
         """Directory for generated PDFs."""
@@ -42,6 +50,16 @@ class Config:
     def json_logging(self) -> bool:
         """Whether to use JSON logging format."""
         return self._json_logging
+
+    @property
+    def youtube_downloader_bin(self) -> str:
+        """Executable used for YouTube downloads."""
+        return self._youtube_downloader_bin
+
+    @property
+    def youtube_download_timeout(self) -> int:
+        """Maximum seconds allowed for one YouTube download."""
+        return self._youtube_download_timeout
 
 
 def get_config() -> Config:

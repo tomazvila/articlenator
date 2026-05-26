@@ -38,6 +38,18 @@
           ];
 
           python = pkgs.python3.withPackages pythonDeps;
+          ytDlp = pkgs.stdenvNoCC.mkDerivation {
+            pname = "yt-dlp";
+            version = "2026.03.17";
+            src = pkgs.fetchurl {
+              url = "https://github.com/yt-dlp/yt-dlp/releases/download/2026.03.17/yt-dlp";
+              hash = "sha256-O9oJaKAc3nDSZyBlMAOyhVPHG+FNyy5fTCTpkh/a10U=";
+            };
+            dontUnpack = true;
+            installPhase = ''
+              install -Dm755 "$src" "$out/bin/yt-dlp"
+            '';
+          };
 
           # Build the application package
           app = pkgs.python3Packages.buildPythonApplication {
@@ -99,7 +111,9 @@
                 pkgs.bash
                 pkgs.cacert
                 # Video downloading
-                pkgs.yt-dlp
+                ytDlp
+                pkgs.ffmpeg
+                pkgs.nodejs_22
               ];
 
               fontsConf = pkgs.makeFontsConf {
@@ -176,6 +190,18 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           isDarwin = pkgs.stdenv.isDarwin;
+          ytDlp = pkgs.stdenvNoCC.mkDerivation {
+            pname = "yt-dlp";
+            version = "2026.03.17";
+            src = pkgs.fetchurl {
+              url = "https://github.com/yt-dlp/yt-dlp/releases/download/2026.03.17/yt-dlp";
+              hash = "sha256-O9oJaKAc3nDSZyBlMAOyhVPHG+FNyy5fTCTpkh/a10U=";
+            };
+            dontUnpack = true;
+            installPhase = ''
+              install -Dm755 "$src" "$out/bin/yt-dlp"
+            '';
+          };
 
           # Dev dependencies
           pythonWithDeps = pkgs.python3.withPackages (ps: with ps; [
@@ -239,7 +265,9 @@
               # Playwright browsers
               pkgs.playwright-driver.browsers
               # Video downloading
-              pkgs.yt-dlp
+              ytDlp
+              pkgs.ffmpeg
+              pkgs.nodejs_22
             ];
 
             shellHook = ''
