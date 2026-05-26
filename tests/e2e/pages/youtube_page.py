@@ -9,7 +9,13 @@ class YouTubePage:
         self.page = page
         self.links_textarea = page.locator("#youtube-links-input")
         self.cookies_textarea = page.locator("#youtube-cookies-input")
+        self.cookies_file = page.locator("#youtube-cookies-file")
         self.cookie_status = page.locator("#youtube-cookie-status")
+        self.cookie_message = page.locator("#youtube-cookie-message")
+        self.cookie_count = page.locator("#youtube-cookie-count")
+        self.verify_cookies_button = page.locator("#youtube-verify-cookies-btn")
+        self.delete_cookies_button = page.locator("#youtube-delete-cookies-btn")
+        self.save_cookies_button = page.locator("#youtube-save-cookies-btn")
         self.video_mode = page.locator("#mode-video")
         self.mp3_mode = page.locator("#mode-mp3")
         self.download_button = page.locator("#youtube-download-btn")
@@ -34,10 +40,23 @@ class YouTubePage:
         self.links_textarea.fill("\n".join(links))
 
     def enter_cookies(self, cookies: str):
-        """Enter YouTube cookies."""
+        """Paste YouTube cookies into the upload control."""
         if not self.cookies_textarea.is_visible():
-            self.page.locator(".youtube-session summary").click()
+            self.page.locator(".youtube-session-paste summary").click()
         self.cookies_textarea.fill(cookies)
+
+    def save_pasted_cookies(self, cookies: str):
+        """Paste and save YouTube cookies to the server."""
+        self.enter_cookies(cookies)
+        self.save_cookies_button.click()
+
+    def delete_cookies(self):
+        """Delete stored YouTube cookies."""
+        self.delete_cookies_button.click()
+
+    def verify_cookies(self):
+        """Verify stored YouTube cookies."""
+        self.verify_cookies_button.click()
 
     def select_mp3(self):
         """Select MP3 mode."""

@@ -1,8 +1,14 @@
 """Integration tests for Flask application."""
 
 import json
+import re
 
 import pytest
+
+SAMPLE_YOUTUBE_COOKIES = (
+    "# Netscape HTTP Cookie File\n"
+    ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret-session-value\n"
+)
 
 
 @pytest.fixture
@@ -10,6 +16,10 @@ def app(tmp_path, monkeypatch):
     """Create Flask test application with temp directories."""
     monkeypatch.setenv("TWITTER_ARTICLENATOR_OUTPUT_DIR", str(tmp_path / "output"))
     monkeypatch.setenv("TWITTER_ARTICLENATOR_JSON_LOGGING", "false")
+    monkeypatch.setenv(
+        "TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY",
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    )
 
     import twitter_articlenator.config as config_module
 
@@ -25,6 +35,14 @@ def app(tmp_path, monkeypatch):
 def client(app):
     """Create Flask test client."""
     return app.test_client()
+
+
+def csrf_headers(client) -> dict[str, str]:
+    """Return headers with the current session CSRF token."""
+    response = client.get("/youtube")
+    html = response.get_data(as_text=True)
+    token = re.search(r'<meta name="csrf-token" content="([^"]+)">', html).group(1)
+    return {"X-CSRF-Token": token}
 
 
 class TestIndexRoute:
@@ -311,7 +329,11 @@ class TestYouTubeDownloadApi:
 
     def test_youtube_download_requires_links(self, client):
         """Test YouTube download API requires links."""
-        response = client.post("/api/youtube/download", json={"links": []})
+        response = client.post(
+            "/api/youtube/download",
+            json={"links": []},
+            headers=csrf_headers(client),
+        )
         assert response.status_code == 400
 
     def test_youtube_download_rejects_invalid_mode(self, client):
@@ -319,6 +341,7 @@ class TestYouTubeDownloadApi:
         response = client.post(
             "/api/youtube/download",
             json={"links": ["https://youtu.be/abc"], "mode": "wav"},
+            headers=csrf_headers(client),
         )
         assert response.status_code == 400
 
@@ -327,8 +350,95 @@ class TestYouTubeDownloadApi:
         response = client.post(
             "/api/youtube/download",
             json={"links": ["https://example.com/watch?v=abc"], "mode": "video"},
+            headers=csrf_headers(client),
         )
         assert response.status_code == 400
+
+    def test_youtube_download_rejects_raw_cookie_payload(self, client):
+        """Test YouTube download API no longer accepts raw cookies."""
+        response = client.post(
+            "/api/youtube/download",
+            json={
+                "links": ["https://youtu.be/abc"],
+                "mode": "video",
+                "cookies": SAMPLE_YOUTUBE_COOKIES,
+            },
+            headers=csrf_headers(client),
+        )
+        assert response.status_code == 400
+        assert "Upload YouTube cookies" in response.get_json()["error"]
+
+    def test_youtube_download_requires_csrf(self, client):
+        """Test YouTube download API requires CSRF."""
+        response = client.post(
+            "/api/youtube/download",
+            json={"links": ["https://youtu.be/abc"], "mode": "video"},
+        )
+        assert response.status_code == 403
+
+
+class TestYouTubeCookiesApi:
+    """Tests for YouTube cookie management API."""
+
+    def test_status_is_metadata_only_without_cookie(self, client):
+        """Test status returns no raw cookie values."""
+        response = client.get("/api/youtube/cookies/status")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["configured"] is False
+        assert "secret-session-value" not in response.get_data(as_text=True)
+
+    def test_upload_valid_cookies_and_status_is_metadata_only(self, client):
+        """Test uploading valid cookies stores metadata only."""
+        response = client.post(
+            "/api/youtube/cookies",
+            data={"cookies": SAMPLE_YOUTUBE_COOKIES},
+            headers=csrf_headers(client),
+        )
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["configured"] is True
+        assert data["encrypted"] is True
+        assert data["cookie_count"] == 1
+        assert data["youtube_cookie_count"] == 1
+        assert "secret-session-value" not in response.get_data(as_text=True)
+
+        status = client.get("/api/youtube/cookies/status")
+        assert status.status_code == 200
+        assert "secret-session-value" not in status.get_data(as_text=True)
+
+    def test_upload_requires_csrf(self, client):
+        """Test cookie upload requires CSRF."""
+        response = client.post("/api/youtube/cookies", data={"cookies": SAMPLE_YOUTUBE_COOKIES})
+        assert response.status_code == 403
+
+    def test_upload_rejects_malformed_cookies(self, client):
+        """Test malformed cookie text is rejected."""
+        response = client.post(
+            "/api/youtube/cookies",
+            data={"cookies": "not\ta\tnetscape\tcookie"},
+            headers=csrf_headers(client),
+        )
+        assert response.status_code == 400
+
+    def test_delete_removes_cookie_status(self, client):
+        """Test delete removes stored YouTube cookies."""
+        headers = csrf_headers(client)
+        upload = client.post(
+            "/api/youtube/cookies",
+            data={"cookies": SAMPLE_YOUTUBE_COOKIES},
+            headers=headers,
+        )
+        assert upload.status_code == 200
+
+        response = client.delete("/api/youtube/cookies", headers=headers)
+        assert response.status_code == 200
+        assert response.get_json()["configured"] is False
+
+    def test_verify_without_cookies_returns_404(self, client):
+        """Test verify requires stored cookies."""
+        response = client.post("/api/youtube/cookies/verify", headers=csrf_headers(client))
+        assert response.status_code == 404
 
 
 class TestSecurityHeaders:
@@ -359,11 +469,31 @@ class TestSecurityHeaders:
         response = client.get("/api/health")
         assert "geolocation=()" in response.headers.get("Permissions-Policy", "")
 
+    def test_content_security_policy_header(self, client):
+        """Test Content-Security-Policy header is set with a script nonce."""
+        response = client.get("/")
+        csp = response.headers.get("Content-Security-Policy", "")
+        assert "default-src 'self'" in csp
+        assert "script-src 'self' 'nonce-" in csp
+        assert "frame-ancestors 'none'" in csp
+
     def test_security_headers_on_html_pages(self, client):
         """Test security headers are set on HTML pages too."""
         response = client.get("/")
         assert response.headers.get("X-Content-Type-Options") == "nosniff"
         assert response.headers.get("X-Frame-Options") == "DENY"
+
+    def test_session_cookie_flags_in_production_style_config(self, monkeypatch):
+        """Test production-style session cookie settings are hardened."""
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_SESSION_COOKIE_SECURE", "true")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_SECRET_KEY", "test-secret")
+
+        from twitter_articlenator.app import create_app
+
+        app = create_app(test_config={"TESTING": True})
+        assert app.config["SESSION_COOKIE_HTTPONLY"] is True
+        assert app.config["SESSION_COOKIE_SAMESITE"] == "Lax"
+        assert app.config["SESSION_COOKIE_SECURE"] is True
 
 
 class TestFormDataHandling:

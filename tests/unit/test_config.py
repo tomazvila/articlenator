@@ -37,8 +37,12 @@ class TestConfigProperties:
         config = Config()
         assert hasattr(config, "youtube_downloader_bin")
         assert hasattr(config, "youtube_download_timeout")
+        assert hasattr(config, "youtube_cookie_path")
+        assert hasattr(config, "youtube_cookie_encryption_key")
+        assert hasattr(config, "require_youtube_cookie_encryption")
         assert isinstance(config.youtube_downloader_bin, str)
         assert isinstance(config.youtube_download_timeout, int)
+        assert isinstance(config.youtube_cookie_max_bytes, int)
 
 
 class TestConfigDefaults:
@@ -96,10 +100,23 @@ class TestConfigEnvOverrides:
 
         monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER", "/tmp/fake-ytdlp")
         monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_TIMEOUT", "42")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_COOKIE_VERIFY_TIMEOUT", "7")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_COOKIE_VERIFY_URL", "https://youtu.be/test")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_COOKIE_MAX_BYTES", "1024")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_CONFIG_DIR", "/tmp/articlenator-config")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY", "secret-key")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_REQUIRE_COOKIE_ENCRYPTION", "true")
 
         config = Config()
         assert config.youtube_downloader_bin == "/tmp/fake-ytdlp"
         assert config.youtube_download_timeout == 42
+        assert config.youtube_cookie_verify_timeout == 7
+        assert config.youtube_cookie_verify_url == "https://youtu.be/test"
+        assert config.youtube_cookie_max_bytes == 1024
+        assert str(config.config_dir) == "/tmp/articlenator-config"
+        assert str(config.youtube_cookie_path) == "/tmp/articlenator-config/youtube-cookies.txt"
+        assert config.youtube_cookie_encryption_key == "secret-key"
+        assert config.require_youtube_cookie_encryption is True
 
 
 class TestGetConfig:

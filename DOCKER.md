@@ -35,6 +35,9 @@ docker run -d \
   --name twitter-articlenator \
   -p 5001:5001 \
   -v twitter-articlenator-data:/data \
+  -e TWITTER_ARTICLENATOR_SECRET_KEY="$(nix develop --command python -c 'import secrets; print(secrets.token_urlsafe(48))')" \
+  -e TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY="$(nix develop --command python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+  -e TWITTER_ARTICLENATOR_REQUIRE_COOKIE_ENCRYPTION=true \
   twitter-articlenator:latest
 
 # View logs
@@ -49,8 +52,15 @@ open http://localhost:5001
 ### Quick Start
 
 ```bash
+# Create required app secrets first
+FLASK_SECRET_KEY="$(nix develop --command python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+YOUTUBE_COOKIE_KEY="$(nix develop --command python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+kubectl create secret generic twitter-articlenator-secrets \
+  --from-literal=flask-secret-key="$FLASK_SECRET_KEY" \
+  --from-literal=youtube-cookie-encryption-key="$YOUTUBE_COOKIE_KEY"
+
 # Apply the manifests
-kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/twitter-app.yaml
 
 # Check status
 kubectl get pods -l app=twitter-articlenator
@@ -59,7 +69,7 @@ kubectl logs -l app=twitter-articlenator -f
 
 ### Configuration
 
-Edit `k8s/deployment.yaml` to customize:
+Edit `k8s/twitter-app.yaml` to customize:
 
 - **Ingress host**: Change `articlenator.example.com` to your domain
 - **Storage**: Adjust PVC size (default: 1Gi)
@@ -70,14 +80,23 @@ Edit `k8s/deployment.yaml` to customize:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TWITTER_ARTICLENATOR_JSON_LOGGING` | `true` | JSON logs for Kubernetes |
-| `TWITTER_ARTICLENATOR_CONFIG_DIR` | `/data/config` | Cookie storage |
 | `TWITTER_ARTICLENATOR_OUTPUT_DIR` | `/data/output` | Generated PDFs |
+| `TWITTER_ARTICLENATOR_CONFIG_DIR` | `/data/config` | Server-side cookie metadata and encrypted YouTube cookie storage |
+| `TWITTER_ARTICLENATOR_SECRET_KEY` | required in deployment | Flask session signing key for CSRF/session state |
+| `TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY` | required when encryption is enforced | Fernet key for encrypted YouTube cookie storage |
+| `TWITTER_ARTICLENATOR_REQUIRE_COOKIE_ENCRYPTION` | `false` | Set to `true` in deployment so persistent YouTube cookies cannot be saved as plaintext |
+| `TWITTER_ARTICLENATOR_SESSION_COOKIE_SECURE` | `false` | Set to `true` behind HTTPS ingress/tunnel |
 
 ### Persistent Data
 
 The `/data` volume contains:
-- `/data/config/cookies.json` - Twitter authentication cookies
+- `/data/config/youtube-cookies.txt` - encrypted YouTube cookie blob when uploaded through the UI/API
+- `/data/config/youtube-cookies.json` - metadata only; no raw cookie values
 - `/data/output/*.pdf` - Generated PDF files
+
+YouTube cookie rotation is done through the YouTube page: upload a new `cookies.txt`,
+verify it, and the previous encrypted blob is overwritten. Do not put YouTube cookies
+in Kubernetes manifests, ConfigMaps, image layers, CI logs, or Git.
 
 ## Image Details
 

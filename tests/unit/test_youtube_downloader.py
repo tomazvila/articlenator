@@ -85,3 +85,17 @@ def test_iter_youtube_download_rejects_invalid_mode(tmp_path):
                 mode="wav",  # type: ignore[arg-type]
             )
         )
+
+
+def test_iter_youtube_download_rejects_raw_and_file_cookies_together(tmp_path):
+    """Test callers cannot provide both raw cookies and a cookie file path."""
+    with pytest.raises(ValueError, match="either raw cookies or cookie_file_path"):
+        list(
+            iter_youtube_download(
+                "https://youtu.be/abc",
+                tmp_path,
+                mode="video",
+                cookies="raw",
+                cookie_file_path=tmp_path / "cookies.txt",
+            )
+        )

@@ -7,8 +7,9 @@ class CookieGuidePage:
     def __init__(self, page):
         """Initialize with Playwright page."""
         self.page = page
-        self.cookie_input = page.locator("#cookie-input")
-        self.save_button = page.locator("#save-cookies-btn")
+        self.cookie_input = page.locator("#cookie-input-traditional")
+        self.devtools_cookie_input = page.locator("#cookie-input-devtools")
+        self.save_button = page.locator("#cookie-form-traditional .save-btn")
         self.success_message = page.locator("#save-success")
         self.error_message = page.locator("#save-error")
 

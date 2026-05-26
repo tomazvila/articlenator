@@ -6,9 +6,9 @@
 <section class="panel youtube-head">
     <div>
         <h1>YouTube Downloads</h1>
-        <p>Batch YouTube video and MP3 downloads with optional session cookies.</p>
+        <p>Batch MP4 or MP3 downloads. YouTube cookies stay server-side.</p>
     </div>
-    <span id="youtube-cookie-status" class="youtube-cookie-status">No YouTube session</span>
+    <span id="youtube-cookie-status" class="youtube-cookie-status">Checking session</span>
 </section>
 
 <form id="youtube-download-form" class="panel">
@@ -41,26 +41,85 @@ https://youtu.be/tc82YJfvXZo"
         ></textarea>
     </div>
 
-    <details class="youtube-session">
-        <summary>YouTube session cookies</summary>
-        <div class="form-group">
-            <label for="youtube-cookies-input">cookies.txt:</label>
-            <textarea
-                id="youtube-cookies-input"
-                name="cookies"
-                rows="6"
-                spellcheck="false"
-                placeholder="# Netscape HTTP Cookie File
-.youtube.com	TRUE	/	TRUE	0	SID	..."
-            ></textarea>
-        </div>
-    </details>
-
     <div class="button-group">
         <button type="submit" id="youtube-download-btn">Download</button>
         <button type="button" id="youtube-clear-btn" class="secondary">Clear</button>
     </div>
 </form>
+
+<section class="panel youtube-session-panel" aria-labelledby="youtube-session-title">
+    <div class="youtube-session-header">
+        <div>
+            <h2 id="youtube-session-title">YouTube Session</h2>
+            <p id="youtube-cookie-message">No stored YouTube cookie file.</p>
+        </div>
+        <div class="youtube-session-actions">
+            <button type="button" id="youtube-verify-cookies-btn" class="secondary small-btn">
+                Verify
+            </button>
+            <button type="button" id="youtube-delete-cookies-btn" class="secondary small-btn danger">
+                Delete
+            </button>
+        </div>
+    </div>
+
+    <dl class="youtube-cookie-metadata" aria-label="Stored YouTube cookie metadata">
+        <div>
+            <dt>Rows</dt>
+            <dd id="youtube-cookie-count">0</dd>
+        </div>
+        <div>
+            <dt>YouTube</dt>
+            <dd id="youtube-domain-count">0</dd>
+        </div>
+        <div>
+            <dt>Expiring</dt>
+            <dd id="youtube-expiring-count">0</dd>
+        </div>
+        <div>
+            <dt>Uploaded</dt>
+            <dd id="youtube-uploaded-at">Never</dd>
+        </div>
+        <div>
+            <dt>Verified</dt>
+            <dd id="youtube-verified-at">Never</dd>
+        </div>
+        <div>
+            <dt>Storage</dt>
+            <dd id="youtube-storage-mode">None</dd>
+        </div>
+    </dl>
+
+    <form id="youtube-cookie-form" class="youtube-cookie-form">
+        <div class="youtube-cookie-upload-row">
+            <div class="form-group">
+                <label for="youtube-cookies-file">cookies.txt file:</label>
+                <input
+                    id="youtube-cookies-file"
+                    name="cookies_file"
+                    type="file"
+                    accept=".txt,text/plain"
+                >
+            </div>
+            <button type="submit" id="youtube-save-cookies-btn">Save Session</button>
+        </div>
+
+        <details class="youtube-session-paste">
+            <summary>Paste cookies.txt</summary>
+            <div class="form-group">
+                <label for="youtube-cookies-input">Cookie text:</label>
+                <textarea
+                    id="youtube-cookies-input"
+                    name="cookies"
+                    rows="6"
+                    spellcheck="false"
+                    placeholder="# Netscape HTTP Cookie File
+.youtube.com	TRUE	/	TRUE	0	SID	..."
+                ></textarea>
+            </div>
+        </details>
+    </form>
+</section>
 
 <div id="status" class="status-message" style="display: none;" aria-live="polite">
     <span class="spinner" aria-label="Loading"></span>
@@ -90,42 +149,99 @@ https://youtu.be/tc82YJfvXZo"
     <pre id="error-text"></pre>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 const YOUTUBE_LINKS_KEY = 'articlenator_youtube_links';
-const YOUTUBE_COOKIES_KEY = 'articlenator_youtube_cookies';
+const YOUTUBE_LEGACY_COOKIES_KEY = 'articlenator_youtube_cookies';
 const YOUTUBE_MODE_KEY = 'articlenator_youtube_mode';
 
+const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 const linksInput = document.getElementById('youtube-links-input');
 const cookiesInput = document.getElementById('youtube-cookies-input');
+const cookiesFile = document.getElementById('youtube-cookies-file');
 const cookieStatus = document.getElementById('youtube-cookie-status');
+const cookieMessage = document.getElementById('youtube-cookie-message');
+const verifyCookiesBtn = document.getElementById('youtube-verify-cookies-btn');
+const deleteCookiesBtn = document.getElementById('youtube-delete-cookies-btn');
+const saveCookiesBtn = document.getElementById('youtube-save-cookies-btn');
 const modeInputs = document.querySelectorAll('input[name="mode"]');
 
 function selectedMode() {
     return document.querySelector('input[name="mode"]:checked').value;
 }
 
-function updateCookieStatus() {
-    const hasCookies = cookiesInput.value.trim().length > 0;
-    cookieStatus.classList.toggle('configured', hasCookies);
-    cookieStatus.textContent = hasCookies ? 'YouTube session set' : 'No YouTube session';
+function apiHeaders(extra = {}) {
+    return Object.assign({'X-CSRF-Token': csrfToken}, extra);
+}
+
+function setButtonState(button, disabled, text) {
+    button.disabled = disabled;
+    if (text) button.textContent = text;
+}
+
+function formatDate(value) {
+    if (!value) return 'Never';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Unknown';
+    return date.toLocaleString();
+}
+
+function setError(message) {
+    const errorDiv = document.getElementById('error');
+    const errorText = document.getElementById('error-text');
+    errorDiv.style.display = 'block';
+    errorText.textContent = message;
+}
+
+function setCookieStatus(metadata) {
+    const configured = Boolean(metadata.configured);
+    cookieStatus.classList.toggle('configured', configured);
+    cookieStatus.classList.toggle('error', metadata.last_verification_ok === false);
+    cookieStatus.textContent = configured ? 'YouTube session stored' : 'No YouTube session';
+
+    const verificationMessage = metadata.last_verification_message || '';
+    if (!configured) {
+        cookieMessage.textContent = 'No stored YouTube cookie file.';
+    } else if (metadata.last_verification_ok === true) {
+        cookieMessage.textContent = verificationMessage || 'Stored session verified.';
+    } else if (metadata.last_verification_ok === false) {
+        cookieMessage.textContent = verificationMessage || 'Stored session needs attention.';
+    } else {
+        cookieMessage.textContent = 'Stored session ready for downloads.';
+    }
+
+    document.getElementById('youtube-cookie-count').textContent = metadata.cookie_count || 0;
+    document.getElementById('youtube-domain-count').textContent = metadata.youtube_cookie_count || 0;
+    document.getElementById('youtube-expiring-count').textContent = metadata.soon_expiring_count || 0;
+    document.getElementById('youtube-uploaded-at').textContent = formatDate(metadata.last_uploaded_at);
+    document.getElementById('youtube-verified-at').textContent = formatDate(metadata.last_verified_at);
+    document.getElementById('youtube-storage-mode').textContent = metadata.encrypted ? 'Encrypted' : (configured ? 'Plain' : 'None');
+
+    verifyCookiesBtn.disabled = !configured;
+    deleteCookiesBtn.disabled = !configured;
+}
+
+async function loadCookieStatus() {
+    try {
+        const response = await fetch('/api/youtube/cookies/status');
+        const metadata = await response.json();
+        setCookieStatus(metadata);
+    } catch (err) {
+        cookieStatus.classList.add('error');
+        cookieStatus.textContent = 'Session status unavailable';
+        cookieMessage.textContent = 'Could not read server session status.';
+    }
 }
 
 function restoreState() {
+    localStorage.removeItem(YOUTUBE_LEGACY_COOKIES_KEY);
     linksInput.value = localStorage.getItem(YOUTUBE_LINKS_KEY) || '';
-    cookiesInput.value = localStorage.getItem(YOUTUBE_COOKIES_KEY) || '';
     const savedMode = localStorage.getItem(YOUTUBE_MODE_KEY) || 'video';
     const savedModeInput = document.querySelector(`input[name="mode"][value="${savedMode}"]`);
     if (savedModeInput) savedModeInput.checked = true;
-    updateCookieStatus();
 }
 
 linksInput.addEventListener('input', () => {
     localStorage.setItem(YOUTUBE_LINKS_KEY, linksInput.value);
-});
-
-cookiesInput.addEventListener('input', () => {
-    localStorage.setItem(YOUTUBE_COOKIES_KEY, cookiesInput.value);
-    updateCookieStatus();
 });
 
 for (const input of modeInputs) {
@@ -161,21 +277,100 @@ function resetMessages() {
     document.getElementById('error').style.display = 'none';
     document.getElementById('status').style.display = 'none';
     document.getElementById('progress-details').style.display = 'none';
-    document.getElementById('progress-list').innerHTML = '';
-    document.getElementById('download-list').innerHTML = '';
+    document.getElementById('progress-list').replaceChildren();
+    document.getElementById('download-list').replaceChildren();
     document.getElementById('progress-bar').style.width = '0%';
     document.getElementById('progress-bar').setAttribute('aria-valuenow', '0');
 }
 
 document.getElementById('youtube-clear-btn').addEventListener('click', () => {
     linksInput.value = '';
-    cookiesInput.value = '';
     document.getElementById('mode-video').checked = true;
     localStorage.removeItem(YOUTUBE_LINKS_KEY);
-    localStorage.removeItem(YOUTUBE_COOKIES_KEY);
+    localStorage.removeItem(YOUTUBE_LEGACY_COOKIES_KEY);
     localStorage.setItem(YOUTUBE_MODE_KEY, 'video');
-    updateCookieStatus();
     resetMessages();
+});
+
+document.getElementById('youtube-cookie-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    resetMessages();
+
+    const formData = new FormData();
+    const pastedCookies = cookiesInput.value.trim();
+    if (cookiesFile.files.length > 0) {
+        formData.append('cookies_file', cookiesFile.files[0]);
+    } else if (pastedCookies) {
+        formData.append('cookies', pastedCookies);
+    } else {
+        setError('Choose a cookies.txt file or paste cookie text');
+        return;
+    }
+
+    setButtonState(saveCookiesBtn, true, 'Saving...');
+    try {
+        const response = await fetch('/api/youtube/cookies', {
+            method: 'POST',
+            headers: apiHeaders(),
+            body: formData
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            setError(data.error || 'Could not save YouTube session');
+            return;
+        }
+        cookiesInput.value = '';
+        cookiesFile.value = '';
+        localStorage.removeItem(YOUTUBE_LEGACY_COOKIES_KEY);
+        setCookieStatus(data);
+    } catch (err) {
+        setError('Could not save YouTube session: ' + err.message);
+    } finally {
+        setButtonState(saveCookiesBtn, false, 'Save Session');
+    }
+});
+
+verifyCookiesBtn.addEventListener('click', async () => {
+    resetMessages();
+    setButtonState(verifyCookiesBtn, true, 'Verifying...');
+    try {
+        const response = await fetch('/api/youtube/cookies/verify', {
+            method: 'POST',
+            headers: apiHeaders()
+        });
+        const data = await response.json();
+        setCookieStatus(data);
+        if (!response.ok) {
+            setError(data.error || data.last_verification_message || 'Could not verify YouTube session');
+        }
+    } catch (err) {
+        setError('Could not verify YouTube session: ' + err.message);
+    } finally {
+        setButtonState(verifyCookiesBtn, false, 'Verify');
+    }
+});
+
+deleteCookiesBtn.addEventListener('click', async () => {
+    resetMessages();
+    setButtonState(deleteCookiesBtn, true, 'Deleting...');
+    try {
+        const response = await fetch('/api/youtube/cookies', {
+            method: 'DELETE',
+            headers: apiHeaders()
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            setError(data.error || 'Could not delete YouTube session');
+            return;
+        }
+        cookiesInput.value = '';
+        cookiesFile.value = '';
+        setCookieStatus(data);
+    } catch (err) {
+        setError('Could not delete YouTube session: ' + err.message);
+    } finally {
+        setButtonState(deleteCookiesBtn, false, 'Delete');
+    }
 });
 
 function setProgressItem(data, className, text, detail) {
@@ -217,7 +412,6 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
 
     const links = linksInput.value.trim().split('\n').map(l => l.trim()).filter(Boolean);
     const mode = selectedMode();
-    const cookies = cookiesInput.value.trim();
 
     if (links.length === 0) {
         errorDiv.style.display = 'block';
@@ -230,13 +424,10 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
     statusText.textContent = 'Starting...';
 
     try {
-        const payload = {links: links, mode: mode};
-        if (cookies) payload.cookies = cookies;
-
         const response = await fetch('/api/youtube/download', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
+            headers: apiHeaders({'Content-Type': 'application/json'}),
+            body: JSON.stringify({links: links, mode: mode})
         });
 
         const contentType = response.headers.get('content-type');
@@ -346,5 +537,6 @@ function formatFileSize(bytes) {
 }
 
 restoreState();
+loadCookieStatus();
 </script>
 {% endblock %}

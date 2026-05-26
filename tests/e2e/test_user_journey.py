@@ -149,8 +149,8 @@ class TestConversionFlow:
 
         index = IndexPage(page)
 
-        # Enter an invalid URL (non-existent page)
-        index.enter_links(["https://example.com/not-twitter"])
+        # Enter an unsupported URL shape
+        index.enter_links(["not-a-url"])
         index.click_convert()
 
         # Should show error about failed conversion

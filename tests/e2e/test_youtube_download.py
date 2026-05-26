@@ -98,16 +98,25 @@ class TestYouTubePage:
         expect(youtube.error_text).to_contain_text("at least one YouTube link")
         assert requests == []
 
-    def test_youtube_cookies_persist_without_status_leak(self, page: Page, base_url):
-        """Test YouTube cookies persist and status does not expose secrets."""
+    def test_youtube_cookie_upload_status_delete_and_no_local_storage(self, page: Page, base_url):
+        """Test YouTube cookies are stored server-side and never in localStorage."""
         youtube = YouTubePage(page)
         youtube.navigate(base_url)
-        youtube.enter_cookies(SAMPLE_COOKIES)
-        expect(youtube.cookie_status).to_contain_text("YouTube session set")
+        youtube.save_pasted_cookies(SAMPLE_COOKIES)
+        expect(youtube.cookie_status).to_contain_text("YouTube session stored", timeout=10000)
+        expect(youtube.cookie_count).to_have_text("1")
+        expect(youtube.cookies_textarea).to_be_empty()
+
+        stored = page.evaluate("localStorage.getItem('articlenator_youtube_cookies')")
+        assert stored is None
 
         page.reload()
-        expect(youtube.cookie_status).to_contain_text("YouTube session set")
+        expect(youtube.cookie_status).to_contain_text("YouTube session stored", timeout=10000)
         expect(youtube.cookie_status).not_to_contain_text("secret-session-value")
+        expect(youtube.cookie_message).not_to_contain_text("secret-session-value")
+
+        youtube.delete_cookies()
+        expect(youtube.cookie_status).to_contain_text("No YouTube session", timeout=10000)
 
 
 class TestYouTubeFakeDownloadWorkflow:
@@ -169,9 +178,18 @@ class TestYouTubeFakeDownloadWorkflow:
     def test_cookie_file_is_passed_to_fake_downloader(self, page: Page, base_url, flask_server):
         """Test YouTube cookies are passed as a temporary Netscape cookie file."""
         clear_fake_log(flask_server)
+        download_payloads = []
+        page.on(
+            "request",
+            lambda request: download_payloads.append(request.post_data or "")
+            if "/api/youtube/download" in request.url
+            else None,
+        )
+
         youtube = YouTubePage(page)
         youtube.navigate(base_url)
-        youtube.enter_cookies(SAMPLE_COOKIES)
+        youtube.save_pasted_cookies(SAMPLE_COOKIES)
+        expect(youtube.cookie_status).to_contain_text("YouTube session stored", timeout=10000)
         youtube.enter_links(["https://www.youtube.com/watch?v=fv7TlVMETP0"])
         youtube.click_download()
 
@@ -187,6 +205,25 @@ class TestYouTubeFakeDownloadWorkflow:
         assert args.index("--cookies") < args.index("https://www.youtube.com/watch?v=fv7TlVMETP0")
         assert cookie_info["exists"] is True
         assert cookie_info["sha256"] == hashlib.sha256(SAMPLE_COOKIES.encode()).hexdigest()
+        assert download_payloads
+        assert "secret-session-value" not in download_payloads[-1]
+        assert "cookies" not in json.loads(download_payloads[-1])
+
+    def test_stored_cookie_verification_uses_fake_downloader(self, page: Page, base_url, flask_server):
+        """Test stored YouTube cookies can be verified without leaking values."""
+        clear_fake_log(flask_server)
+        youtube = YouTubePage(page)
+        youtube.navigate(base_url)
+        youtube.save_pasted_cookies(SAMPLE_COOKIES)
+        expect(youtube.cookie_status).to_contain_text("YouTube session stored", timeout=10000)
+
+        youtube.verify_cookies()
+        expect(youtube.cookie_message).to_contain_text("downloadable media formats", timeout=10000)
+        expect(youtube.cookie_message).not_to_contain_text("secret-session-value")
+
+        calls = read_fake_calls(flask_server)
+        assert calls[-1]["mode"] == "verify"
+        assert calls[-1]["cookies"]["exists"] is True
 
     def test_batch_failure_does_not_stop_later_links(self, page: Page, base_url, flask_server):
         """Test one failed YouTube URL does not stop the batch."""
@@ -263,7 +300,8 @@ class TestYouTubeRealDownloadWorkflow:
         cookies = open(AUTH_COOKIES_FILE, encoding="utf-8").read()
         youtube = YouTubePage(page)
         youtube.navigate(base_url)
-        youtube.enter_cookies(cookies)
+        youtube.save_pasted_cookies(cookies)
+        expect(youtube.cookie_status).to_contain_text("YouTube session stored", timeout=10000)
         youtube.enter_links([AUTH_REAL_URL])
         youtube.click_download()
 

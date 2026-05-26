@@ -6,14 +6,21 @@ import re
 import shutil
 import time
 import uuid
+from contextlib import nullcontext
 
 import structlog
 from flask import Blueprint, Response, jsonify, request, current_app
 from ..config import get_config, parse_cookie_input, validate_cookies
 from ..pdf.generator import generate_combined_pdf
+from ..security import is_valid_csrf_request
 from ..sources import get_source_for_url
 from ..sources.base import Article
 from ..sources.twitter_playwright import TwitterPlaywrightSource
+from ..sources.youtube_cookies import (
+    YouTubeCookieEncryptionError,
+    YouTubeCookieError,
+    YouTubeCookieStore,
+)
 
 # Delay between processing URLs to avoid rate limiting (seconds)
 URL_PROCESSING_DELAY = 2.0
@@ -37,6 +44,41 @@ YOUTUBE_DOWNLOAD_MODES = {"video": "videos", "mp3": "audio"}
 log = structlog.get_logger()
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
+
+
+def _csrf_error_response():
+    return jsonify({"error": "CSRF token missing or invalid"}), 403
+
+
+def _get_youtube_cookie_store() -> YouTubeCookieStore:
+    config = get_config()
+    return YouTubeCookieStore(
+        cookie_path=config.youtube_cookie_path,
+        encryption_key=config.youtube_cookie_encryption_key,
+        require_encryption=config.require_youtube_cookie_encryption,
+        max_bytes=config.youtube_cookie_max_bytes,
+    )
+
+
+def _youtube_cookie_upload_text() -> str:
+    config = get_config()
+    upload = request.files.get("cookies_file")
+    if upload and upload.filename:
+        raw = upload.read(config.youtube_cookie_max_bytes + 1)
+        if len(raw) > config.youtube_cookie_max_bytes:
+            raise YouTubeCookieError(
+                f"Cookie file is too large; maximum is {config.youtube_cookie_max_bytes} bytes"
+            )
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise YouTubeCookieError("Cookie file must be UTF-8 text") from exc
+
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+        return str(data.get("cookies", ""))
+
+    return request.form.get("cookies", "")
 
 
 def _get_run_async():
@@ -1191,22 +1233,82 @@ def videos_download():
     return response
 
 
+@api_bp.route("/youtube/cookies/status", methods=["GET"])
+def youtube_cookies_status():
+    """GET /api/youtube/cookies/status - Metadata-only YouTube cookie status."""
+    return jsonify(_get_youtube_cookie_store().status())
+
+
+@api_bp.route("/youtube/cookies", methods=["POST"])
+def youtube_cookies_upload():
+    """POST /api/youtube/cookies - Upload server-side YouTube cookies."""
+    if not is_valid_csrf_request():
+        return _csrf_error_response()
+
+    try:
+        metadata = _get_youtube_cookie_store().save(_youtube_cookie_upload_text())
+    except YouTubeCookieError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except YouTubeCookieEncryptionError as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    return jsonify(metadata)
+
+
+@api_bp.route("/youtube/cookies", methods=["DELETE"])
+def youtube_cookies_delete():
+    """DELETE /api/youtube/cookies - Delete server-side YouTube cookies."""
+    if not is_valid_csrf_request():
+        return _csrf_error_response()
+
+    _get_youtube_cookie_store().delete()
+    return jsonify(_get_youtube_cookie_store().status())
+
+
+@api_bp.route("/youtube/cookies/verify", methods=["POST"])
+def youtube_cookies_verify():
+    """POST /api/youtube/cookies/verify - Verify stored YouTube cookies with yt-dlp."""
+    if not is_valid_csrf_request():
+        return _csrf_error_response()
+
+    config = get_config()
+    try:
+        metadata = _get_youtube_cookie_store().verify(
+            url=config.youtube_cookie_verify_url,
+            downloader_bin=config.youtube_downloader_bin,
+            timeout_seconds=config.youtube_cookie_verify_timeout,
+        )
+    except FileNotFoundError:
+        return jsonify({"error": "No YouTube cookie file is configured"}), 404
+    except YouTubeCookieEncryptionError as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    status_code = 200 if metadata.get("last_verification_ok") else 400
+    return jsonify(metadata), status_code
+
+
 @api_bp.route("/youtube/download", methods=["POST"])
 def youtube_download():
     """POST /api/youtube/download - Download YouTube video or MP3 files."""
+    if not is_valid_csrf_request():
+        return _csrf_error_response()
+
+    raw_cookies_supplied = False
     if request.is_json:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True) or {}
         links = data.get("links", [])
         mode = data.get("mode", "video")
-        cookies = data.get("cookies", "")
+        raw_cookies_supplied = bool(str(data.get("cookies", "")).strip())
     else:
         links_text = request.form.get("links", "")
         links = [line.strip() for line in links_text.split("\n") if line.strip()]
         mode = request.form.get("mode", "video")
-        cookies = request.form.get("cookies", "")
+        raw_cookies_supplied = bool(request.form.get("cookies", "").strip())
 
     links = [link.strip() for link in links if link and link.strip()]
-    cookies = cookies.strip() if cookies else None
+
+    if raw_cookies_supplied:
+        return jsonify({"error": "Upload YouTube cookies to the server before downloading"}), 400
 
     if not links:
         return jsonify({"error": "No links provided"}), 400
@@ -1230,6 +1332,7 @@ def youtube_download():
         )
 
     config = get_config()
+    cookie_store = _get_youtube_cookie_store()
     output_dir = config.output_dir / "youtube" / YOUTUBE_DOWNLOAD_MODES[mode]
 
     def generate():
@@ -1241,46 +1344,52 @@ def youtube_download():
         try:
             yield f"data: {json_module.dumps({'type': 'start', 'total': total, 'mode': mode})}\n\n"
 
-            for i, url in enumerate(links, 1):
-                yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing', 'mode': mode})}\n\n"
+            cookie_context = (
+                cookie_store.temporary_cookie_file()
+                if cookie_store.is_configured()
+                else nullcontext(None)
+            )
+            with cookie_context as cookie_file_path:
+                for i, url in enumerate(links, 1):
+                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing', 'mode': mode})}\n\n"
 
-                try:
-                    output_path = None
-                    for update in iter_youtube_download(
-                        url,
-                        output_dir,
-                        mode=mode,
-                        cookies=cookies,
-                        downloader_bin=config.youtube_downloader_bin,
-                        timeout_seconds=config.youtube_download_timeout,
-                        keepalive_seconds=1.0,
-                    ):
-                        if update.kind == "keepalive":
-                            yield f"data: {json_module.dumps({'type': 'keepalive', 'current': i, 'total': total, 'url': url, 'mode': mode})}\n\n"
-                        elif update.kind == "complete":
-                            output_path = update.path
+                    try:
+                        output_path = None
+                        for update in iter_youtube_download(
+                            url,
+                            output_dir,
+                            mode=mode,
+                            cookie_file_path=cookie_file_path,
+                            downloader_bin=config.youtube_downloader_bin,
+                            timeout_seconds=config.youtube_download_timeout,
+                            keepalive_seconds=1.0,
+                        ):
+                            if update.kind == "keepalive":
+                                yield f"data: {json_module.dumps({'type': 'keepalive', 'current': i, 'total': total, 'url': url, 'mode': mode})}\n\n"
+                            elif update.kind == "complete":
+                                output_path = update.path
 
-                    if output_path is None:
-                        raise RuntimeError("yt-dlp completed without an output file")
+                        if output_path is None:
+                            raise RuntimeError("yt-dlp completed without an output file")
 
-                    filename = output_path.name
-                    size_bytes = output_path.stat().st_size
-                    downloads.append(
-                        {
-                            "url": url,
-                            "filename": filename,
-                            "size_bytes": size_bytes,
-                            "mode": mode,
-                        }
-                    )
+                        filename = output_path.name
+                        size_bytes = output_path.stat().st_size
+                        downloads.append(
+                            {
+                                "url": url,
+                                "filename": filename,
+                                "size_bytes": size_bytes,
+                                "mode": mode,
+                            }
+                        )
 
-                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'filename': filename, 'mode': mode})}\n\n"
+                        yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'filename': filename, 'mode': mode})}\n\n"
 
-                except Exception as e:
-                    error = str(e)
-                    log.warning("youtube_download_failed", url=url, mode=mode, error=error)
-                    errors.append({"url": url, "error": error})
-                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': error, 'mode': mode})}\n\n"
+                    except Exception as e:
+                        error = str(e)
+                        log.warning("youtube_download_failed", url=url, mode=mode, error=error)
+                        errors.append({"url": url, "error": error})
+                        yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': error, 'mode': mode})}\n\n"
 
         except GeneratorExit:
             log.warning(

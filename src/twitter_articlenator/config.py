@@ -35,6 +35,38 @@ class Config:
         self._youtube_download_timeout = int(
             os.environ.get("TWITTER_ARTICLENATOR_YOUTUBE_TIMEOUT", "14400")
         )
+        self._youtube_cookie_verify_timeout = int(
+            os.environ.get("TWITTER_ARTICLENATOR_YOUTUBE_COOKIE_VERIFY_TIMEOUT", "60")
+        )
+        self._youtube_cookie_verify_url = os.environ.get(
+            "TWITTER_ARTICLENATOR_YOUTUBE_COOKIE_VERIFY_URL",
+            "https://www.youtube.com/watch?v=fv7TlVMETP0",
+        )
+        self._youtube_cookie_max_bytes = int(
+            os.environ.get("TWITTER_ARTICLENATOR_YOUTUBE_COOKIE_MAX_BYTES", "262144")
+        )
+        self._youtube_cookie_encryption_key = os.environ.get(
+            "TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY"
+        )
+        require_cookie_encryption_env = os.environ.get(
+            "TWITTER_ARTICLENATOR_REQUIRE_COOKIE_ENCRYPTION", "false"
+        )
+        self._require_youtube_cookie_encryption = require_cookie_encryption_env.lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+
+        config_dir_default = self._output_dir.parent / "config"
+        self._config_dir = Path(
+            os.environ.get("TWITTER_ARTICLENATOR_CONFIG_DIR", config_dir_default)
+        )
+        self._youtube_cookie_path = Path(
+            os.environ.get(
+                "TWITTER_ARTICLENATOR_YOUTUBE_COOKIE_PATH",
+                self._config_dir / "youtube-cookies.txt",
+            )
+        )
 
     @property
     def output_dir(self) -> Path:
@@ -60,6 +92,41 @@ class Config:
     def youtube_download_timeout(self) -> int:
         """Maximum seconds allowed for one YouTube download."""
         return self._youtube_download_timeout
+
+    @property
+    def youtube_cookie_verify_timeout(self) -> int:
+        """Maximum seconds allowed for one YouTube cookie verification."""
+        return self._youtube_cookie_verify_timeout
+
+    @property
+    def youtube_cookie_verify_url(self) -> str:
+        """YouTube URL used to verify stored cookies."""
+        return self._youtube_cookie_verify_url
+
+    @property
+    def youtube_cookie_max_bytes(self) -> int:
+        """Maximum accepted YouTube cookies.txt upload size."""
+        return self._youtube_cookie_max_bytes
+
+    @property
+    def youtube_cookie_encryption_key(self) -> str | None:
+        """Fernet key for encrypting persistent YouTube cookies."""
+        return self._youtube_cookie_encryption_key
+
+    @property
+    def require_youtube_cookie_encryption(self) -> bool:
+        """Whether YouTube cookie storage must be encrypted."""
+        return self._require_youtube_cookie_encryption
+
+    @property
+    def config_dir(self) -> Path:
+        """Directory for persistent app configuration."""
+        return self._config_dir
+
+    @property
+    def youtube_cookie_path(self) -> Path:
+        """Server-side YouTube cookie storage path."""
+        return self._youtube_cookie_path
 
 
 def get_config() -> Config:

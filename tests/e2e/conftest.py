@@ -46,12 +46,6 @@ args = sys.argv[1:]
 url = args[-1] if args else ""
 mode = "mp3" if "--audio-format" in args and "mp3" in args else "video"
 
-try:
-    output_template = args[args.index("-o") + 1]
-except (ValueError, IndexError):
-    print("missing output template", file=sys.stderr)
-    sys.exit(2)
-
 cookie_info = None
 if "--cookies" in args:
     try:
@@ -64,6 +58,27 @@ if "--cookies" in args:
         }
     except Exception as exc:
         cookie_info = {"error": str(exc)}
+
+if "-F" in args:
+    record = {
+        "args": args,
+        "url": url,
+        "mode": "verify",
+        "cookies": cookie_info,
+    }
+    log_file = os.environ.get("TWITTER_ARTICLENATOR_YOUTUBE_FAKE_LOG")
+    if log_file:
+        with open(log_file, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record) + "\\n")
+    print("ID EXT RESOLUTION")
+    print("18 mp4 640x360")
+    sys.exit(0)
+
+try:
+    output_template = args[args.index("-o") + 1]
+except (ValueError, IndexError):
+    print("missing output template", file=sys.stderr)
+    sys.exit(2)
 
 record = {
     "args": args,
@@ -115,6 +130,10 @@ def flask_server(tmp_path_factory):
     env["FLASK_APP"] = "twitter_articlenator.app:create_app"
     env["FLASK_RUN_PORT"] = str(port)
     env["TWITTER_ARTICLENATOR_YOUTUBE_TIMEOUT"] = "30"
+    env["TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY"] = (
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+    )
+    env["TWITTER_ARTICLENATOR_REQUIRE_COOKIE_ENCRYPTION"] = "true"
     if os.environ.get("RUN_REAL_YOUTUBE_E2E") != "1":
         env["TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER"] = str(fake_ytdlp)
         env["TWITTER_ARTICLENATOR_YOUTUBE_FAKE_LOG"] = str(fake_ytdlp_log)

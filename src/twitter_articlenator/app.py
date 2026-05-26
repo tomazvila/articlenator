@@ -2,16 +2,18 @@
 
 import asyncio
 import os
+import secrets
 import threading
 from collections.abc import Coroutine
 from typing import Any
 
 import structlog
-from flask import Flask
+from flask import Flask, g
 
 from .config import get_config
 from .logging import configure_logging
 from .routes import api_bp, pages_bp
+from .security import get_csrf_token
 from .version import get_git_commit, get_version_string
 
 log = structlog.get_logger()
@@ -110,13 +112,21 @@ def create_app(test_config: dict | None = None) -> Flask:
         static_folder="static",
     )
 
-    if test_config is None:
-        # Load production config
-        app.config.from_mapping(
-            SECRET_KEY=os.environ.get("SECRET_KEY", "dev-secret-key"),
-        )
-    else:
-        # Load test config
+    app.config.from_mapping(
+        SECRET_KEY=os.environ.get(
+            "TWITTER_ARTICLENATOR_SECRET_KEY",
+            os.environ.get("SECRET_KEY", "dev-secret-key"),
+        ),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE=os.environ.get(
+            "TWITTER_ARTICLENATOR_SESSION_COOKIE_SAMESITE", "Lax"
+        ),
+        SESSION_COOKIE_SECURE=os.environ.get(
+            "TWITTER_ARTICLENATOR_SESSION_COOKIE_SECURE", "false"
+        ).lower()
+        in ("true", "1", "yes"),
+    )
+    if test_config is not None:
         app.config.update(test_config)
 
     log.info("app_created", testing=app.config.get("TESTING", False))
@@ -128,17 +138,37 @@ def create_app(test_config: dict | None = None) -> Flask:
         return {
             "app_version": get_version_string(),
             "git_commit": get_git_commit(),
+            "csrf_token": get_csrf_token,
+            "csp_nonce": getattr(g, "csp_nonce", ""),
         }
+
+    @app.before_request
+    def create_csp_nonce():
+        """Create a per-request nonce for inline scripts."""
+        g.csp_nonce = secrets.token_urlsafe(16)
 
     # Register security headers
     @app.after_request
     def add_security_headers(response):
         """Add security headers to all responses."""
+        nonce = getattr(g, "csp_nonce", "")
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            f"script-src 'self' 'nonce-{nonce}'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "font-src 'self'; "
+            "connect-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'; "
+            "frame-ancestors 'none'"
+        )
         return response
 
     # Serve favicon.ico from root for Safari compatibility

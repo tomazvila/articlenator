@@ -35,6 +35,7 @@
             orjson
             python-slugify
             httpx
+            cryptography
           ];
 
           python = pkgs.python3.withPackages pythonDeps;
@@ -216,6 +217,7 @@
             orjson
             python-slugify
             httpx
+            cryptography
             # Dev/test deps
             pytest
             pytest-cov

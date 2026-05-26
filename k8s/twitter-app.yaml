@@ -43,6 +43,22 @@ spec:
               value: "true"
             - name: TWITTER_ARTICLENATOR_OUTPUT_DIR
               value: "/data/output"
+            - name: TWITTER_ARTICLENATOR_CONFIG_DIR
+              value: "/data/config"
+            - name: TWITTER_ARTICLENATOR_REQUIRE_COOKIE_ENCRYPTION
+              value: "true"
+            - name: TWITTER_ARTICLENATOR_SESSION_COOKIE_SECURE
+              value: "true"
+            - name: TWITTER_ARTICLENATOR_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: twitter-articlenator-secrets
+                  key: flask-secret-key
+            - name: TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: twitter-articlenator-secrets
+                  key: youtube-cookie-encryption-key
           livenessProbe:
             httpGet:
               path: /api/health

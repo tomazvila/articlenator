@@ -65,6 +65,7 @@ def iter_youtube_download(
     *,
     mode: YouTubeDownloadMode,
     cookies: str | None = None,
+    cookie_file_path: Path | None = None,
     downloader_bin: str = "yt-dlp",
     timeout_seconds: int = 14400,
     keepalive_seconds: float = 10.0,
@@ -75,6 +76,9 @@ def iter_youtube_download(
 
     if not is_supported_youtube_url(url):
         raise ValueError(f"Invalid YouTube URL: {url}")
+
+    if cookies and cookie_file_path:
+        raise ValueError("Use either raw cookies or cookie_file_path, not both")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"youtube_{mode}_{hashlib.sha256(url.encode()).hexdigest()[:12]}"
@@ -88,7 +92,9 @@ def iter_youtube_download(
     )
 
     cookie_file = None
-    if cookies:
+    if cookie_file_path:
+        cmd[-1:-1] = ["--cookies", str(cookie_file_path)]
+    elif cookies:
         cookie_file = _write_youtube_cookie_file(cookies)
         cmd[-1:-1] = ["--cookies", cookie_file.name]
 
