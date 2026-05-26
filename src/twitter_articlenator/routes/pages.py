@@ -86,6 +86,36 @@ def download_video(filename: str):
     return send_from_directory(video_dir, safe_filename, mimetype="video/mp4", as_attachment=True)
 
 
+@pages_bp.route("/download/youtube/<mode>/archive/<filename>")
+def download_youtube_archive_file(mode: str, filename: str):
+    """GET /download/youtube/<mode>/archive/<filename> - Download a batch ZIP."""
+    allowed = {
+        "video": "youtube_video_batch_",
+        "audio": "youtube_mp3_batch_",
+    }
+    if mode not in allowed:
+        return jsonify({"error": "Invalid YouTube download type"}), 400
+
+    safe_filename = secure_filename(filename)
+    if not safe_filename or safe_filename != filename:
+        return jsonify({"error": "Invalid filename"}), 400
+    if not safe_filename.endswith(".zip") or not safe_filename.startswith(allowed[mode]):
+        return jsonify({"error": "Invalid archive filename"}), 400
+
+    config = get_config()
+    archive_dir = config.output_dir / "youtube" / "archives"
+    archive_path = archive_dir / safe_filename
+    if not archive_path.is_file():
+        return jsonify({"error": "File not found"}), 404
+
+    return send_from_directory(
+        archive_dir,
+        safe_filename,
+        mimetype="application/zip",
+        as_attachment=True,
+    )
+
+
 @pages_bp.route("/download/youtube/<mode>/<filename>")
 def download_youtube(mode: str, filename: str):
     """GET /download/youtube/<mode>/<filename> - Download a YouTube file."""

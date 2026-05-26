@@ -423,6 +423,32 @@ button.secondary:hover {
     font-size: 13px;
 }
 
+.download-actions {
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0 12px;
+}
+
+.results-section .download-all-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 42px;
+    padding: 10px 14px;
+    border: 1px solid var(--green);
+    border-radius: var(--radius);
+    background: var(--green);
+    color: var(--bg-dark);
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.results-section .download-all-link:hover {
+    background: var(--cyan);
+    border-color: var(--cyan);
+    color: var(--bg-dark);
+    text-decoration: none;
+}
+
 /* Disabled button */
 button:disabled {
     background-color: var(--bg-light);

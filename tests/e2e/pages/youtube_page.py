@@ -21,6 +21,8 @@ class YouTubePage:
         self.download_button = page.locator("#youtube-download-btn")
         self.clear_button = page.locator("#youtube-clear-btn")
         self.results_section = page.locator("#results")
+        self.download_actions = page.locator("#youtube-download-actions")
+        self.download_all_link = page.locator("#youtube-download-all")
         self.download_list = page.locator("#download-list")
         self.error_div = page.locator("#error")
         self.error_text = page.locator("#error-text")
@@ -81,3 +83,7 @@ class YouTubePage:
     def get_download_texts(self) -> list[str]:
         """Get all download link texts."""
         return self.download_list.locator("a").all_text_contents()
+
+    def get_download_all_href(self) -> str | None:
+        """Get the batch archive link href."""
+        return self.download_all_link.get_attribute("href")

@@ -136,6 +136,9 @@ https://youtu.be/tc82YJfvXZo"
 
 <div id="results" class="results-section" style="display: none;" aria-live="polite">
     <h2>Downloads</h2>
+    <div id="youtube-download-actions" class="download-actions" style="display: none;">
+        <a id="youtube-download-all" class="download-all-link" href="#" download>Download all as ZIP</a>
+    </div>
     <ul id="download-list"></ul>
 </div>
 
@@ -279,6 +282,8 @@ function resetMessages() {
     document.getElementById('progress-details').style.display = 'none';
     document.getElementById('progress-list').replaceChildren();
     document.getElementById('download-list').replaceChildren();
+    document.getElementById('youtube-download-actions').style.display = 'none';
+    document.getElementById('youtube-download-all').href = '#';
     document.getElementById('progress-bar').style.width = '0%';
     document.getElementById('progress-bar').setAttribute('aria-valuenow', '0');
 }
@@ -483,6 +488,14 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
 
                     if (data.downloads && data.downloads.length > 0) {
                         resultsDiv.style.display = 'block';
+                        const downloadActions = document.getElementById('youtube-download-actions');
+                        const downloadAll = document.getElementById('youtube-download-all');
+                        if (data.archive && data.archive.href) {
+                            downloadAll.href = data.archive.href;
+                            downloadAll.textContent = `Download all ${data.downloads.length} files as ZIP`;
+                            downloadActions.style.display = 'flex';
+                        }
+
                         for (const item of data.downloads) {
                             const li = document.createElement('li');
                             const a = document.createElement('a');

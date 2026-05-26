@@ -1,8 +1,10 @@
 """E2E tests for the YouTube download feature."""
 
 import hashlib
+import io
 import json
 import os
+import zipfile
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -246,6 +248,75 @@ class TestYouTubeFakeDownloadWorkflow:
         assert len(links) == 2
         expect(youtube.download_list).to_contain_text("2 downloaded, 1 failed of 3 total")
         expect(youtube.warning_text).to_contain_text("fail-this-one")
+
+    def test_batch_video_downloads_can_be_downloaded_as_one_zip(
+        self, page: Page, base_url, flask_server
+    ):
+        """Test successful batch video outputs expose one ZIP download."""
+        clear_fake_log(flask_server)
+        youtube = YouTubePage(page)
+        youtube.navigate(base_url)
+        youtube.enter_links(
+            [
+                "https://youtu.be/archive-video-one",
+                "https://youtu.be/archive-video-two",
+            ]
+        )
+        youtube.click_download()
+
+        expect(youtube.results_section).to_be_visible(timeout=30000)
+        expect(youtube.download_actions).to_be_visible(timeout=5000)
+        expect(youtube.download_all_link).to_have_text("Download all 2 files as ZIP")
+
+        archive_href = youtube.get_download_all_href()
+        assert archive_href is not None
+        assert archive_href.startswith("/download/youtube/video/archive/")
+        assert archive_href.endswith(".zip")
+
+        response = page.request.get(f"{base_url}{archive_href}")
+        assert response.status == 200
+        assert response.headers["content-type"].startswith("application/zip")
+
+        with zipfile.ZipFile(io.BytesIO(response.body())) as archive:
+            names = sorted(archive.namelist())
+            assert len(names) == 2
+            assert all(name.endswith(".mp4") for name in names)
+            assert all(len(archive.read(name)) > 100 for name in names)
+
+    def test_batch_mp3_downloads_can_be_downloaded_as_one_zip(
+        self, page: Page, base_url, flask_server
+    ):
+        """Test successful batch MP3 outputs expose one ZIP download."""
+        clear_fake_log(flask_server)
+        youtube = YouTubePage(page)
+        youtube.navigate(base_url)
+        youtube.select_mp3()
+        youtube.enter_links(
+            [
+                "https://youtu.be/archive-audio-one",
+                "https://youtu.be/archive-audio-two",
+            ]
+        )
+        youtube.click_download()
+
+        expect(youtube.results_section).to_be_visible(timeout=30000)
+        expect(youtube.download_actions).to_be_visible(timeout=5000)
+        expect(youtube.download_all_link).to_have_text("Download all 2 files as ZIP")
+
+        archive_href = youtube.get_download_all_href()
+        assert archive_href is not None
+        assert archive_href.startswith("/download/youtube/audio/archive/")
+        assert archive_href.endswith(".zip")
+
+        response = page.request.get(f"{base_url}{archive_href}")
+        assert response.status == 200
+        assert response.headers["content-type"].startswith("application/zip")
+
+        with zipfile.ZipFile(io.BytesIO(response.body())) as archive:
+            names = sorted(archive.namelist())
+            assert len(names) == 2
+            assert all(name.endswith(".mp3") for name in names)
+            assert all(len(archive.read(name)) > 100 for name in names)
 
     def test_slow_fake_download_completes_without_frozen_ui(self, page: Page, base_url):
         """Test a slow fake podcast-style download keeps the UI processing and completes."""

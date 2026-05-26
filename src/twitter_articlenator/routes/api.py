@@ -6,6 +6,7 @@ import re
 import shutil
 import time
 import uuid
+import zipfile
 from contextlib import nullcontext
 
 import structlog
@@ -58,6 +59,33 @@ def _get_youtube_cookie_store() -> YouTubeCookieStore:
         require_encryption=config.require_youtube_cookie_encryption,
         max_bytes=config.youtube_cookie_max_bytes,
     )
+
+
+def _create_youtube_archive(output_dir, downloads: list[dict], mode: str) -> dict | None:
+    """Create a ZIP archive for a completed YouTube batch."""
+    if len(downloads) < 2:
+        return None
+
+    archive_dir = output_dir.parent / "archives"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    archive_hash = hashlib.sha256(
+        "\n".join(item["filename"] for item in downloads).encode("utf-8")
+    ).hexdigest()[:12]
+    archive_filename = f"youtube_{mode}_batch_{archive_hash}.zip"
+    archive_path = archive_dir / archive_filename
+
+    with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_STORED) as archive:
+        for item in downloads:
+            filename = item["filename"]
+            archive.write(output_dir / filename, arcname=filename)
+
+    archive_mode = "audio" if mode == "mp3" else "video"
+    return {
+        "filename": archive_filename,
+        "href": f"/download/youtube/{archive_mode}/archive/{archive_filename}",
+        "size_bytes": archive_path.stat().st_size,
+    }
 
 
 def _youtube_cookie_upload_text() -> str:
@@ -1405,9 +1433,11 @@ def youtube_download():
             except GeneratorExit:
                 return
 
+        archive = _create_youtube_archive(output_dir, downloads, mode)
         final_result = {
             "type": "complete",
             "downloads": downloads,
+            "archive": archive,
             "errors": errors if errors else None,
             "summary": {
                 "total": total,
