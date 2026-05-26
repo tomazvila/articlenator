@@ -144,7 +144,7 @@
                 export PATH="${toolPath}:''${PATH:-}"
                 export HOME="/tmp"
                 export TWITTER_ARTICLENATOR_OUTPUT_DIR="/data/output"
-                export TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER="''${TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER:-${ytDlp}/bin/yt-dlp}"
+                export TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER="''${TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER:-yt-dlp}"
 
                 exec ${app}/bin/twitter-articlenator "$@"
               '';
