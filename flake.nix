@@ -47,8 +47,10 @@
               hash = "sha256-O9oJaKAc3nDSZyBlMAOyhVPHG+FNyy5fTCTpkh/a10U=";
             };
             dontUnpack = true;
+            nativeBuildInputs = [ pkgs.python3 ];
             installPhase = ''
               install -Dm755 "$src" "$out/bin/yt-dlp"
+              patchShebangs "$out/bin/yt-dlp"
             '';
           };
 
@@ -209,8 +211,10 @@
               hash = "sha256-O9oJaKAc3nDSZyBlMAOyhVPHG+FNyy5fTCTpkh/a10U=";
             };
             dontUnpack = true;
+            nativeBuildInputs = [ pkgs.python3 ];
             installPhase = ''
               install -Dm755 "$src" "$out/bin/yt-dlp"
+              patchShebangs "$out/bin/yt-dlp"
             '';
           };
 
