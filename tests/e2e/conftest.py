@@ -80,6 +80,7 @@ except (ValueError, IndexError):
     print("missing output template", file=sys.stderr)
     sys.exit(2)
 
+partial_fail = "partial-fail" in url
 playlist_enabled = "--yes-playlist" in args
 is_playlist_url = "playlist" in url or "list=" in url
 item_count = 3 if playlist_enabled and is_playlist_url else 1
@@ -100,7 +101,7 @@ if log_file:
 if "slow" in url:
     time.sleep(2)
 
-if "fail" in url:
+if "fail" in url and not partial_fail:
     print("requested fake failure", file=sys.stderr)
     sys.exit(3)
 
@@ -117,6 +118,13 @@ for index in range(1, item_count + 1):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = f"fake {mode} download {index}/{item_count} for {url}\\n"
     output_path.write_bytes(payload.encode("utf-8") * 64)
+
+if partial_fail:
+    print(
+        "ERROR: [youtube] skipped_fake: Video unavailable. This video is not available",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 """,
         encoding="utf-8",
     )

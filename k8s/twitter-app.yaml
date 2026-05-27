@@ -81,10 +81,16 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: output
+              mountPath: /data/output
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: twitter-articlenator-data
+        - name: output
+          hostPath:
+            path: /mnt/ssdb/articlenator/output
+            type: DirectoryOrCreate
 ---
 apiVersion: v1
 kind: Service

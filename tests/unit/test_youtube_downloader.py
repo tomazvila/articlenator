@@ -6,6 +6,7 @@ import pytest
 
 from twitter_articlenator.sources.youtube_downloader import (
     _build_youtube_command,
+    _only_skippable_playlist_errors,
     is_supported_youtube_url,
     iter_youtube_download,
     youtube_url_kind,
@@ -113,6 +114,7 @@ def test_build_playlist_command_explicitly_downloads_playlist():
     )
 
     assert "--yes-playlist" in cmd
+    assert "--no-abort-on-error" in cmd
     assert "--no-playlist" not in cmd
     assert cmd[-1] == "https://www.youtube.com/playlist?list=PLabc123"
 
@@ -121,6 +123,38 @@ def test_build_playlist_command_explicitly_downloads_playlist():
     ]
     assert "playlist_title:%(meta_album)s" in metadata_rules
     assert "playlist_index:%(track_number)s" in metadata_rules
+
+
+def test_only_skippable_playlist_errors_accepts_unavailable_videos():
+    """Test playlist partial success only tolerates unavailable video errors."""
+    stderr = "\n".join(
+        [
+            "ERROR: [youtube] abc: Video unavailable. This video is not available",
+            "ERROR: [youtube] def: Video unavailable. This video is not available",
+        ]
+    )
+
+    assert _only_skippable_playlist_errors(stderr)
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "",
+        "WARNING: [youtube] abc: Video unavailable. This video is not available",
+        "ERROR: Postprocessing: audio conversion failed: Conversion failed!",
+        "ERROR: [Errno 28] No space left on device",
+        "\n".join(
+            [
+                "ERROR: [youtube] abc: Video unavailable. This video is not available",
+                "ERROR: [Errno 28] No space left on device",
+            ]
+        ),
+    ],
+)
+def test_only_skippable_playlist_errors_rejects_operational_failures(stderr):
+    """Test storage and post-processing errors still fail the playlist source."""
+    assert not _only_skippable_playlist_errors(stderr)
 
 
 def test_iter_youtube_download_rejects_invalid_mode(tmp_path):

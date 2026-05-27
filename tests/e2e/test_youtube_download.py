@@ -227,6 +227,35 @@ class TestYouTubeFakeDownloadWorkflow:
         assert "playlist_title:%(meta_album)s" in metadata_rules
         assert "playlist_index:%(track_number)s" in metadata_rules
 
+    def test_playlist_partial_unavailable_items_still_returns_downloaded_mp3s(
+        self, page: Page, base_url, flask_server
+    ):
+        """Test playlist unavailable items do not discard successfully downloaded MP3s."""
+        clear_fake_log(flask_server)
+        playlist_url = "https://www.youtube.com/playlist?list=PLpartial-fail"
+        youtube = YouTubePage(page)
+        youtube.navigate(base_url)
+        youtube.select_mp3()
+        youtube.enter_links([playlist_url])
+        youtube.click_download()
+
+        expect(youtube.results_section).to_be_visible(timeout=30000)
+        expect(youtube.warning_div).not_to_be_visible()
+        expect(youtube.download_all_link).to_have_text("Download all 3 files as ZIP")
+        expect(youtube.download_list).to_contain_text("3 files downloaded from 1 source, 0 failed")
+
+        links = youtube.get_download_links()
+        assert len(links) == 3
+        assert all(link.startswith("/download/youtube/audio/") for link in links)
+        assert all(link.endswith(".mp3") for link in links)
+
+        calls = read_fake_calls(flask_server)
+        args = calls[-1]["args"]
+        assert calls[-1]["url"] == playlist_url
+        assert calls[-1]["output_count"] == 3
+        assert "--yes-playlist" in args
+        assert "--no-abort-on-error" in args
+
     def test_cookie_file_is_passed_to_fake_downloader(self, page: Page, base_url, flask_server):
         """Test YouTube cookies are passed as a temporary Netscape cookie file."""
         clear_fake_log(flask_server)

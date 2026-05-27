@@ -149,10 +149,22 @@ def iter_youtube_download(
                 stderr = stderr_file.read().strip()
 
         if process.returncode != 0:
-            log.error("youtube_yt_dlp_failed", mode=mode, url=url, stderr=stderr)
-            raise RuntimeError(f"yt-dlp failed: {stderr or stdout or 'unknown error'}")
+            output_paths = _find_downloaded_files(output_dir, prefix, mode, required=False)
+            if not (
+                url_kind == "playlist" and output_paths and _only_skippable_playlist_errors(stderr)
+            ):
+                log.error("youtube_yt_dlp_failed", mode=mode, url=url, stderr=stderr)
+                raise RuntimeError(f"yt-dlp failed: {stderr or stdout or 'unknown error'}")
+            log.warning(
+                "youtube_playlist_download_partially_succeeded",
+                mode=mode,
+                url=url,
+                output_count=len(output_paths),
+                stderr=stderr,
+            )
+        else:
+            output_paths = _find_downloaded_files(output_dir, prefix, mode)
 
-        output_paths = _find_downloaded_files(output_dir, prefix, mode)
         for output_path in output_paths:
             file_size = output_path.stat().st_size
             log.info(
@@ -200,6 +212,8 @@ def _build_youtube_command(
         "-o",
         str(output_template),
     ]
+    if playlist:
+        cmd.append("--no-abort-on-error")
 
     if mode == "video":
         cmd.extend(
@@ -242,11 +256,23 @@ def _build_youtube_command(
     return cmd
 
 
-def _find_downloaded_files(output_dir: Path, prefix: str, mode: YouTubeDownloadMode) -> list[Path]:
+def _only_skippable_playlist_errors(stderr: str) -> bool:
+    """Return whether yt-dlp errors only describe unavailable playlist items."""
+    error_lines = [line for line in stderr.splitlines() if line.startswith("ERROR:")]
+    return bool(error_lines) and all("Video unavailable" in line for line in error_lines)
+
+
+def _find_downloaded_files(
+    output_dir: Path,
+    prefix: str,
+    mode: YouTubeDownloadMode,
+    *,
+    required: bool = True,
+) -> list[Path]:
     """Find all files produced by yt-dlp for a known URL prefix."""
     extension = ".mp4" if mode == "video" else ".mp3"
     candidates = sorted(output_dir.glob(f"{prefix}_*{extension}"))
-    if not candidates:
+    if required and not candidates:
         raise RuntimeError(f"yt-dlp completed but no {extension} output was found")
     return candidates
 
