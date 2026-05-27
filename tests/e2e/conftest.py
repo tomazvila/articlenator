@@ -80,11 +80,16 @@ except (ValueError, IndexError):
     print("missing output template", file=sys.stderr)
     sys.exit(2)
 
+playlist_enabled = "--yes-playlist" in args
+is_playlist_url = "playlist" in url or "list=" in url
+item_count = 3 if playlist_enabled and is_playlist_url else 1
+
 record = {
     "args": args,
     "url": url,
     "mode": mode,
     "cookies": cookie_info,
+    "output_count": item_count,
 }
 
 log_file = os.environ.get("TWITTER_ARTICLENATOR_YOUTUBE_FAKE_LOG")
@@ -100,10 +105,18 @@ if "fail" in url:
     sys.exit(3)
 
 extension = "mp3" if mode == "mp3" else "mp4"
-fake_id = "fake_" + hashlib.sha256(url.encode()).hexdigest()[:8]
-output_path = Path(output_template.replace("%(id)s", fake_id).replace("%(ext)s", extension))
-output_path.parent.mkdir(parents=True, exist_ok=True)
-output_path.write_bytes((f"fake {mode} download for {url}\\n").encode("utf-8") * 64)
+for index in range(1, item_count + 1):
+    fake_id = "fake_" + hashlib.sha256(f"{url}:{index}".encode()).hexdigest()[:8]
+    rendered_template = output_template.replace(
+        "%(playlist_index&{}_|)s",
+        f"{index:03d}_" if item_count > 1 else "",
+    )
+    output_path = Path(
+        rendered_template.replace("%(id)s", fake_id).replace("%(ext)s", extension)
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = f"fake {mode} download {index}/{item_count} for {url}\\n"
+    output_path.write_bytes(payload.encode("utf-8") * 64)
 """,
         encoding="utf-8",
     )

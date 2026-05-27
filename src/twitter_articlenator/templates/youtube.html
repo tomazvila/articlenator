@@ -6,7 +6,7 @@
 <section class="panel youtube-head">
     <div>
         <h1>YouTube Downloads</h1>
-        <p>Batch MP4 or MP3 downloads. YouTube cookies stay server-side.</p>
+        <p>Batch MP4, tagged MP3, or playlist downloads. YouTube cookies stay server-side.</p>
     </div>
     <span id="youtube-cookie-status" class="youtube-cookie-status">Checking session</span>
 </section>
@@ -25,7 +25,7 @@
             <input type="radio" id="mode-mp3" name="mode" value="mp3">
             <span>
                 <strong>Audio</strong>
-                <small>MP3</small>
+                <small>MP3 + tags</small>
             </span>
         </label>
     </fieldset>
@@ -37,7 +37,8 @@
             name="links"
             rows="10"
             placeholder="https://www.youtube.com/watch?v=fv7TlVMETP0
-https://youtu.be/tc82YJfvXZo"
+https://youtu.be/tc82YJfvXZo
+https://www.youtube.com/playlist?list=PL..."
         ></textarea>
     </div>
 
@@ -464,8 +465,7 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
                 const data = JSON.parse(line.slice(6));
 
                 if (data.type === 'start') {
-                    const label = data.mode === 'mp3' ? 'audio file(s)' : 'video file(s)';
-                    statusText.textContent = `Downloading ${data.total} ${label}...`;
+                    statusText.textContent = `Downloading ${data.total} source${data.total !== 1 ? 's' : ''}...`;
                     progressInfo.textContent = `0 / ${data.total}`;
                 } else if (data.type === 'keepalive') {
                     statusText.textContent = `Still downloading ${data.current}/${data.total}...`;
@@ -510,7 +510,12 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
                     if (data.summary) {
                         const summaryLi = document.createElement('li');
                         summaryLi.className = 'summary';
-                        summaryLi.textContent = `Summary: ${data.summary.succeeded} downloaded, ${data.summary.failed} failed of ${data.summary.total} total`;
+                        if (data.summary.succeeded > data.summary.total) {
+                            const sourceLabel = data.summary.total === 1 ? 'source' : 'sources';
+                            summaryLi.textContent = `Summary: ${data.summary.succeeded} files downloaded from ${data.summary.total} ${sourceLabel}, ${data.summary.failed} failed`;
+                        } else {
+                            summaryLi.textContent = `Summary: ${data.summary.succeeded} downloaded, ${data.summary.failed} failed of ${data.summary.total} total`;
+                        }
                         downloadList.appendChild(summaryLi);
                     }
 

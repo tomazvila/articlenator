@@ -8,6 +8,7 @@ from twitter_articlenator.sources.youtube_downloader import (
     _build_youtube_command,
     is_supported_youtube_url,
     iter_youtube_download,
+    youtube_url_kind,
 )
 
 
@@ -24,12 +25,27 @@ from twitter_articlenator.sources.youtube_downloader import (
 def test_is_supported_youtube_url_accepts_individual_video_urls(url):
     """Test supported individual YouTube URL shapes."""
     assert is_supported_youtube_url(url)
+    assert youtube_url_kind(url) == "video"
 
 
 @pytest.mark.parametrize(
     "url",
     [
-        "https://www.youtube.com/playlist?list=abc",
+        "https://www.youtube.com/playlist?list=PLabc123",
+        "https://music.youtube.com/playlist?list=PLabc123",
+        "https://www.youtube.com/watch?v=fv7TlVMETP0&list=PLabc123",
+    ],
+)
+def test_is_supported_youtube_url_accepts_playlist_urls(url):
+    """Test supported playlist URL shapes."""
+    assert is_supported_youtube_url(url)
+    assert youtube_url_kind(url) == "playlist"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/playlist",
         "https://www.youtube.com/@channel",
         "https://example.com/watch?v=fv7TlVMETP0",
         "ftp://www.youtube.com/watch?v=fv7TlVMETP0",
@@ -51,6 +67,7 @@ def test_build_video_command_uses_mp4_options():
     )
 
     assert "--no-playlist" in cmd
+    assert "--yes-playlist" not in cmd
     assert cmd[cmd.index("--js-runtimes") + 1] == "node"
     assert cmd[cmd.index("-f") + 1] == "18/b[ext=mp4][protocol=https]/b"
     assert "--merge-output-format" in cmd
@@ -72,7 +89,38 @@ def test_build_mp3_command_uses_default_quality():
     assert cmd[cmd.index("-f") + 1] == "18/b[ext=mp4][protocol=https]/b"
     assert "--audio-format" in cmd
     assert "mp3" in cmd
+    assert "--embed-metadata" in cmd
+    assert "--embed-thumbnail" in cmd
+    assert cmd[cmd.index("--convert-thumbnails") + 1] == "jpg"
+
+    metadata_rules = [
+        cmd[index + 1] for index, value in enumerate(cmd) if value == "--parse-metadata"
+    ]
+    assert "%(uploader|)s:%(meta_artist)s" in metadata_rules
+    assert "playlist_title:%(meta_album)s" not in metadata_rules
+    assert "playlist_index:%(track_number)s" not in metadata_rules
     assert "--audio-quality" not in cmd
+
+
+def test_build_playlist_command_explicitly_downloads_playlist():
+    """Test playlist command asks yt-dlp to download the whole playlist."""
+    cmd = _build_youtube_command(
+        url="https://www.youtube.com/playlist?list=PLabc123",
+        mode="mp3",
+        output_template=Path("/tmp/out_%(id)s.%(ext)s"),
+        downloader_bin="yt-dlp",
+        playlist=True,
+    )
+
+    assert "--yes-playlist" in cmd
+    assert "--no-playlist" not in cmd
+    assert cmd[-1] == "https://www.youtube.com/playlist?list=PLabc123"
+
+    metadata_rules = [
+        cmd[index + 1] for index, value in enumerate(cmd) if value == "--parse-metadata"
+    ]
+    assert "playlist_title:%(meta_album)s" in metadata_rules
+    assert "playlist_index:%(track_number)s" in metadata_rules
 
 
 def test_iter_youtube_download_rejects_invalid_mode(tmp_path):

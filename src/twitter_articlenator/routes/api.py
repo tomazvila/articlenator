@@ -1317,7 +1317,7 @@ def youtube_cookies_verify():
 
 @api_bp.route("/youtube/download", methods=["POST"])
 def youtube_download():
-    """POST /api/youtube/download - Download YouTube video or MP3 files."""
+    """POST /api/youtube/download - Download YouTube video, playlist, or MP3 files."""
     if not is_valid_csrf_request():
         return _csrf_error_response()
 
@@ -1353,7 +1353,7 @@ def youtube_download():
                 {
                     "error": "Invalid YouTube URLs: "
                     f"{', '.join(invalid_urls)}. "
-                    "Only individual watch, youtu.be, shorts, live, or embed URLs are supported."
+                    "Only watch, youtu.be, shorts, live, embed, or playlist URLs are supported."
                 }
             ),
             400,
@@ -1382,7 +1382,7 @@ def youtube_download():
                     yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing', 'mode': mode})}\n\n"
 
                     try:
-                        output_path = None
+                        output_paths = []
                         for update in iter_youtube_download(
                             url,
                             output_dir,
@@ -1394,24 +1394,27 @@ def youtube_download():
                         ):
                             if update.kind == "keepalive":
                                 yield f"data: {json_module.dumps({'type': 'keepalive', 'current': i, 'total': total, 'url': url, 'mode': mode})}\n\n"
-                            elif update.kind == "complete":
-                                output_path = update.path
+                            elif update.kind == "complete" and update.path is not None:
+                                output_paths.append(update.path)
 
-                        if output_path is None:
+                        if not output_paths:
                             raise RuntimeError("yt-dlp completed without an output file")
 
-                        filename = output_path.name
-                        size_bytes = output_path.stat().st_size
-                        downloads.append(
-                            {
-                                "url": url,
-                                "filename": filename,
-                                "size_bytes": size_bytes,
-                                "mode": mode,
-                            }
-                        )
+                        for output_path in output_paths:
+                            downloads.append(
+                                {
+                                    "url": url,
+                                    "filename": output_path.name,
+                                    "size_bytes": output_path.stat().st_size,
+                                    "mode": mode,
+                                }
+                            )
 
-                        yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'filename': filename, 'mode': mode})}\n\n"
+                        filename = output_paths[0].name
+                        if len(output_paths) > 1:
+                            filename = f"{len(output_paths)} files from playlist"
+
+                        yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'filename': filename, 'file_count': len(output_paths), 'mode': mode})}\n\n"
 
                     except Exception as e:
                         error = str(e)
@@ -1443,6 +1446,7 @@ def youtube_download():
                 "total": total,
                 "succeeded": len(downloads),
                 "failed": len(errors),
+                "files": len(downloads),
             },
             "mode": mode,
         }

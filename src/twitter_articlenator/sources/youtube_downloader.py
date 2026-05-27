@@ -17,8 +17,15 @@ import structlog
 log = structlog.get_logger()
 
 YouTubeDownloadMode = Literal["video", "mp3"]
+YouTubeURLKind = Literal["video", "playlist"]
 
-YOUTUBE_VIDEO_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
+YOUTUBE_VIDEO_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "www.music.youtube.com",
+}
 YOUTUBE_NOCOOKIE_HOSTS = {"youtube-nocookie.com", "www.youtube-nocookie.com"}
 YOUTU_BE_HOSTS = {"youtu.be", "www.youtu.be"}
 SUPPORTED_MODES = {"video", "mp3"}
@@ -32,31 +39,41 @@ class YouTubeDownloadUpdate:
     path: Path | None = None
 
 
-def is_supported_youtube_url(url: str) -> bool:
-    """Return whether the URL is an individual YouTube video URL."""
+def youtube_url_kind(url: str) -> YouTubeURLKind | None:
+    """Classify a supported YouTube URL as a single video or playlist."""
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:
-        return False
+        return None
 
     host = parsed.netloc.lower()
     path_parts = [part for part in parsed.path.split("/") if part]
+    query = parse_qs(parsed.query)
+    playlist_id = query.get("list", [""])[0]
 
     if host in YOUTU_BE_HOSTS:
-        return bool(path_parts)
+        return "video" if path_parts else None
 
     if host not in YOUTUBE_VIDEO_HOSTS and host not in YOUTUBE_NOCOOKIE_HOSTS:
-        return False
+        return None
+
+    if parsed.path in {"/playlist", "/watch"} and playlist_id:
+        return "playlist"
 
     if parsed.path == "/watch":
-        return bool(parse_qs(parsed.query).get("v", [""])[0])
+        return "video" if query.get("v", [""])[0] else None
 
     if len(path_parts) >= 2 and path_parts[0] in {"shorts", "live"}:
-        return bool(path_parts[1])
+        return "video" if path_parts[1] else None
 
     if len(path_parts) >= 2 and path_parts[0] == "embed":
-        return bool(path_parts[1])
+        return "video" if path_parts[1] else None
 
-    return False
+    return None
+
+
+def is_supported_youtube_url(url: str) -> bool:
+    """Return whether the URL is a supported YouTube video or playlist URL."""
+    return youtube_url_kind(url) is not None
 
 
 def iter_youtube_download(
@@ -74,7 +91,8 @@ def iter_youtube_download(
     if mode not in SUPPORTED_MODES:
         raise ValueError(f"Unsupported YouTube download mode: {mode}")
 
-    if not is_supported_youtube_url(url):
+    url_kind = youtube_url_kind(url)
+    if url_kind is None:
         raise ValueError(f"Invalid YouTube URL: {url}")
 
     if cookies and cookie_file_path:
@@ -82,13 +100,17 @@ def iter_youtube_download(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"youtube_{mode}_{hashlib.sha256(url.encode()).hexdigest()[:12]}"
-    output_template = output_dir / f"{prefix}_%(id)s.%(ext)s"
+    output_template = output_dir / f"{prefix}_%(playlist_index&{{}}_|)s%(id)s.%(ext)s"
+    for stale_file in output_dir.glob(f"{prefix}_*"):
+        if stale_file.is_file():
+            stale_file.unlink(missing_ok=True)
 
     cmd = _build_youtube_command(
         url=url,
         mode=mode,
         output_template=output_template,
         downloader_bin=downloader_bin,
+        playlist=url_kind == "playlist",
     )
 
     cookie_file = None
@@ -98,7 +120,7 @@ def iter_youtube_download(
         cookie_file = _write_youtube_cookie_file(cookies)
         cmd[-1:-1] = ["--cookies", cookie_file.name]
 
-    log.info("youtube_download_starting", mode=mode, url=url)
+    log.info("youtube_download_starting", mode=mode, url=url, url_kind=url_kind)
 
     try:
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file:
@@ -130,15 +152,16 @@ def iter_youtube_download(
             log.error("youtube_yt_dlp_failed", mode=mode, url=url, stderr=stderr)
             raise RuntimeError(f"yt-dlp failed: {stderr or stdout or 'unknown error'}")
 
-        output_path = _find_downloaded_file(output_dir, prefix, mode)
-        file_size = output_path.stat().st_size
-        log.info(
-            "youtube_downloaded",
-            mode=mode,
-            path=str(output_path),
-            size_bytes=file_size,
-        )
-        yield YouTubeDownloadUpdate(kind="complete", path=output_path)
+        output_paths = _find_downloaded_files(output_dir, prefix, mode)
+        for output_path in output_paths:
+            file_size = output_path.stat().st_size
+            log.info(
+                "youtube_downloaded",
+                mode=mode,
+                path=str(output_path),
+                size_bytes=file_size,
+            )
+            yield YouTubeDownloadUpdate(kind="complete", path=output_path)
 
     finally:
         if cookie_file:
@@ -154,12 +177,13 @@ def _build_youtube_command(
     mode: YouTubeDownloadMode,
     output_template: Path,
     downloader_bin: str,
+    playlist: bool = False,
 ) -> list[str]:
     """Build the yt-dlp command for a YouTube download."""
     cmd = [
         downloader_bin,
         "--no-warnings",
-        "--no-playlist",
+        "--yes-playlist" if playlist else "--no-playlist",
         "--js-runtimes",
         "node",
         "--force-overwrites",
@@ -196,20 +220,40 @@ def _build_youtube_command(
                 "-x",
                 "--audio-format",
                 "mp3",
+                "--embed-metadata",
+                "--embed-thumbnail",
+                "--convert-thumbnails",
+                "jpg",
+                "--parse-metadata",
+                "%(uploader|)s:%(meta_artist)s",
             ]
         )
+        if playlist:
+            cmd.extend(
+                [
+                    "--parse-metadata",
+                    "playlist_title:%(meta_album)s",
+                    "--parse-metadata",
+                    "playlist_index:%(track_number)s",
+                ]
+            )
 
     cmd.append(url)
     return cmd
 
 
-def _find_downloaded_file(output_dir: Path, prefix: str, mode: YouTubeDownloadMode) -> Path:
-    """Find the file produced by yt-dlp for a known URL prefix."""
+def _find_downloaded_files(output_dir: Path, prefix: str, mode: YouTubeDownloadMode) -> list[Path]:
+    """Find all files produced by yt-dlp for a known URL prefix."""
     extension = ".mp4" if mode == "video" else ".mp3"
     candidates = sorted(output_dir.glob(f"{prefix}_*{extension}"))
     if not candidates:
         raise RuntimeError(f"yt-dlp completed but no {extension} output was found")
-    return candidates[-1]
+    return candidates
+
+
+def _find_downloaded_file(output_dir: Path, prefix: str, mode: YouTubeDownloadMode) -> Path:
+    """Find the last file produced by yt-dlp for a known URL prefix."""
+    return _find_downloaded_files(output_dir, prefix, mode)[-1]
 
 
 def _write_youtube_cookie_file(cookies: str) -> tempfile.NamedTemporaryFile:

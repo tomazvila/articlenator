@@ -21,8 +21,7 @@ AUTH_REAL_URL = os.environ.get("TEST_YOUTUBE_AUTH_URL")
 AUTH_COOKIES_FILE = os.environ.get("TEST_YOUTUBE_COOKIES_FILE")
 
 SAMPLE_COOKIES = (
-    "# Netscape HTTP Cookie File\n"
-    ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret-session-value\n"
+    "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret-session-value\n"
 )
 
 
@@ -175,7 +174,58 @@ class TestYouTubeFakeDownloadWorkflow:
         assert calls[-1]["mode"] == "mp3"
         assert "-x" in calls[-1]["args"]
         assert "--audio-format" in calls[-1]["args"]
+        assert "--embed-metadata" in calls[-1]["args"]
+        assert "--embed-thumbnail" in calls[-1]["args"]
+        assert calls[-1]["args"][calls[-1]["args"].index("--convert-thumbnails") + 1] == "jpg"
         assert "--audio-quality" not in calls[-1]["args"]
+
+    def test_playlist_mp3_download_expands_items_and_tags_metadata(
+        self, page: Page, base_url, flask_server
+    ):
+        """Test a playlist URL downloads every item as tagged MP3 outputs."""
+        clear_fake_log(flask_server)
+        playlist_url = "https://www.youtube.com/playlist?list=PLfakeSongs"
+        youtube = YouTubePage(page)
+        youtube.navigate(base_url)
+        youtube.select_mp3()
+        youtube.enter_links([playlist_url])
+        youtube.click_download()
+
+        expect(youtube.results_section).to_be_visible(timeout=30000)
+        expect(youtube.download_actions).to_be_visible(timeout=5000)
+        expect(youtube.download_all_link).to_have_text("Download all 3 files as ZIP")
+        expect(youtube.download_list).to_contain_text("3 files downloaded from 1 source, 0 failed")
+
+        links = youtube.get_download_links()
+        assert len(links) == 3
+        assert all(link.startswith("/download/youtube/audio/") for link in links)
+        assert all(link.endswith(".mp3") for link in links)
+
+        archive_href = youtube.get_download_all_href()
+        assert archive_href is not None
+        response = page.request.get(f"{base_url}{archive_href}")
+        assert response.status == 200
+        with zipfile.ZipFile(io.BytesIO(response.body())) as archive:
+            names = sorted(archive.namelist())
+            assert len(names) == 3
+            assert all(name.endswith(".mp3") for name in names)
+            assert all("_00" in name for name in names)
+
+        calls = read_fake_calls(flask_server)
+        args = calls[-1]["args"]
+        metadata_rules = [
+            args[index + 1] for index, value in enumerate(args) if value == "--parse-metadata"
+        ]
+        assert calls[-1]["url"] == playlist_url
+        assert calls[-1]["output_count"] == 3
+        assert "--yes-playlist" in args
+        assert "--no-playlist" not in args
+        assert "--embed-metadata" in args
+        assert "--embed-thumbnail" in args
+        assert args[args.index("--convert-thumbnails") + 1] == "jpg"
+        assert "%(uploader|)s:%(meta_artist)s" in metadata_rules
+        assert "playlist_title:%(meta_album)s" in metadata_rules
+        assert "playlist_index:%(track_number)s" in metadata_rules
 
     def test_cookie_file_is_passed_to_fake_downloader(self, page: Page, base_url, flask_server):
         """Test YouTube cookies are passed as a temporary Netscape cookie file."""
@@ -211,7 +261,9 @@ class TestYouTubeFakeDownloadWorkflow:
         assert "secret-session-value" not in download_payloads[-1]
         assert "cookies" not in json.loads(download_payloads[-1])
 
-    def test_stored_cookie_verification_uses_fake_downloader(self, page: Page, base_url, flask_server):
+    def test_stored_cookie_verification_uses_fake_downloader(
+        self, page: Page, base_url, flask_server
+    ):
         """Test stored YouTube cookies can be verified without leaking values."""
         clear_fake_log(flask_server)
         youtube = YouTubePage(page)
