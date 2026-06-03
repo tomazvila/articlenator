@@ -2,6 +2,7 @@
 
 import json
 import re
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -20,6 +21,14 @@ def app(tmp_path, monkeypatch):
         "TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY",
         "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
     )
+    for key in (
+        "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_CLIENT_ID",
+        "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_CLIENT_SECRET",
+        "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_REDIRECT_URI",
+        "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_TOKEN_PATH",
+        "TWITTER_ARTICLENATOR_YOUTUBE_LIKED_MAX_RESULTS",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
     import twitter_articlenator.config as config_module
 
@@ -29,6 +38,7 @@ def app(tmp_path, monkeypatch):
 
     app = create_app(test_config={"TESTING": True})
     yield app
+    config_module._config_instance = None
 
 
 @pytest.fixture
@@ -43,6 +53,13 @@ def csrf_headers(client) -> dict[str, str]:
     html = response.get_data(as_text=True)
     token = re.search(r'<meta name="csrf-token" content="([^"]+)">', html).group(1)
     return {"X-CSRF-Token": token}
+
+
+def reset_config_singleton() -> None:
+    """Reset the app config singleton after changing env vars."""
+    import twitter_articlenator.config as config_module
+
+    config_module._config_instance = None
 
 
 class TestIndexRoute:
@@ -439,6 +456,159 @@ class TestYouTubeCookiesApi:
         """Test verify requires stored cookies."""
         response = client.post("/api/youtube/cookies/verify", headers=csrf_headers(client))
         assert response.status_code == 404
+
+
+class TestYouTubeOAuthApi:
+    """Tests for YouTube OAuth liked-video API."""
+
+    def configure_youtube_oauth(self, monkeypatch, tmp_path):
+        """Configure fake Google OAuth credentials for route tests."""
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_CLIENT_ID", "client-id")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_CLIENT_SECRET", "client-secret")
+        monkeypatch.setenv(
+            "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_REDIRECT_URI",
+            "https://twitter.example/api/youtube/oauth/callback",
+        )
+        monkeypatch.setenv(
+            "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_TOKEN_PATH",
+            str(tmp_path / "youtube-oauth-token.json"),
+        )
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_LIKED_MAX_RESULTS", "25")
+        reset_config_singleton()
+
+    def test_oauth_status_and_start_without_client_config(self, client):
+        """Test OAuth status is metadata-only and start requires credentials."""
+        response = client.get("/api/youtube/oauth/status")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["configured"] is False
+        assert data["client_configured"] is False
+        assert "client-secret" not in response.get_data(as_text=True)
+
+        start = client.get("/api/youtube/oauth/start")
+        assert start.status_code == 503
+
+    def test_oauth_start_redirects_to_google_with_state(self, client, monkeypatch, tmp_path):
+        """Test OAuth start creates a CSRF-style state and redirects to Google."""
+        self.configure_youtube_oauth(monkeypatch, tmp_path)
+
+        response = client.get("/api/youtube/oauth/start")
+
+        assert response.status_code == 302
+        parsed = urlparse(response.headers["Location"])
+        query = parse_qs(parsed.query)
+        assert parsed.netloc == "accounts.google.com"
+        assert query["client_id"] == ["client-id"]
+        assert query["redirect_uri"] == ["https://twitter.example/api/youtube/oauth/callback"]
+        assert query["access_type"] == ["offline"]
+        assert query["prompt"] == ["consent"]
+        assert "https://www.googleapis.com/auth/youtube.readonly" in query["scope"]
+        with client.session_transaction() as session_data:
+            assert session_data["youtube_oauth_state"] == query["state"][0]
+
+    def test_oauth_callback_saves_encrypted_token_without_leaking_secrets(
+        self, client, monkeypatch, tmp_path
+    ):
+        """Test OAuth callback exchanges the code and stores encrypted token metadata only."""
+        self.configure_youtube_oauth(monkeypatch, tmp_path)
+
+        import twitter_articlenator.routes.api as api_module
+
+        def fake_exchange_authorization_code(**kwargs):
+            assert kwargs["code"] == "google-code"
+            assert kwargs["client_secret"] == "client-secret"
+            return {
+                "access_token": "secret-access-token",
+                "refresh_token": "secret-refresh-token",
+                "expires_in": 3600,
+                "scope": "https://www.googleapis.com/auth/youtube.readonly",
+            }
+
+        monkeypatch.setattr(api_module, "exchange_authorization_code", fake_exchange_authorization_code)
+        with client.session_transaction() as session_data:
+            session_data["youtube_oauth_state"] = "expected-state"
+
+        response = client.get(
+            "/api/youtube/oauth/callback?state=expected-state&code=google-code"
+        )
+
+        assert response.status_code == 302
+        assert response.headers["Location"].endswith("/youtube?youtube_oauth=connected")
+        status = client.get("/api/youtube/oauth/status")
+        assert status.status_code == 200
+        data = status.get_json()
+        assert data["configured"] is True
+        assert data["encrypted"] is True
+        assert data["has_refresh_token"] is True
+        assert "secret-access-token" not in status.get_data(as_text=True)
+        assert "secret-refresh-token" not in status.get_data(as_text=True)
+
+    def test_oauth_liked_requires_csrf(self, client, monkeypatch, tmp_path):
+        """Test liked-video loading requires CSRF."""
+        self.configure_youtube_oauth(monkeypatch, tmp_path)
+
+        response = client.post("/api/youtube/oauth/liked", json={})
+
+        assert response.status_code == 403
+
+    def test_oauth_liked_returns_video_links_from_service(self, client, monkeypatch, tmp_path):
+        """Test liked-video endpoint returns links fetched through the OAuth service."""
+        self.configure_youtube_oauth(monkeypatch, tmp_path)
+
+        import twitter_articlenator.routes.api as api_module
+
+        def fake_fetch_liked_videos(**kwargs):
+            assert kwargs["client_id"] == "client-id"
+            assert kwargs["client_secret"] == "client-secret"
+            assert kwargs["max_results"] == 2
+            return {
+                "items": [
+                    {"id": "video-one", "url": "https://www.youtube.com/watch?v=video-one"},
+                    {"id": "video-two", "url": "https://www.youtube.com/watch?v=video-two"},
+                ],
+                "links": [
+                    "https://www.youtube.com/watch?v=video-one",
+                    "https://www.youtube.com/watch?v=video-two",
+                ],
+                "count": 2,
+            }
+
+        monkeypatch.setattr(api_module, "fetch_liked_videos", fake_fetch_liked_videos)
+
+        response = client.post(
+            "/api/youtube/oauth/liked",
+            json={"limit": 2},
+            headers=csrf_headers(client),
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["count"] == 2
+        assert data["links"] == [
+            "https://www.youtube.com/watch?v=video-one",
+            "https://www.youtube.com/watch?v=video-two",
+        ]
+
+    def test_oauth_delete_removes_stored_token(self, client, monkeypatch, tmp_path):
+        """Test OAuth disconnect removes stored token metadata."""
+        self.configure_youtube_oauth(monkeypatch, tmp_path)
+
+        from twitter_articlenator.routes.api import _get_youtube_oauth_store
+
+        _get_youtube_oauth_store().save_authorized_token(
+            {
+                "access_token": "secret-access-token",
+                "refresh_token": "secret-refresh-token",
+                "expires_in": 3600,
+            }
+        )
+
+        response = client.delete("/api/youtube/oauth", headers=csrf_headers(client))
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["configured"] is False
+        assert "secret-access-token" not in response.get_data(as_text=True)
 
 
 class TestSecurityHeaders:

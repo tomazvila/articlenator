@@ -49,6 +49,10 @@ spec:
               value: "true"
             - name: TWITTER_ARTICLENATOR_SESSION_COOKIE_SECURE
               value: "true"
+            - name: TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_REDIRECT_URI
+              value: "https://twitter.tomazvi.la/api/youtube/oauth/callback"
+            - name: TWITTER_ARTICLENATOR_YOUTUBE_LIKED_MAX_RESULTS
+              value: "5000"
             - name: TWITTER_ARTICLENATOR_SECRET_KEY
               valueFrom:
                 secretKeyRef:
@@ -59,6 +63,18 @@ spec:
                 secretKeyRef:
                   name: twitter-articlenator-secrets
                   key: youtube-cookie-encryption-key
+            - name: TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: twitter-articlenator-secrets
+                  key: youtube-oauth-client-id
+                  optional: true
+            - name: TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: twitter-articlenator-secrets
+                  key: youtube-oauth-client-secret
+                  optional: true
           livenessProbe:
             httpGet:
               path: /api/health

@@ -1047,6 +1047,35 @@ footer .version {
     gap: 18px;
 }
 
+.youtube-oauth-panel {
+    display: grid;
+    gap: 16px;
+}
+
+.youtube-oauth-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.youtube-oauth-header h2 {
+    margin: 0 0 4px;
+    color: var(--fg-bright);
+}
+
+.youtube-oauth-header p {
+    margin: 0;
+    color: var(--fg-dark);
+}
+
+.youtube-oauth-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
 .youtube-session-header {
     display: flex;
     align-items: flex-start;
@@ -1069,6 +1098,74 @@ footer .version {
     gap: 8px;
     flex-wrap: wrap;
     justify-content: flex-end;
+}
+
+.youtube-session-state {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-height: 72px;
+    padding: 14px 16px;
+    border: 1px solid var(--yellow);
+    border-radius: var(--radius);
+    background: rgba(224, 175, 104, 0.12);
+}
+
+.youtube-session-state-marker {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    margin-top: 5px;
+    border-radius: 50%;
+    background: var(--yellow);
+    box-shadow: 0 0 0 4px rgba(224, 175, 104, 0.14);
+}
+
+.youtube-session-state strong {
+    display: block;
+    color: var(--fg-bright);
+    font-size: 17px;
+    line-height: 1.25;
+}
+
+.youtube-session-state small {
+    display: block;
+    margin-top: 4px;
+    color: var(--fg);
+    font-size: 14px;
+    line-height: 1.35;
+}
+
+.youtube-session-state.saved,
+.youtube-session-state.verified {
+    border-color: var(--green);
+    background: rgba(158, 206, 106, 0.14);
+}
+
+.youtube-session-state.saved .youtube-session-state-marker,
+.youtube-session-state.verified .youtube-session-state-marker {
+    background: var(--green);
+    box-shadow: 0 0 0 4px rgba(158, 206, 106, 0.16);
+}
+
+.youtube-session-state.problem {
+    border-color: var(--red);
+    background: rgba(247, 118, 142, 0.13);
+}
+
+.youtube-session-state.problem .youtube-session-state-marker {
+    background: var(--red);
+    box-shadow: 0 0 0 4px rgba(247, 118, 142, 0.16);
+}
+
+.youtube-session-state.missing {
+    border-color: var(--orange);
+    background: rgba(255, 158, 100, 0.13);
+}
+
+.youtube-session-state.missing .youtube-session-state-marker {
+    background: var(--orange);
+    box-shadow: 0 0 0 4px rgba(255, 158, 100, 0.16);
 }
 
 .youtube-cookie-metadata {
@@ -1182,15 +1279,18 @@ button.danger:hover {
         align-items: stretch;
     }
 
-    .youtube-session-header {
+    .youtube-session-header,
+    .youtube-oauth-header {
         display: grid;
     }
 
-    .youtube-session-actions {
+    .youtube-session-actions,
+    .youtube-oauth-actions {
         justify-content: stretch;
     }
 
-    .youtube-session-actions button {
+    .youtube-session-actions button,
+    .youtube-oauth-actions button {
         flex: 1 1 auto;
     }
 

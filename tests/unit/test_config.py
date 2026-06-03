@@ -40,9 +40,15 @@ class TestConfigProperties:
         assert hasattr(config, "youtube_cookie_path")
         assert hasattr(config, "youtube_cookie_encryption_key")
         assert hasattr(config, "require_youtube_cookie_encryption")
+        assert hasattr(config, "youtube_oauth_client_id")
+        assert hasattr(config, "youtube_oauth_client_secret")
+        assert hasattr(config, "youtube_oauth_redirect_uri")
+        assert hasattr(config, "youtube_oauth_token_path")
+        assert hasattr(config, "youtube_liked_max_results")
         assert isinstance(config.youtube_downloader_bin, str)
         assert isinstance(config.youtube_download_timeout, int)
         assert isinstance(config.youtube_cookie_max_bytes, int)
+        assert isinstance(config.youtube_liked_max_results, int)
 
 
 class TestConfigDefaults:
@@ -106,6 +112,17 @@ class TestConfigEnvOverrides:
         monkeypatch.setenv("TWITTER_ARTICLENATOR_CONFIG_DIR", "/tmp/articlenator-config")
         monkeypatch.setenv("TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY", "secret-key")
         monkeypatch.setenv("TWITTER_ARTICLENATOR_REQUIRE_COOKIE_ENCRYPTION", "true")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_CLIENT_ID", "client-id")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_CLIENT_SECRET", "client-secret")
+        monkeypatch.setenv(
+            "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_REDIRECT_URI",
+            "https://twitter.example/api/youtube/oauth/callback",
+        )
+        monkeypatch.setenv(
+            "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_TOKEN_PATH",
+            "/tmp/articlenator-config/youtube-oauth-token.json",
+        )
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_YOUTUBE_LIKED_MAX_RESULTS", "123")
 
         config = Config()
         assert config.youtube_downloader_bin == "/tmp/fake-ytdlp"
@@ -117,6 +134,16 @@ class TestConfigEnvOverrides:
         assert str(config.youtube_cookie_path) == "/tmp/articlenator-config/youtube-cookies.txt"
         assert config.youtube_cookie_encryption_key == "secret-key"
         assert config.require_youtube_cookie_encryption is True
+        assert config.youtube_oauth_client_id == "client-id"
+        assert config.youtube_oauth_client_secret == "client-secret"
+        assert (
+            config.youtube_oauth_redirect_uri
+            == "https://twitter.example/api/youtube/oauth/callback"
+        )
+        assert str(config.youtube_oauth_token_path) == (
+            "/tmp/articlenator-config/youtube-oauth-token.json"
+        )
+        assert config.youtube_liked_max_results == 123
 
 
 class TestGetConfig:

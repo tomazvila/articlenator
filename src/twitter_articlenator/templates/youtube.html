@@ -48,6 +48,35 @@ https://www.youtube.com/playlist?list=PL..."
     </div>
 </form>
 
+<section class="panel youtube-oauth-panel" aria-labelledby="youtube-oauth-title">
+    <div class="youtube-oauth-header">
+        <div>
+            <h2 id="youtube-oauth-title">Liked Videos</h2>
+            <p id="youtube-oauth-message">Connect YouTube once to turn liked videos into MP3 downloads.</p>
+        </div>
+        <div class="youtube-oauth-actions">
+            <button type="button" id="youtube-liked-download-btn">Download liked MP3s</button>
+            <button type="button" id="youtube-oauth-disconnect-btn" class="secondary small-btn">
+                Disconnect
+            </button>
+        </div>
+    </div>
+
+    <div
+        id="youtube-oauth-state"
+        class="youtube-session-state missing"
+        data-state="missing"
+        role="status"
+        aria-live="polite"
+    >
+        <span class="youtube-session-state-marker" aria-hidden="true"></span>
+        <span>
+            <strong id="youtube-oauth-state-title">YouTube not connected</strong>
+            <small id="youtube-oauth-state-detail">Liked videos require Google read-only YouTube access.</small>
+        </span>
+    </div>
+</section>
+
 <section class="panel youtube-session-panel" aria-labelledby="youtube-session-title">
     <div class="youtube-session-header">
         <div>
@@ -62,6 +91,20 @@ https://www.youtube.com/playlist?list=PL..."
                 Delete
             </button>
         </div>
+    </div>
+
+    <div
+        id="youtube-session-state"
+        class="youtube-session-state checking"
+        data-state="checking"
+        role="status"
+        aria-live="polite"
+    >
+        <span class="youtube-session-state-marker" aria-hidden="true"></span>
+        <span>
+            <strong id="youtube-session-state-title">Checking session</strong>
+            <small id="youtube-session-state-detail">Reading server-side YouTube cookie status.</small>
+        </span>
     </div>
 
     <dl class="youtube-cookie-metadata" aria-label="Stored YouTube cookie metadata">
@@ -157,6 +200,7 @@ https://www.youtube.com/playlist?list=PL..."
 const YOUTUBE_LINKS_KEY = 'articlenator_youtube_links';
 const YOUTUBE_LEGACY_COOKIES_KEY = 'articlenator_youtube_cookies';
 const YOUTUBE_MODE_KEY = 'articlenator_youtube_mode';
+const YOUTUBE_LIKED_AUTOSTART_KEY = 'articlenator_youtube_liked_autostart';
 
 const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 const linksInput = document.getElementById('youtube-links-input');
@@ -164,10 +208,20 @@ const cookiesInput = document.getElementById('youtube-cookies-input');
 const cookiesFile = document.getElementById('youtube-cookies-file');
 const cookieStatus = document.getElementById('youtube-cookie-status');
 const cookieMessage = document.getElementById('youtube-cookie-message');
+const cookieState = document.getElementById('youtube-session-state');
+const cookieStateTitle = document.getElementById('youtube-session-state-title');
+const cookieStateDetail = document.getElementById('youtube-session-state-detail');
 const verifyCookiesBtn = document.getElementById('youtube-verify-cookies-btn');
 const deleteCookiesBtn = document.getElementById('youtube-delete-cookies-btn');
 const saveCookiesBtn = document.getElementById('youtube-save-cookies-btn');
+const likedDownloadBtn = document.getElementById('youtube-liked-download-btn');
+const oauthDisconnectBtn = document.getElementById('youtube-oauth-disconnect-btn');
+const oauthMessage = document.getElementById('youtube-oauth-message');
+const oauthState = document.getElementById('youtube-oauth-state');
+const oauthStateTitle = document.getElementById('youtube-oauth-state-title');
+const oauthStateDetail = document.getElementById('youtube-oauth-state-detail');
 const modeInputs = document.querySelectorAll('input[name="mode"]');
+let youtubeOAuthConnected = false;
 
 function selectedMode() {
     return document.querySelector('input[name="mode"]:checked').value;
@@ -196,6 +250,28 @@ function setError(message) {
     errorText.textContent = message;
 }
 
+function setSessionState(state, title, detail) {
+    cookieState.dataset.state = state;
+    cookieState.className = `youtube-session-state ${state}`;
+    cookieStateTitle.textContent = title;
+    cookieStateDetail.textContent = detail;
+}
+
+function setOAuthState(state, title, detail) {
+    oauthState.dataset.state = state;
+    oauthState.className = `youtube-session-state ${state}`;
+    oauthStateTitle.textContent = title;
+    oauthStateDetail.textContent = detail;
+}
+
+function setSelectedMode(mode) {
+    const input = document.querySelector(`input[name="mode"][value="${mode}"]`);
+    if (input) {
+        input.checked = true;
+        localStorage.setItem(YOUTUBE_MODE_KEY, mode);
+    }
+}
+
 function setCookieStatus(metadata) {
     const configured = Boolean(metadata.configured);
     cookieStatus.classList.toggle('configured', configured);
@@ -203,14 +279,35 @@ function setCookieStatus(metadata) {
     cookieStatus.textContent = configured ? 'YouTube session stored' : 'No YouTube session';
 
     const verificationMessage = metadata.last_verification_message || '';
+    const storageDescription = metadata.encrypted ? 'encrypted server-side session' : 'server-side session';
     if (!configured) {
         cookieMessage.textContent = 'No stored YouTube cookie file.';
+        setSessionState(
+            'missing',
+            'No YouTube session saved',
+            'Uploads may still work for public videos; restricted videos need a cookies.txt session.'
+        );
     } else if (metadata.last_verification_ok === true) {
         cookieMessage.textContent = verificationMessage || 'Stored session verified.';
+        setSessionState(
+            'verified',
+            'YouTube cookies are saved and verified',
+            `Restricted YouTube downloads can use the ${storageDescription}.`
+        );
     } else if (metadata.last_verification_ok === false) {
         cookieMessage.textContent = verificationMessage || 'Stored session needs attention.';
+        setSessionState(
+            'problem',
+            'YouTube cookies need attention',
+            verificationMessage || 'Verify the session or upload a fresh cookies.txt file.'
+        );
     } else {
         cookieMessage.textContent = 'Stored session ready for downloads.';
+        setSessionState(
+            'saved',
+            'YouTube cookies are saved',
+            `The ${storageDescription} will be used for downloads. Verify it when access matters.`
+        );
     }
 
     document.getElementById('youtube-cookie-count').textContent = metadata.cookie_count || 0;
@@ -233,6 +330,65 @@ async function loadCookieStatus() {
         cookieStatus.classList.add('error');
         cookieStatus.textContent = 'Session status unavailable';
         cookieMessage.textContent = 'Could not read server session status.';
+        setSessionState(
+            'problem',
+            'Could not check YouTube session',
+            'The server did not return the stored cookie status.'
+        );
+    }
+}
+
+function setOAuthStatus(metadata) {
+    const clientConfigured = Boolean(metadata.client_configured);
+    youtubeOAuthConnected = Boolean(metadata.configured);
+    oauthDisconnectBtn.disabled = !youtubeOAuthConnected;
+
+    if (!clientConfigured) {
+        likedDownloadBtn.disabled = true;
+        oauthMessage.textContent = 'Google OAuth credentials are not configured on this server.';
+        setOAuthState(
+            'problem',
+            'YouTube OAuth is not configured',
+            'Set the Google OAuth client ID, secret, and redirect URI before using liked-video recovery.'
+        );
+    } else if (metadata.error) {
+        likedDownloadBtn.disabled = false;
+        oauthMessage.textContent = 'The stored YouTube connection needs attention.';
+        setOAuthState('problem', 'Reconnect YouTube', metadata.error);
+    } else if (youtubeOAuthConnected) {
+        likedDownloadBtn.disabled = false;
+        likedDownloadBtn.textContent = 'Download liked MP3s';
+        oauthMessage.textContent = 'Read-only YouTube access is connected.';
+        setOAuthState(
+            'verified',
+            'YouTube is connected',
+            `Ready to fetch up to ${metadata.max_liked_results || 0} liked videos and download them as MP3.`
+        );
+    } else {
+        likedDownloadBtn.disabled = false;
+        likedDownloadBtn.textContent = 'Connect YouTube';
+        oauthMessage.textContent = 'Connect YouTube once to turn liked videos into MP3 downloads.';
+        setOAuthState(
+            'missing',
+            'YouTube not connected',
+            'The next click opens Google consent, then returns here to fetch liked videos.'
+        );
+    }
+}
+
+async function loadOAuthStatus() {
+    try {
+        const response = await fetch('/api/youtube/oauth/status');
+        const metadata = await response.json();
+        setOAuthStatus(metadata);
+    } catch (err) {
+        likedDownloadBtn.disabled = true;
+        oauthDisconnectBtn.disabled = true;
+        setOAuthState(
+            'problem',
+            'Could not check YouTube OAuth',
+            'The server did not return the YouTube connection status.'
+        );
     }
 }
 
@@ -296,6 +452,81 @@ document.getElementById('youtube-clear-btn').addEventListener('click', () => {
     localStorage.removeItem(YOUTUBE_LEGACY_COOKIES_KEY);
     localStorage.setItem(YOUTUBE_MODE_KEY, 'video');
     resetMessages();
+});
+
+async function loadLikedVideosAndMaybeDownload({autoSubmit = true} = {}) {
+    resetMessages();
+
+    if (!youtubeOAuthConnected) {
+        localStorage.setItem(YOUTUBE_LIKED_AUTOSTART_KEY, autoSubmit ? '1' : '0');
+        window.location.href = '/api/youtube/oauth/start';
+        return;
+    }
+
+    setButtonState(likedDownloadBtn, true, 'Loading likes...');
+    setOAuthState('checking', 'Reading liked videos', 'Fetching liked video IDs from YouTube.');
+    try {
+        const response = await fetch('/api/youtube/oauth/liked', {
+            method: 'POST',
+            headers: apiHeaders({'Content-Type': 'application/json'}),
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            setError(data.error || 'Could not load liked videos');
+            setOAuthState('problem', 'Could not load liked videos', data.error || 'YouTube did not return liked videos.');
+            return;
+        }
+        if (!data.links || data.links.length === 0) {
+            setError('No liked videos were returned by YouTube');
+            setOAuthState('problem', 'No liked videos returned', 'The connected account did not return any liked videos.');
+            return;
+        }
+
+        linksInput.value = data.links.join('\n');
+        localStorage.setItem(YOUTUBE_LINKS_KEY, linksInput.value);
+        setSelectedMode('mp3');
+        setOAuthState(
+            'verified',
+            `${data.count} liked videos loaded`,
+            autoSubmit ? 'Starting MP3 download now.' : 'Ready to download as MP3.'
+        );
+
+        if (autoSubmit) {
+            document.getElementById('youtube-download-form').requestSubmit();
+        }
+    } catch (err) {
+        setError('Could not load liked videos: ' + err.message);
+        setOAuthState('problem', 'Could not load liked videos', err.message);
+    } finally {
+        setButtonState(likedDownloadBtn, false, youtubeOAuthConnected ? 'Download liked MP3s' : 'Connect YouTube');
+    }
+}
+
+likedDownloadBtn.addEventListener('click', () => {
+    loadLikedVideosAndMaybeDownload({autoSubmit: true});
+});
+
+oauthDisconnectBtn.addEventListener('click', async () => {
+    resetMessages();
+    setButtonState(oauthDisconnectBtn, true, 'Disconnecting...');
+    try {
+        const response = await fetch('/api/youtube/oauth', {
+            method: 'DELETE',
+            headers: apiHeaders()
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            setError(data.error || 'Could not disconnect YouTube');
+            return;
+        }
+        localStorage.removeItem(YOUTUBE_LIKED_AUTOSTART_KEY);
+        setOAuthStatus(data);
+    } catch (err) {
+        setError('Could not disconnect YouTube: ' + err.message);
+    } finally {
+        setButtonState(oauthDisconnectBtn, false, 'Disconnect');
+    }
 });
 
 document.getElementById('youtube-cookie-form').addEventListener('submit', async (e) => {
@@ -595,5 +826,18 @@ function formatFileSize(bytes) {
 
 restoreState();
 loadCookieStatus();
+loadOAuthStatus().then(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('youtube_oauth') === 'connected') {
+        const shouldAutoStart = localStorage.getItem(YOUTUBE_LIKED_AUTOSTART_KEY) === '1';
+        localStorage.removeItem(YOUTUBE_LIKED_AUTOSTART_KEY);
+        loadLikedVideosAndMaybeDownload({autoSubmit: shouldAutoStart});
+        window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (params.get('youtube_oauth') === 'error') {
+        localStorage.removeItem(YOUTUBE_LIKED_AUTOSTART_KEY);
+        setError('Google did not connect YouTube. Try again from the liked videos panel.');
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+});
 </script>
 {% endblock %}

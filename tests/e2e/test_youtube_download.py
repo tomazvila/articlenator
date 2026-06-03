@@ -125,12 +125,32 @@ class TestYouTubePage:
         expect(youtube.error_text).to_contain_text("at least one YouTube link")
         assert requests == []
 
+    def test_youtube_oauth_unconfigured_state_is_obvious(self, page: Page, base_url):
+        """Test liked-video OAuth availability is visible, not hidden in metadata numbers."""
+        youtube = YouTubePage(page)
+        youtube.navigate(base_url)
+
+        expect(youtube.oauth_state_title).to_have_text(
+            "YouTube OAuth is not configured", timeout=10000
+        )
+        expect(youtube.oauth_state).to_have_attribute("data-state", "problem")
+        expect(youtube.oauth_state_detail).to_contain_text("Google OAuth client ID")
+        expect(youtube.liked_download_button).to_be_disabled()
+
     def test_youtube_cookie_upload_status_delete_and_no_local_storage(self, page: Page, base_url):
         """Test YouTube cookies are stored server-side and never in localStorage."""
         youtube = YouTubePage(page)
         youtube.navigate(base_url)
+
+        expect(youtube.cookie_state_title).to_have_text("No YouTube session saved", timeout=10000)
+        expect(youtube.cookie_state).to_have_attribute("data-state", "missing")
+        expect(youtube.cookie_state_detail).to_contain_text("restricted videos need")
+
         youtube.save_pasted_cookies(SAMPLE_COOKIES)
         expect(youtube.cookie_status).to_contain_text("YouTube session stored", timeout=10000)
+        expect(youtube.cookie_state_title).to_have_text("YouTube cookies are saved")
+        expect(youtube.cookie_state).to_have_attribute("data-state", "saved")
+        expect(youtube.cookie_state_detail).to_contain_text("encrypted server-side session")
         expect(youtube.cookie_count).to_have_text("1")
         expect(youtube.cookies_textarea).to_be_empty()
 
@@ -139,11 +159,16 @@ class TestYouTubePage:
 
         page.reload()
         expect(youtube.cookie_status).to_contain_text("YouTube session stored", timeout=10000)
+        expect(youtube.cookie_state_title).to_have_text("YouTube cookies are saved")
+        expect(youtube.cookie_state).to_have_attribute("data-state", "saved")
         expect(youtube.cookie_status).not_to_contain_text("secret-session-value")
         expect(youtube.cookie_message).not_to_contain_text("secret-session-value")
+        expect(youtube.cookie_state_detail).not_to_contain_text("secret-session-value")
 
         youtube.delete_cookies()
         expect(youtube.cookie_status).to_contain_text("No YouTube session", timeout=10000)
+        expect(youtube.cookie_state_title).to_have_text("No YouTube session saved")
+        expect(youtube.cookie_state).to_have_attribute("data-state", "missing")
 
 
 class TestYouTubeFakeDownloadWorkflow:
@@ -371,7 +396,11 @@ class TestYouTubeFakeDownloadWorkflow:
 
         youtube.verify_cookies()
         expect(youtube.cookie_message).to_contain_text("downloadable media formats", timeout=10000)
+        expect(youtube.cookie_state_title).to_have_text("YouTube cookies are saved and verified")
+        expect(youtube.cookie_state).to_have_attribute("data-state", "verified")
+        expect(youtube.cookie_state_detail).to_contain_text("Restricted YouTube downloads")
         expect(youtube.cookie_message).not_to_contain_text("secret-session-value")
+        expect(youtube.cookie_state_detail).not_to_contain_text("secret-session-value")
 
         calls = read_fake_calls(flask_server)
         assert calls[-1]["mode"] == "verify"
@@ -467,6 +496,94 @@ class TestYouTubeFakeDownloadWorkflow:
             assert len(names) == 2
             assert all(name.endswith(".mp3") for name in names)
             assert all(len(archive.read(name)) > 100 for name in names)
+
+    def test_liked_video_oauth_feeds_mp3_batch_and_generates_zip(
+        self, page: Page, base_url, flask_server
+    ):
+        """Test connected YouTube likes load into MP3 mode and produce one archive link."""
+        clear_fake_log(flask_server)
+        liked_links = [
+            "https://www.youtube.com/watch?v=liked-one",
+            "https://www.youtube.com/watch?v=liked-two",
+        ]
+        liked_requests = []
+
+        page.route(
+            "**/api/youtube/oauth/status",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "configured": True,
+                        "encrypted": True,
+                        "client_configured": True,
+                        "has_refresh_token": True,
+                        "max_liked_results": 2,
+                    }
+                ),
+            ),
+        )
+        page.route(
+            "**/api/youtube/oauth/liked",
+            lambda route: (
+                liked_requests.append(route.request.post_data or ""),
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "items": [
+                                {
+                                    "id": "liked-one",
+                                    "url": liked_links[0],
+                                    "title": "Liked Track One",
+                                    "channel_title": "Liked Artist",
+                                },
+                                {
+                                    "id": "liked-two",
+                                    "url": liked_links[1],
+                                    "title": "Liked Track Two",
+                                    "channel_title": "Liked Artist",
+                                },
+                            ],
+                            "links": liked_links,
+                            "count": 2,
+                        }
+                    ),
+                ),
+            ),
+        )
+
+        youtube = YouTubePage(page)
+        youtube.navigate(base_url)
+        expect(youtube.oauth_state_title).to_have_text("YouTube is connected", timeout=10000)
+
+        youtube.click_liked_download()
+
+        expect(youtube.links_textarea).to_have_value("\n".join(liked_links), timeout=10000)
+        expect(youtube.mp3_mode).to_be_checked()
+        expect(youtube.results_section).to_be_visible(timeout=30000)
+        expect(youtube.download_all_link).to_have_text("Download all 2 files as ZIP")
+
+        links = youtube.get_download_links()
+        assert len(links) == 2
+        assert all(link.startswith("/download/youtube/audio/") for link in links)
+        assert all(link.endswith(".mp3") for link in links)
+
+        archive_href = youtube.get_download_all_href()
+        assert archive_href is not None
+        response = page.request.get(f"{base_url}{archive_href}")
+        assert response.status == 200
+        assert response.headers["content-type"].startswith("application/zip")
+        with zipfile.ZipFile(io.BytesIO(response.body())) as archive:
+            names = sorted(archive.namelist())
+            assert len(names) == 2
+            assert all(name.endswith(".mp3") for name in names)
+
+        calls = [call for call in read_fake_calls(flask_server) if call["mode"] == "mp3"]
+        assert [call["url"] for call in calls[-2:]] == liked_links
+        assert liked_requests
 
     def test_slow_fake_download_completes_without_frozen_ui(self, page: Page, base_url):
         """Test a slow fake podcast-style download keeps the UI processing and completes."""

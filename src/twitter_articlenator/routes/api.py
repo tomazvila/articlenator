@@ -10,7 +10,7 @@ import zipfile
 from contextlib import nullcontext
 
 import structlog
-from flask import Blueprint, Response, jsonify, request, current_app
+from flask import Blueprint, Response, current_app, jsonify, redirect, request, session, url_for
 from ..config import get_config, parse_cookie_input, validate_cookies
 from ..pdf.generator import generate_combined_pdf
 from ..security import is_valid_csrf_request
@@ -21,6 +21,15 @@ from ..sources.youtube_cookies import (
     YouTubeCookieEncryptionError,
     YouTubeCookieError,
     YouTubeCookieStore,
+)
+from ..sources.youtube_oauth import (
+    YouTubeOAuthConfigError,
+    YouTubeOAuthError,
+    YouTubeOAuthTokenError,
+    YouTubeOAuthTokenStore,
+    build_authorization_url,
+    exchange_authorization_code,
+    fetch_liked_videos,
 )
 
 # Delay between processing URLs to avoid rate limiting (seconds)
@@ -59,6 +68,37 @@ def _get_youtube_cookie_store() -> YouTubeCookieStore:
         require_encryption=config.require_youtube_cookie_encryption,
         max_bytes=config.youtube_cookie_max_bytes,
     )
+
+
+def _get_youtube_oauth_store() -> YouTubeOAuthTokenStore:
+    config = get_config()
+    return YouTubeOAuthTokenStore(
+        token_path=config.youtube_oauth_token_path,
+        encryption_key=config.youtube_cookie_encryption_key,
+        require_encryption=config.require_youtube_cookie_encryption,
+    )
+
+
+def _youtube_oauth_client_config() -> tuple[str, str, str]:
+    config = get_config()
+    if not config.youtube_oauth_client_id or not config.youtube_oauth_client_secret:
+        raise YouTubeOAuthConfigError("YouTube OAuth client ID and secret are not configured")
+
+    redirect_uri = config.youtube_oauth_redirect_uri or url_for(
+        "api.youtube_oauth_callback", _external=True
+    )
+    return config.youtube_oauth_client_id, config.youtube_oauth_client_secret, redirect_uri
+
+
+def _youtube_oauth_status() -> dict[str, object]:
+    config = get_config()
+    status = _get_youtube_oauth_store().status()
+    status["client_configured"] = bool(
+        config.youtube_oauth_client_id and config.youtube_oauth_client_secret
+    )
+    status["redirect_uri"] = config.youtube_oauth_redirect_uri
+    status["max_liked_results"] = config.youtube_liked_max_results
+    return status
 
 
 def _create_youtube_archive(output_dir, downloads: list[dict], mode: str) -> dict | None:
@@ -1313,6 +1353,111 @@ def youtube_cookies_verify():
 
     status_code = 200 if metadata.get("last_verification_ok") else 400
     return jsonify(metadata), status_code
+
+
+@api_bp.route("/youtube/oauth/status", methods=["GET"])
+def youtube_oauth_status():
+    """GET /api/youtube/oauth/status - Metadata-only OAuth connection status."""
+    return jsonify(_youtube_oauth_status())
+
+
+@api_bp.route("/youtube/oauth/start", methods=["GET"])
+def youtube_oauth_start():
+    """GET /api/youtube/oauth/start - Redirect to Google OAuth consent."""
+    try:
+        client_id, _client_secret, redirect_uri = _youtube_oauth_client_config()
+    except YouTubeOAuthConfigError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+    state = uuid.uuid4().hex
+    session["youtube_oauth_state"] = state
+    authorization_url = build_authorization_url(
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        state=state,
+    )
+    return redirect(authorization_url)
+
+
+@api_bp.route("/youtube/oauth/callback", methods=["GET"])
+def youtube_oauth_callback():
+    """GET /api/youtube/oauth/callback - Exchange Google OAuth code and return to UI."""
+    expected_state = session.pop("youtube_oauth_state", None)
+    actual_state = request.args.get("state")
+    if not expected_state or actual_state != expected_state:
+        return jsonify({"error": "Invalid OAuth state"}), 400
+
+    if request.args.get("error"):
+        error = request.args.get("error", "OAuth authorization failed")
+        return redirect(url_for("pages.youtube", youtube_oauth="error", reason=error))
+
+    code = request.args.get("code")
+    if not code:
+        return redirect(url_for("pages.youtube", youtube_oauth="error", reason="missing_code"))
+
+    try:
+        client_id, client_secret, redirect_uri = _youtube_oauth_client_config()
+        token_response = exchange_authorization_code(
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+            code=code,
+        )
+        _get_youtube_oauth_store().save_authorized_token(token_response)
+    except (YouTubeOAuthError, YouTubeCookieEncryptionError) as exc:
+        log.warning("youtube_oauth_callback_failed", error=str(exc))
+        return redirect(url_for("pages.youtube", youtube_oauth="error", reason="token_exchange"))
+
+    return redirect(url_for("pages.youtube", youtube_oauth="connected"))
+
+
+@api_bp.route("/youtube/oauth", methods=["DELETE"])
+def youtube_oauth_delete():
+    """DELETE /api/youtube/oauth - Remove stored YouTube OAuth token."""
+    if not is_valid_csrf_request():
+        return _csrf_error_response()
+
+    _get_youtube_oauth_store().delete()
+    return jsonify(_youtube_oauth_status())
+
+
+@api_bp.route("/youtube/oauth/liked", methods=["POST"])
+def youtube_oauth_liked():
+    """POST /api/youtube/oauth/liked - Fetch liked videos through OAuth."""
+    if not is_valid_csrf_request():
+        return _csrf_error_response()
+
+    config = get_config()
+    try:
+        client_id, client_secret, _redirect_uri = _youtube_oauth_client_config()
+    except YouTubeOAuthConfigError as exc:
+        return jsonify({"error": str(exc)}), 503
+
+    if request.is_json:
+        payload = request.get_json(silent=True) or {}
+    else:
+        payload = {}
+    requested_limit = payload.get("limit") or config.youtube_liked_max_results
+    try:
+        requested_limit = int(requested_limit)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Invalid liked-video limit"}), 400
+    requested_limit = max(1, min(requested_limit, config.youtube_liked_max_results))
+
+    try:
+        liked = fetch_liked_videos(
+            token_store=_get_youtube_oauth_store(),
+            client_id=client_id,
+            client_secret=client_secret,
+            max_results=requested_limit,
+        )
+    except FileNotFoundError:
+        return jsonify({"error": "Connect YouTube before loading liked videos"}), 404
+    except (YouTubeOAuthError, YouTubeOAuthTokenError, YouTubeCookieEncryptionError) as exc:
+        log.warning("youtube_liked_fetch_failed", error=str(exc))
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(liked)
 
 
 @api_bp.route("/youtube/download", methods=["POST"])

@@ -67,6 +67,24 @@ class Config:
                 self._config_dir / "youtube-cookies.txt",
             )
         )
+        self._youtube_oauth_client_id = os.environ.get(
+            "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_CLIENT_ID"
+        )
+        self._youtube_oauth_client_secret = os.environ.get(
+            "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_CLIENT_SECRET"
+        )
+        self._youtube_oauth_redirect_uri = os.environ.get(
+            "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_REDIRECT_URI"
+        )
+        self._youtube_oauth_token_path = Path(
+            os.environ.get(
+                "TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_TOKEN_PATH",
+                self._config_dir / "youtube-oauth-token.json",
+            )
+        )
+        self._youtube_liked_max_results = int(
+            os.environ.get("TWITTER_ARTICLENATOR_YOUTUBE_LIKED_MAX_RESULTS", "5000")
+        )
 
     @property
     def output_dir(self) -> Path:
@@ -127,6 +145,31 @@ class Config:
     def youtube_cookie_path(self) -> Path:
         """Server-side YouTube cookie storage path."""
         return self._youtube_cookie_path
+
+    @property
+    def youtube_oauth_client_id(self) -> str | None:
+        """Google OAuth client ID for YouTube Data API access."""
+        return self._youtube_oauth_client_id
+
+    @property
+    def youtube_oauth_client_secret(self) -> str | None:
+        """Google OAuth client secret for YouTube Data API access."""
+        return self._youtube_oauth_client_secret
+
+    @property
+    def youtube_oauth_redirect_uri(self) -> str | None:
+        """Configured OAuth redirect URI, if explicitly provided."""
+        return self._youtube_oauth_redirect_uri
+
+    @property
+    def youtube_oauth_token_path(self) -> Path:
+        """Server-side encrypted YouTube OAuth token path."""
+        return self._youtube_oauth_token_path
+
+    @property
+    def youtube_liked_max_results(self) -> int:
+        """Maximum liked YouTube videos to fetch through OAuth."""
+        return self._youtube_liked_max_results
 
 
 def get_config() -> Config:

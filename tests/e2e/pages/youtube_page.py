@@ -12,10 +12,19 @@ class YouTubePage:
         self.cookies_file = page.locator("#youtube-cookies-file")
         self.cookie_status = page.locator("#youtube-cookie-status")
         self.cookie_message = page.locator("#youtube-cookie-message")
+        self.cookie_state = page.locator("#youtube-session-state")
+        self.cookie_state_title = page.locator("#youtube-session-state-title")
+        self.cookie_state_detail = page.locator("#youtube-session-state-detail")
         self.cookie_count = page.locator("#youtube-cookie-count")
         self.verify_cookies_button = page.locator("#youtube-verify-cookies-btn")
         self.delete_cookies_button = page.locator("#youtube-delete-cookies-btn")
         self.save_cookies_button = page.locator("#youtube-save-cookies-btn")
+        self.liked_download_button = page.locator("#youtube-liked-download-btn")
+        self.oauth_disconnect_button = page.locator("#youtube-oauth-disconnect-btn")
+        self.oauth_message = page.locator("#youtube-oauth-message")
+        self.oauth_state = page.locator("#youtube-oauth-state")
+        self.oauth_state_title = page.locator("#youtube-oauth-state-title")
+        self.oauth_state_detail = page.locator("#youtube-oauth-state-detail")
         self.video_mode = page.locator("#mode-video")
         self.mp3_mode = page.locator("#mode-mp3")
         self.download_button = page.locator("#youtube-download-btn")
@@ -59,6 +68,10 @@ class YouTubePage:
     def verify_cookies(self):
         """Verify stored YouTube cookies."""
         self.verify_cookies_button.click()
+
+    def click_liked_download(self):
+        """Click the liked-video MP3 download button."""
+        self.liked_download_button.click()
 
     def select_mp3(self):
         """Select MP3 mode."""
