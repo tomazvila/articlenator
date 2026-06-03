@@ -6,7 +6,9 @@ import pytest
 
 from twitter_articlenator.sources.youtube_downloader import (
     _build_youtube_command,
+    _find_downloaded_files,
     _only_skippable_playlist_errors,
+    _snapshot_downloaded_files,
     is_supported_youtube_url,
     iter_youtube_download,
     youtube_url_kind,
@@ -87,17 +89,20 @@ def test_build_mp3_command_uses_default_quality():
 
     assert "-x" in cmd
     assert cmd[cmd.index("--js-runtimes") + 1] == "node"
-    assert cmd[cmd.index("-f") + 1] == "18/b[ext=mp4][protocol=https]/b"
+    assert cmd[cmd.index("-f") + 1] == "bestaudio/b"
     assert "--audio-format" in cmd
     assert "mp3" in cmd
     assert "--embed-metadata" in cmd
     assert "--embed-thumbnail" in cmd
     assert cmd[cmd.index("--convert-thumbnails") + 1] == "jpg"
+    assert "--replace-in-metadata" in cmd
 
     metadata_rules = [
         cmd[index + 1] for index, value in enumerate(cmd) if value == "--parse-metadata"
     ]
-    assert "%(uploader|)s:%(meta_artist)s" in metadata_rules
+    assert "title:%(artist)s - %(title)s" in metadata_rules
+    assert "%(artist,uploader|)s:%(meta_artist)s" in metadata_rules
+    assert "%(track,title|)s:%(meta_title)s" in metadata_rules
     assert "playlist_title:%(meta_album)s" not in metadata_rules
     assert "playlist_index:%(track_number)s" not in metadata_rules
     assert "--audio-quality" not in cmd
@@ -123,6 +128,24 @@ def test_build_playlist_command_explicitly_downloads_playlist():
     ]
     assert "playlist_title:%(meta_album)s" in metadata_rules
     assert "playlist_index:%(track_number)s" in metadata_rules
+
+
+def test_find_downloaded_mp3_files_uses_created_or_changed_human_names(tmp_path):
+    """Test MP3 discovery supports artist/title filenames without URL prefixes."""
+    existing = tmp_path / "System Of A Down - Toxicity [old].mp3"
+    existing.write_bytes(b"old")
+    before = _snapshot_downloaded_files(tmp_path, "mp3")
+
+    downloaded = tmp_path / "System Of A Down - B.Y.O.B [zUzd9KyIDrM].mp3"
+    downloaded.write_bytes(b"new")
+    existing.write_bytes(b"changed")
+
+    assert _find_downloaded_files(
+        tmp_path,
+        "youtube_mp3_unused",
+        "mp3",
+        before_outputs=before,
+    ) == [downloaded, existing]
 
 
 def test_only_skippable_playlist_errors_accepts_unavailable_videos():

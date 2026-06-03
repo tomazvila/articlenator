@@ -108,12 +108,22 @@ if "fail" in url and not partial_fail:
 extension = "mp3" if mode == "mp3" else "mp4"
 for index in range(1, item_count + 1):
     fake_id = "fake_" + hashlib.sha256(f"{url}:{index}".encode()).hexdigest()[:8]
+    fake_artist = "System Of A Down" if "byob" in url.lower() else "Fake Artist"
+    fake_title = "B.Y.O.B" if "byob" in url.lower() else f"Fake Track {index}"
     rendered_template = output_template.replace(
         "%(playlist_index&{}_|)s",
         f"{index:03d}_" if item_count > 1 else "",
+    ).replace(
+        "%(playlist_index&{} - |)s",
+        f"{index:03d} - " if item_count > 1 else "",
     )
     output_path = Path(
-        rendered_template.replace("%(id)s", fake_id).replace("%(ext)s", extension)
+        rendered_template.replace(
+            "%(artist,uploader|Unknown Artist).80s", fake_artist[:80]
+        )
+        .replace("%(track,title).140s", fake_title[:140])
+        .replace("%(id)s", fake_id)
+        .replace("%(ext)s", extension)
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = f"fake {mode} download {index}/{item_count} for {url}\\n"

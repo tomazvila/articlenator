@@ -100,10 +100,17 @@ def iter_youtube_download(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"youtube_{mode}_{hashlib.sha256(url.encode()).hexdigest()[:12]}"
-    output_template = output_dir / f"{prefix}_%(playlist_index&{{}}_|)s%(id)s.%(ext)s"
+    if mode == "mp3":
+        output_template = (
+            output_dir
+            / "%(playlist_index&{} - |)s%(artist,uploader|Unknown Artist).80s - %(track,title).140s [%(id)s].%(ext)s"
+        )
+    else:
+        output_template = output_dir / f"{prefix}_%(playlist_index&{{}}_|)s%(id)s.%(ext)s"
     for stale_file in output_dir.glob(f"{prefix}_*"):
         if stale_file.is_file():
             stale_file.unlink(missing_ok=True)
+    before_outputs = _snapshot_downloaded_files(output_dir, mode)
 
     cmd = _build_youtube_command(
         url=url,
@@ -149,7 +156,9 @@ def iter_youtube_download(
                 stderr = stderr_file.read().strip()
 
         if process.returncode != 0:
-            output_paths = _find_downloaded_files(output_dir, prefix, mode, required=False)
+            output_paths = _find_downloaded_files(
+                output_dir, prefix, mode, before_outputs=before_outputs, required=False
+            )
             if not (
                 url_kind == "playlist" and output_paths and _only_skippable_playlist_errors(stderr)
             ):
@@ -163,7 +172,9 @@ def iter_youtube_download(
                 stderr=stderr,
             )
         else:
-            output_paths = _find_downloaded_files(output_dir, prefix, mode)
+            output_paths = _find_downloaded_files(
+                output_dir, prefix, mode, before_outputs=before_outputs
+            )
 
         for output_path in output_paths:
             file_size = output_path.stat().st_size
@@ -230,7 +241,7 @@ def _build_youtube_command(
         cmd.extend(
             [
                 "-f",
-                "18/b[ext=mp4][protocol=https]/b",
+                "bestaudio/b",
                 "-x",
                 "--audio-format",
                 "mp3",
@@ -239,7 +250,23 @@ def _build_youtube_command(
                 "--convert-thumbnails",
                 "jpg",
                 "--parse-metadata",
-                "%(uploader|)s:%(meta_artist)s",
+                "title:%(artist)s - %(title)s",
+                "--replace-in-metadata",
+                "title",
+                r"(?i)\s*[\[(](?:official\s*)?(?:music\s*)?(?:video|audio|lyric(?:s)?|hd|4k|visualizer)[^\])]*[\])]\s*$",
+                "",
+                "--replace-in-metadata",
+                "title",
+                r"(?i)\s*-\s*(?:official\s*)?(?:music\s*)?(?:video|audio|lyric(?:s)?|hd|4k|visualizer)\s*$",
+                "",
+                "--replace-in-metadata",
+                "title",
+                r"\s{2,}",
+                " ",
+                "--parse-metadata",
+                "%(artist,uploader|)s:%(meta_artist)s",
+                "--parse-metadata",
+                "%(track,title|)s:%(meta_title)s",
             ]
         )
         if playlist:
@@ -262,16 +289,39 @@ def _only_skippable_playlist_errors(stderr: str) -> bool:
     return bool(error_lines) and all("Video unavailable" in line for line in error_lines)
 
 
+def _snapshot_downloaded_files(
+    output_dir: Path,
+    mode: YouTubeDownloadMode,
+) -> dict[Path, tuple[int, int]]:
+    """Snapshot existing final outputs before invoking yt-dlp."""
+    extension = ".mp4" if mode == "video" else ".mp3"
+    return {
+        path: (path.stat().st_mtime_ns, path.stat().st_size)
+        for path in output_dir.glob(f"*{extension}")
+        if path.is_file()
+    }
+
+
 def _find_downloaded_files(
     output_dir: Path,
     prefix: str,
     mode: YouTubeDownloadMode,
     *,
+    before_outputs: dict[Path, tuple[int, int]] | None = None,
     required: bool = True,
 ) -> list[Path]:
-    """Find all files produced by yt-dlp for a known URL prefix."""
+    """Find all files produced by yt-dlp for the current request."""
     extension = ".mp4" if mode == "video" else ".mp3"
-    candidates = sorted(output_dir.glob(f"{prefix}_*{extension}"))
+    if mode == "video" or before_outputs is None:
+        candidates = sorted(output_dir.glob(f"{prefix}_*{extension}"))
+    else:
+        candidates = []
+        for path in sorted(output_dir.glob(f"*{extension}")):
+            if not path.is_file():
+                continue
+            current = (path.stat().st_mtime_ns, path.stat().st_size)
+            if before_outputs.get(path) != current:
+                candidates.append(path)
     if required and not candidates:
         raise RuntimeError(f"yt-dlp completed but no {extension} output was found")
     return candidates

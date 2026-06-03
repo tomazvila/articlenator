@@ -134,25 +134,24 @@ def download_youtube(mode: str, filename: str):
     if mode not in allowed:
         return jsonify({"error": "Invalid YouTube download type"}), 400
 
-    safe_filename = secure_filename(filename)
     expected_extension = allowed[mode]["extension"]
 
-    if not safe_filename.endswith(expected_extension):
+    if not filename.endswith(expected_extension):
         return jsonify({"error": f"Only {expected_extension} files can be downloaded"}), 400
 
-    if not safe_filename or safe_filename != filename:
+    if not filename or "/" in filename or "\\" in filename or filename in {".", ".."}:
         return jsonify({"error": "Invalid filename"}), 400
 
     config = get_config()
     youtube_dir = config.output_dir / "youtube" / allowed[mode]["directory"]
 
-    youtube_path = youtube_dir / safe_filename
-    if not youtube_path.exists():
+    youtube_path = youtube_dir / filename
+    if not youtube_path.is_file():
         return jsonify({"error": "File not found"}), 404
 
     return send_from_directory(
         youtube_dir,
-        safe_filename,
+        filename,
         mimetype=allowed[mode]["mimetype"],
         as_attachment=True,
     )

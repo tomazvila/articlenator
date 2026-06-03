@@ -4,7 +4,9 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import zipfile
+from urllib.parse import unquote
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -37,6 +39,30 @@ def read_fake_calls(flask_server):
         return []
     lines = [line for line in log_path.read_text(encoding="utf-8").splitlines() if line]
     return [json.loads(line) for line in lines]
+
+
+def read_mp3_tags(path):
+    """Read selected MP3 container tags with ffprobe."""
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format_tags=title,artist,album,track,purl",
+            "-of",
+            "default=nw=1:nk=0",
+            str(path),
+        ],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    tags = {}
+    for line in result.stdout.splitlines():
+        key, _, value = line.partition("=")
+        tags[key] = value
+    return tags
 
 
 class TestYouTubePage:
@@ -164,6 +190,11 @@ class TestYouTubeFakeDownloadWorkflow:
         assert len(links) == 1
         assert links[0].startswith("/download/youtube/audio/")
         assert links[0].endswith(".mp3")
+        filename = unquote(links[0].rsplit("/", 1)[-1])
+        assert filename.startswith("Fake Artist - Fake Track 1 [")
+        assert "youtube_mp3_" not in filename
+        assert "youtu.be" not in filename
+        expect(youtube.download_list).to_contain_text("Fake Artist - Fake Track 1")
 
         response = page.request.get(f"{base_url}{links[0]}")
         assert response.status == 200
@@ -177,6 +208,15 @@ class TestYouTubeFakeDownloadWorkflow:
         assert "--embed-metadata" in calls[-1]["args"]
         assert "--embed-thumbnail" in calls[-1]["args"]
         assert calls[-1]["args"][calls[-1]["args"].index("--convert-thumbnails") + 1] == "jpg"
+        assert calls[-1]["args"][calls[-1]["args"].index("-f") + 1] == "bestaudio/b"
+        metadata_rules = [
+            calls[-1]["args"][index + 1]
+            for index, value in enumerate(calls[-1]["args"])
+            if value == "--parse-metadata"
+        ]
+        assert "title:%(artist)s - %(title)s" in metadata_rules
+        assert "%(artist,uploader|)s:%(meta_artist)s" in metadata_rules
+        assert "%(track,title|)s:%(meta_title)s" in metadata_rules
         assert "--audio-quality" not in calls[-1]["args"]
 
     def test_playlist_mp3_download_expands_items_and_tags_metadata(
@@ -209,7 +249,10 @@ class TestYouTubeFakeDownloadWorkflow:
             names = sorted(archive.namelist())
             assert len(names) == 3
             assert all(name.endswith(".mp3") for name in names)
-            assert all("_00" in name for name in names)
+            assert names[0].startswith("001 - Fake Artist - Fake Track 1 [")
+            assert names[1].startswith("002 - Fake Artist - Fake Track 2 [")
+            assert names[2].startswith("003 - Fake Artist - Fake Track 3 [")
+            assert all("youtube_mp3_" not in name for name in names)
 
         calls = read_fake_calls(flask_server)
         args = calls[-1]["args"]
@@ -223,7 +266,9 @@ class TestYouTubeFakeDownloadWorkflow:
         assert "--embed-metadata" in args
         assert "--embed-thumbnail" in args
         assert args[args.index("--convert-thumbnails") + 1] == "jpg"
-        assert "%(uploader|)s:%(meta_artist)s" in metadata_rules
+        assert "title:%(artist)s - %(title)s" in metadata_rules
+        assert "%(artist,uploader|)s:%(meta_artist)s" in metadata_rules
+        assert "%(track,title|)s:%(meta_title)s" in metadata_rules
         assert "playlist_title:%(meta_album)s" in metadata_rules
         assert "playlist_index:%(track_number)s" in metadata_rules
 
@@ -441,7 +486,14 @@ class TestYouTubeRealDownloadWorkflow:
         expect(youtube.results_section).to_be_visible(timeout=300000)
         links = youtube.get_download_links()
         assert any(link.endswith(".mp3") for link in links)
-        assert list((output_dir / "youtube" / "audio").glob("*.mp3"))
+        mp3_files = list((output_dir / "youtube" / "audio").glob("*.mp3"))
+        assert mp3_files
+        assert all("youtube_mp3_" not in path.name for path in mp3_files)
+        assert all("youtube.com" not in path.name.lower() for path in mp3_files)
+        tags = read_mp3_tags(mp3_files[0])
+        assert tags.get("TAG:title")
+        assert tags.get("TAG:artist")
+        assert "youtube.com" not in tags.get("TAG:title", "").lower()
 
     @pytest.mark.skipif(
         not AUTH_REAL_URL or not AUTH_COOKIES_FILE,
