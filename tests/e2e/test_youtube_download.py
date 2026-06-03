@@ -272,6 +272,30 @@ class TestYouTubeFakeDownloadWorkflow:
         assert "playlist_title:%(meta_album)s" in metadata_rules
         assert "playlist_index:%(track_number)s" in metadata_rules
 
+    def test_playlist_progress_shows_song_count_while_downloading(
+        self, page: Page, base_url, flask_server
+    ):
+        """Test playlist progress shows songs, not just one pasted source."""
+        clear_fake_log(flask_server)
+        playlist_url = "https://www.youtube.com/playlist?list=PLslowSongs"
+        youtube = YouTubePage(page)
+        youtube.navigate(base_url)
+        youtube.select_mp3()
+        youtube.enter_links([playlist_url])
+        youtube.click_download()
+
+        expect(youtube.status_div).to_be_visible(timeout=10000)
+        expect(youtube.status_text).to_contain_text("3 songs", timeout=10000)
+        expect(youtube.progress_list).to_contain_text("Playlist: 3 songs queued")
+        expect(youtube.progress_list).to_contain_text("Playlist: 0 / 3 songs downloaded")
+
+        expect(youtube.results_section).to_be_visible(timeout=30000)
+        expect(youtube.progress_list).to_contain_text("Playlist: 3 / 3 songs downloaded")
+
+        calls = read_fake_calls(flask_server)
+        assert any(call["mode"] == "playlist_probe" and call["output_count"] == 3 for call in calls)
+        assert calls[-1]["mode"] == "mp3"
+
     def test_playlist_partial_unavailable_items_still_returns_downloaded_mp3s(
         self, page: Page, base_url, flask_server
     ):

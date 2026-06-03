@@ -74,6 +74,25 @@ if "-F" in args:
     print("18 mp4 640x360")
     sys.exit(0)
 
+playlist_enabled = "--yes-playlist" in args
+is_playlist_url = "playlist" in url or "list=" in url
+item_count = 3 if playlist_enabled and is_playlist_url else 1
+
+if "--dump-single-json" in args:
+    record = {
+        "args": args,
+        "url": url,
+        "mode": "playlist_probe",
+        "cookies": cookie_info,
+        "output_count": item_count,
+    }
+    log_file = os.environ.get("TWITTER_ARTICLENATOR_YOUTUBE_FAKE_LOG")
+    if log_file:
+        with open(log_file, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record) + "\\n")
+    print(json.dumps({"entries": [{"id": f"fake-{index}"} for index in range(item_count)]}))
+    sys.exit(0)
+
 try:
     output_template = args[args.index("-o") + 1]
 except (ValueError, IndexError):
@@ -81,9 +100,6 @@ except (ValueError, IndexError):
     sys.exit(2)
 
 partial_fail = "partial-fail" in url
-playlist_enabled = "--yes-playlist" in args
-is_playlist_url = "playlist" in url or "list=" in url
-item_count = 3 if playlist_enabled and is_playlist_url else 1
 
 record = {
     "args": args,

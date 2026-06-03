@@ -397,6 +397,18 @@ function setProgressItem(data, className, text, detail) {
     }
 }
 
+function setOverallProgress(progressBar, progressInfo, data, sourceProgress, label) {
+    const safeTotal = Math.max(data.total || 1, 1);
+    const percent = ((Math.max(data.current - 1, 0) + sourceProgress) / safeTotal) * 100;
+    progressBar.style.width = `${percent}%`;
+    progressBar.setAttribute('aria-valuenow', Math.round(percent));
+    progressInfo.textContent = label || `${Math.floor(percent)}%`;
+}
+
+function playlistProgressLabel(data) {
+    return `${data.downloaded_count || 0} / ${data.playlist_count} songs · source ${data.current} / ${data.total}`;
+}
+
 document.getElementById('youtube-download-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     requestNotificationPermission();
@@ -468,19 +480,46 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
                     statusText.textContent = `Downloading ${data.total} source${data.total !== 1 ? 's' : ''}...`;
                     progressInfo.textContent = `0 / ${data.total}`;
                 } else if (data.type === 'keepalive') {
-                    statusText.textContent = `Still downloading ${data.current}/${data.total}...`;
+                    if (data.playlist_count) {
+                        const downloaded = data.downloaded_count || 0;
+                        const sourceProgress = Math.min(downloaded / data.playlist_count, 0.98);
+                        setOverallProgress(progressBar, progressInfo, data, sourceProgress, playlistProgressLabel(data));
+                        setProgressItem(
+                            data,
+                            'processing',
+                            `Playlist: ${downloaded} / ${data.playlist_count} songs downloaded`,
+                            data.url
+                        );
+                        statusText.textContent = `Downloading playlist: ${downloaded} / ${data.playlist_count} songs...`;
+                    } else {
+                        setOverallProgress(progressBar, progressInfo, data, 0, `${data.current - 1} / ${data.total}`);
+                        statusText.textContent = `Still downloading source ${data.current}/${data.total}...`;
+                    }
+                } else if (data.type === 'playlist') {
+                    setOverallProgress(progressBar, progressInfo, data, 0, playlistProgressLabel(data));
+                    setProgressItem(data, 'processing', `Playlist: ${data.playlist_count} songs queued`, data.url);
+                    statusText.textContent = `Downloading playlist: ${data.playlist_count} songs queued...`;
                 } else if (data.type === 'progress') {
-                    const percent = (data.current / data.total) * 100;
-                    progressBar.style.width = `${percent}%`;
-                    progressBar.setAttribute('aria-valuenow', Math.round(percent));
-                    progressInfo.textContent = `${data.current} / ${data.total}`;
-
                     if (data.status === 'processing') {
+                        setOverallProgress(progressBar, progressInfo, data, 0, `${data.current - 1} / ${data.total}`);
                         setProgressItem(data, 'processing', data.url);
                         statusText.textContent = `Downloading ${data.current}/${data.total}: ${data.url.substring(0, 70)}...`;
                     } else if (data.status === 'success') {
-                        setProgressItem(data, 'success', data.filename);
+                        setOverallProgress(progressBar, progressInfo, data, 1, `${data.current} / ${data.total}`);
+                        if (data.playlist_count) {
+                            setProgressItem(
+                                data,
+                                'success',
+                                `Playlist: ${data.file_count} / ${data.playlist_count} songs downloaded`,
+                                data.url
+                            );
+                        } else if (data.file_count && data.file_count > 1) {
+                            setProgressItem(data, 'success', `${data.file_count} files downloaded from playlist`, data.url);
+                        } else {
+                            setProgressItem(data, 'success', data.filename);
+                        }
                     } else if (data.status === 'failed') {
+                        setOverallProgress(progressBar, progressInfo, data, 1, `${data.current} / ${data.total}`);
                         setProgressItem(data, 'failed', data.url, data.error);
                     }
                 } else if (data.type === 'complete') {

@@ -1344,7 +1344,12 @@ def youtube_download():
     if mode not in YOUTUBE_DOWNLOAD_MODES:
         return jsonify({"error": "Invalid mode. Use 'video' or 'mp3'."}), 400
 
-    from ..sources.youtube_downloader import is_supported_youtube_url, iter_youtube_download
+    from ..sources.youtube_downloader import (
+        get_youtube_playlist_item_count,
+        is_supported_youtube_url,
+        iter_youtube_download,
+        youtube_url_kind,
+    )
 
     invalid_urls = [url for url in links if not is_supported_youtube_url(url)]
     if invalid_urls:
@@ -1382,6 +1387,16 @@ def youtube_download():
                     yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing', 'mode': mode})}\n\n"
 
                     try:
+                        playlist_count = None
+                        if youtube_url_kind(url) == "playlist":
+                            playlist_count = get_youtube_playlist_item_count(
+                                url,
+                                cookie_file_path=cookie_file_path,
+                                downloader_bin=config.youtube_downloader_bin,
+                            )
+                            if playlist_count is not None:
+                                yield f"data: {json_module.dumps({'type': 'playlist', 'current': i, 'total': total, 'url': url, 'playlist_count': playlist_count, 'downloaded_count': 0, 'mode': mode})}\n\n"
+
                         output_paths = []
                         for update in iter_youtube_download(
                             url,
@@ -1393,7 +1408,17 @@ def youtube_download():
                             keepalive_seconds=1.0,
                         ):
                             if update.kind == "keepalive":
-                                yield f"data: {json_module.dumps({'type': 'keepalive', 'current': i, 'total': total, 'url': url, 'mode': mode})}\n\n"
+                                payload = {
+                                    'type': 'keepalive',
+                                    'current': i,
+                                    'total': total,
+                                    'url': url,
+                                    'mode': mode,
+                                }
+                                if playlist_count is not None:
+                                    payload['playlist_count'] = playlist_count
+                                    payload['downloaded_count'] = update.file_count or 0
+                                yield f"data: {json_module.dumps(payload)}\n\n"
                             elif update.kind == "complete" and update.path is not None:
                                 output_paths.append(update.path)
 
@@ -1414,7 +1439,20 @@ def youtube_download():
                         if len(output_paths) > 1:
                             filename = f"{len(output_paths)} files from playlist"
 
-                        yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'success', 'filename': filename, 'file_count': len(output_paths), 'mode': mode})}\n\n"
+                        success_payload = {
+                            'type': 'progress',
+                            'current': i,
+                            'total': total,
+                            'url': url,
+                            'status': 'success',
+                            'filename': filename,
+                            'file_count': len(output_paths),
+                            'mode': mode,
+                        }
+                        if playlist_count is not None:
+                            success_payload['playlist_count'] = playlist_count
+                            success_payload['downloaded_count'] = len(output_paths)
+                        yield f"data: {json_module.dumps(success_payload)}\n\n"
 
                     except Exception as e:
                         error = str(e)

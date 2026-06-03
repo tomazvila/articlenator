@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 import tempfile
 import time
@@ -37,6 +38,7 @@ class YouTubeDownloadUpdate:
 
     kind: Literal["keepalive", "complete"]
     path: Path | None = None
+    file_count: int | None = None
 
 
 def youtube_url_kind(url: str) -> YouTubeURLKind | None:
@@ -148,7 +150,16 @@ def iter_youtube_download(
                         raise TimeoutError(f"YouTube download exceeded {timeout_seconds} seconds")
 
                     time.sleep(min(keepalive_seconds, max(timeout_seconds - elapsed, 0.1)))
-                    yield YouTubeDownloadUpdate(kind="keepalive")
+                    current_outputs = _find_downloaded_files(
+                        output_dir,
+                        prefix,
+                        mode,
+                        before_outputs=before_outputs,
+                        required=False,
+                    )
+                    yield YouTubeDownloadUpdate(
+                        kind="keepalive", file_count=len(current_outputs)
+                    )
 
                 stdout_file.seek(0)
                 stderr_file.seek(0)
@@ -281,6 +292,58 @@ def _build_youtube_command(
 
     cmd.append(url)
     return cmd
+
+
+def get_youtube_playlist_item_count(
+    url: str,
+    *,
+    cookie_file_path: Path | None = None,
+    downloader_bin: str = "yt-dlp",
+    timeout_seconds: int = 120,
+) -> int | None:
+    """Return the number of entries in a YouTube playlist without downloading media."""
+    if youtube_url_kind(url) != "playlist":
+        return None
+
+    cmd = [
+        downloader_bin,
+        "--no-warnings",
+        "--yes-playlist",
+        "--flat-playlist",
+        "--dump-single-json",
+        "--skip-download",
+        "--js-runtimes",
+        "node",
+        "--socket-timeout",
+        "30",
+    ]
+    if cookie_file_path:
+        cmd.extend(["--cookies", str(cookie_file_path)])
+    cmd.append(url)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=True,
+        )
+        metadata = json.loads(result.stdout)
+    except (json.JSONDecodeError, subprocess.SubprocessError, TimeoutError) as exc:
+        log.warning("youtube_playlist_count_failed", url=url, error=str(exc))
+        return None
+
+    entries = metadata.get("entries")
+    if isinstance(entries, list):
+        return len(entries)
+
+    for key in ("playlist_count", "n_entries"):
+        value = metadata.get(key)
+        if isinstance(value, int) and value >= 0:
+            return value
+
+    return None
 
 
 def _only_skippable_playlist_errors(stderr: str) -> bool:
