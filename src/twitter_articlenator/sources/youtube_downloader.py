@@ -157,9 +157,7 @@ def iter_youtube_download(
                         before_outputs=before_outputs,
                         required=False,
                     )
-                    yield YouTubeDownloadUpdate(
-                        kind="keepalive", file_count=len(current_outputs)
-                    )
+                    yield YouTubeDownloadUpdate(kind="keepalive", file_count=len(current_outputs))
 
                 stdout_file.seek(0)
                 stderr_file.seek(0)

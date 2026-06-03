@@ -1409,15 +1409,15 @@ def youtube_download():
                         ):
                             if update.kind == "keepalive":
                                 payload = {
-                                    'type': 'keepalive',
-                                    'current': i,
-                                    'total': total,
-                                    'url': url,
-                                    'mode': mode,
+                                    "type": "keepalive",
+                                    "current": i,
+                                    "total": total,
+                                    "url": url,
+                                    "mode": mode,
                                 }
                                 if playlist_count is not None:
-                                    payload['playlist_count'] = playlist_count
-                                    payload['downloaded_count'] = update.file_count or 0
+                                    payload["playlist_count"] = playlist_count
+                                    payload["downloaded_count"] = update.file_count or 0
                                 yield f"data: {json_module.dumps(payload)}\n\n"
                             elif update.kind == "complete" and update.path is not None:
                                 output_paths.append(update.path)
@@ -1440,18 +1440,18 @@ def youtube_download():
                             filename = f"{len(output_paths)} files from playlist"
 
                         success_payload = {
-                            'type': 'progress',
-                            'current': i,
-                            'total': total,
-                            'url': url,
-                            'status': 'success',
-                            'filename': filename,
-                            'file_count': len(output_paths),
-                            'mode': mode,
+                            "type": "progress",
+                            "current": i,
+                            "total": total,
+                            "url": url,
+                            "status": "success",
+                            "filename": filename,
+                            "file_count": len(output_paths),
+                            "mode": mode,
                         }
                         if playlist_count is not None:
-                            success_payload['playlist_count'] = playlist_count
-                            success_payload['downloaded_count'] = len(output_paths)
+                            success_payload["playlist_count"] = playlist_count
+                            success_payload["downloaded_count"] = len(output_paths)
                         yield f"data: {json_module.dumps(success_payload)}\n\n"
 
                     except Exception as e:
