@@ -385,14 +385,18 @@ def _request_liked_page(
             timeout=timeout_seconds,
         )
     except httpx.HTTPError as exc:
-        raise YouTubeOAuthError(f"Google API request failed: {_sanitize_message(str(exc))}") from exc
+        raise YouTubeOAuthError(
+            f"Google API request failed: {_sanitize_message(str(exc))}"
+        ) from exc
 
 
 def _post_token(payload: dict[str, object], *, timeout_seconds: float) -> dict[str, object]:
     try:
         response = httpx.post(GOOGLE_TOKEN_URL, data=payload, timeout=timeout_seconds)
     except httpx.HTTPError as exc:
-        raise YouTubeOAuthError(f"Google token request failed: {_sanitize_message(str(exc))}") from exc
+        raise YouTubeOAuthError(
+            f"Google token request failed: {_sanitize_message(str(exc))}"
+        ) from exc
 
     if response.status_code >= 400:
         raise YouTubeOAuthError(_google_error_message(response))
