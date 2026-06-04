@@ -222,6 +222,8 @@ const oauthStateTitle = document.getElementById('youtube-oauth-state-title');
 const oauthStateDetail = document.getElementById('youtube-oauth-state-detail');
 const modeInputs = document.querySelectorAll('input[name="mode"]');
 let youtubeOAuthConnected = false;
+let youtubeDownloadInFlight = false;
+let youtubeDownloadStartedFromLikes = false;
 
 function selectedMode() {
     return document.querySelector('input[name="mode"]:checked').value;
@@ -457,6 +459,16 @@ document.getElementById('youtube-clear-btn').addEventListener('click', () => {
 async function loadLikedVideosAndMaybeDownload({autoSubmit = true} = {}) {
     resetMessages();
 
+    if (youtubeDownloadInFlight) {
+        setOAuthState(
+            'checking',
+            'MP3 download already running',
+            'Use the download progress panel below for the active batch.'
+        );
+        document.getElementById('status').scrollIntoView({behavior: 'smooth', block: 'center'});
+        return;
+    }
+
     if (!youtubeOAuthConnected) {
         localStorage.setItem(YOUTUBE_LIKED_AUTOSTART_KEY, autoSubmit ? '1' : '0');
         window.location.href = '/api/youtube/oauth/start';
@@ -493,13 +505,16 @@ async function loadLikedVideosAndMaybeDownload({autoSubmit = true} = {}) {
         );
 
         if (autoSubmit) {
+            youtubeDownloadStartedFromLikes = true;
             document.getElementById('youtube-download-form').requestSubmit();
         }
     } catch (err) {
         setError('Could not load liked videos: ' + err.message);
         setOAuthState('problem', 'Could not load liked videos', err.message);
     } finally {
-        setButtonState(likedDownloadBtn, false, youtubeOAuthConnected ? 'Download liked MP3s' : 'Connect YouTube');
+        if (!youtubeDownloadInFlight) {
+            setButtonState(likedDownloadBtn, false, youtubeOAuthConnected ? 'Download liked MP3s' : 'Connect YouTube');
+        }
     }
 }
 
@@ -644,6 +659,11 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
     e.preventDefault();
     requestNotificationPermission();
 
+    if (youtubeDownloadInFlight) {
+        setError('A YouTube download is already running. Wait for it to finish before starting another one.');
+        return;
+    }
+
     const resultsDiv = document.getElementById('results');
     const errorDiv = document.getElementById('error');
     const errorText = document.getElementById('error-text');
@@ -656,6 +676,8 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
     const progressInfo = document.getElementById('progress-info');
     const downloadList = document.getElementById('download-list');
     const submitBtn = document.getElementById('youtube-download-btn');
+    const fromLikedVideos = youtubeDownloadStartedFromLikes;
+    youtubeDownloadStartedFromLikes = false;
 
     resetMessages();
 
@@ -668,9 +690,20 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
         return;
     }
 
+    youtubeDownloadInFlight = true;
     submitBtn.disabled = true;
+    likedDownloadBtn.disabled = true;
     statusDiv.style.display = 'flex';
     statusText.textContent = 'Starting...';
+    if (fromLikedVideos) {
+        likedDownloadBtn.textContent = 'Downloading...';
+        setOAuthState(
+            'checking',
+            'MP3 download running',
+            'Liked videos are queued. Download progress is shown below.'
+        );
+        statusDiv.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
 
     try {
         const response = await fetch('/api/youtube/download', {
@@ -796,11 +829,31 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
                     }
 
                     const count = data.summary ? data.summary.succeeded : 0;
+                    if (fromLikedVideos) {
+                        if (count > 0) {
+                            setOAuthState(
+                                'verified',
+                                'Liked MP3 download complete',
+                                data.archive && data.archive.href
+                                    ? 'Use the ZIP link below to download the full batch.'
+                                    : `${count} file${count !== 1 ? 's' : ''} downloaded.`
+                            );
+                        } else {
+                            setOAuthState(
+                                'problem',
+                                'Liked MP3 download finished without files',
+                                'Check the warning details below for failed videos.'
+                            );
+                        }
+                    }
                     sendNotification('YouTube Downloads Ready', `${count} file${count !== 1 ? 's' : ''} downloaded`);
                 } else if (data.type === 'error') {
                     statusDiv.style.display = 'none';
                     errorDiv.style.display = 'block';
                     errorText.textContent = data.error;
+                    if (fromLikedVideos) {
+                        setOAuthState('problem', 'Liked MP3 download failed', data.error);
+                    }
                 }
             }
         }
@@ -808,8 +861,13 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
         console.error('YouTube download error:', err);
         errorDiv.style.display = 'block';
         errorText.textContent = 'Failed to connect to server: ' + err.message;
+        if (fromLikedVideos) {
+            setOAuthState('problem', 'Liked MP3 download connection failed', err.message);
+        }
     } finally {
+        youtubeDownloadInFlight = false;
         submitBtn.disabled = false;
+        setButtonState(likedDownloadBtn, false, youtubeOAuthConnected ? 'Download liked MP3s' : 'Connect YouTube');
         if (statusDiv.style.display !== 'none') {
             statusDiv.style.display = 'none';
         }

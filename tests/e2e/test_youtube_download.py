@@ -503,7 +503,7 @@ class TestYouTubeFakeDownloadWorkflow:
         """Test connected YouTube likes load into MP3 mode and produce one archive link."""
         clear_fake_log(flask_server)
         liked_links = [
-            "https://www.youtube.com/watch?v=liked-one",
+            "https://www.youtube.com/watch?v=liked-slow-one",
             "https://www.youtube.com/watch?v=liked-two",
         ]
         liked_requests = []
@@ -563,8 +563,14 @@ class TestYouTubeFakeDownloadWorkflow:
 
         expect(youtube.links_textarea).to_have_value("\n".join(liked_links), timeout=10000)
         expect(youtube.mp3_mode).to_be_checked()
+        expect(youtube.oauth_state_title).to_have_text("MP3 download running", timeout=10000)
+        expect(youtube.oauth_state_detail).to_contain_text("Download progress is shown below")
+        expect(youtube.liked_download_button).to_be_disabled()
+        expect(youtube.status_div).to_be_visible(timeout=10000)
+        expect(youtube.status_text).to_contain_text("Downloading", timeout=10000)
         expect(youtube.results_section).to_be_visible(timeout=30000)
         expect(youtube.download_all_link).to_have_text("Download all 2 files as ZIP")
+        expect(youtube.oauth_state_title).to_have_text("Liked MP3 download complete")
 
         links = youtube.get_download_links()
         assert len(links) == 2
@@ -583,7 +589,7 @@ class TestYouTubeFakeDownloadWorkflow:
 
         calls = [call for call in read_fake_calls(flask_server) if call["mode"] == "mp3"]
         assert [call["url"] for call in calls[-2:]] == liked_links
-        assert liked_requests
+        assert len(liked_requests) == 1
 
     def test_slow_fake_download_completes_without_frozen_ui(self, page: Page, base_url):
         """Test a slow fake podcast-style download keeps the UI processing and completes."""
