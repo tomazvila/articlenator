@@ -4,6 +4,7 @@ import hashlib
 import json as json_module
 import re
 import shutil
+import threading
 import time
 import uuid
 import zipfile
@@ -50,10 +51,106 @@ SESSION_TTL_DAYS = 7
 TWITTER_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:twitter\.com|x\.com)/(\w+)/status/(\d+)")
 
 YOUTUBE_DOWNLOAD_MODES = {"video": "videos", "mp3": "audio"}
+YOUTUBE_DOWNLOAD_JOB_TTL_SECONDS = 24 * 60 * 60
+YOUTUBE_DOWNLOAD_STREAM_KEEPALIVE_SECONDS = 15.0
 
 log = structlog.get_logger()
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
+
+
+class YouTubeDownloadJob:
+    """In-process YouTube download job with replayable SSE events."""
+
+    def __init__(self, *, links: list[str], mode: str) -> None:
+        self.job_id = uuid.uuid4().hex
+        self.links = links
+        self.mode = mode
+        self.created_at = time.time()
+        self.updated_at = self.created_at
+        self.state = "queued"
+        self.done = False
+        self.downloads: list[dict] = []
+        self.errors: list[dict] = []
+        self.archive: dict | None = None
+        self._events: list[dict] = []
+        self._condition = threading.Condition()
+        self.thread: threading.Thread | None = None
+
+    def emit(self, payload: dict) -> None:
+        """Append a replayable progress event and notify stream subscribers."""
+        with self._condition:
+            event = dict(payload)
+            event["job_id"] = self.job_id
+            event["sequence"] = len(self._events)
+            self._events.append(event)
+            self.updated_at = time.time()
+            self._condition.notify_all()
+
+    def add_downloads(self, downloads: list[dict]) -> None:
+        """Record completed output files."""
+        with self._condition:
+            self.downloads.extend(downloads)
+            self.updated_at = time.time()
+
+    def add_error(self, error: dict) -> None:
+        """Record a per-source download error."""
+        with self._condition:
+            self.errors.append(error)
+            self.updated_at = time.time()
+
+    def finish(self, payload: dict, *, state: str) -> None:
+        """Append the terminal event and mark the job done."""
+        with self._condition:
+            event = dict(payload)
+            event["job_id"] = self.job_id
+            event["sequence"] = len(self._events)
+            self._events.append(event)
+            if "archive" in payload:
+                self.archive = payload["archive"]
+            self.state = state
+            self.done = True
+            self.updated_at = time.time()
+            self._condition.notify_all()
+
+    def mark_running(self) -> None:
+        """Mark the job as running."""
+        with self._condition:
+            self.state = "running"
+            self.updated_at = time.time()
+            self._condition.notify_all()
+
+    def wait_for_event(self, sequence: int, timeout: float) -> dict | None:
+        """Wait until an event at sequence exists, the job finishes, or timeout expires."""
+        with self._condition:
+            if sequence >= len(self._events) and not self.done:
+                self._condition.wait(timeout=timeout)
+            if sequence < len(self._events):
+                return dict(self._events[sequence])
+            return None
+
+    def snapshot(self) -> dict:
+        """Return JSON-safe job state."""
+        with self._condition:
+            return {
+                "job_id": self.job_id,
+                "state": self.state,
+                "done": self.done,
+                "mode": self.mode,
+                "total": len(self.links),
+                "completed": len(self.downloads),
+                "failed": len(self.errors),
+                "archive": self.archive,
+                "downloads": list(self.downloads),
+                "errors": list(self.errors),
+                "events": [dict(event) for event in self._events],
+                "created_at": self.created_at,
+                "updated_at": self.updated_at,
+            }
+
+
+_youtube_download_jobs: dict[str, YouTubeDownloadJob] = {}
+_youtube_download_jobs_lock = threading.Lock()
 
 
 def _csrf_error_response():
@@ -147,6 +244,274 @@ def _youtube_cookie_upload_text() -> str:
         return str(data.get("cookies", ""))
 
     return request.form.get("cookies", "")
+
+
+def _cleanup_youtube_download_jobs() -> None:
+    """Remove completed YouTube jobs after a short retention window."""
+    cutoff = time.time() - YOUTUBE_DOWNLOAD_JOB_TTL_SECONDS
+    with _youtube_download_jobs_lock:
+        stale_job_ids = [
+            job_id
+            for job_id, job in _youtube_download_jobs.items()
+            if job.done and job.updated_at < cutoff
+        ]
+        for job_id in stale_job_ids:
+            _youtube_download_jobs.pop(job_id, None)
+
+
+def _get_youtube_download_job(job_id: str) -> YouTubeDownloadJob | None:
+    _cleanup_youtube_download_jobs()
+    with _youtube_download_jobs_lock:
+        return _youtube_download_jobs.get(job_id)
+
+
+def _parse_youtube_download_payload() -> tuple[list[str], str, bool]:
+    """Parse the YouTube download request payload."""
+    raw_cookies_supplied = False
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+        links = data.get("links", [])
+        mode = data.get("mode", "video")
+        raw_cookies_supplied = bool(str(data.get("cookies", "")).strip())
+    else:
+        links_text = request.form.get("links", "")
+        links = [line.strip() for line in links_text.split("\n") if line.strip()]
+        mode = request.form.get("mode", "video")
+        raw_cookies_supplied = bool(request.form.get("cookies", "").strip())
+
+    return [link.strip() for link in links if link and link.strip()], mode, raw_cookies_supplied
+
+
+def _start_youtube_download_job(*, links: list[str], mode: str) -> YouTubeDownloadJob:
+    """Create and start a background YouTube download job."""
+    job = YouTubeDownloadJob(links=links, mode=mode)
+    with _youtube_download_jobs_lock:
+        _youtube_download_jobs[job.job_id] = job
+
+    thread = threading.Thread(
+        target=_run_youtube_download_job,
+        args=(job,),
+        daemon=True,
+        name=f"youtube-download-{job.job_id[:8]}",
+    )
+    job.thread = thread
+    thread.start()
+    return job
+
+
+def _run_youtube_download_job(job: YouTubeDownloadJob) -> None:
+    """Run one YouTube batch independently from browser stream lifetime."""
+    from ..sources.youtube_downloader import (
+        get_youtube_playlist_item_count,
+        iter_youtube_download,
+        youtube_url_kind,
+    )
+
+    config = get_config()
+    cookie_store = _get_youtube_cookie_store()
+    output_dir = config.output_dir / "youtube" / YOUTUBE_DOWNLOAD_MODES[job.mode]
+    downloads: list[dict] = []
+    errors: list[dict] = []
+    total = len(job.links)
+
+    try:
+        job.mark_running()
+        job.emit({"type": "start", "total": total, "mode": job.mode})
+
+        cookie_context = (
+            cookie_store.temporary_cookie_file()
+            if cookie_store.is_configured()
+            else nullcontext(None)
+        )
+        with cookie_context as cookie_file_path:
+            for i, url in enumerate(job.links, 1):
+                job.emit(
+                    {
+                        "type": "progress",
+                        "current": i,
+                        "total": total,
+                        "url": url,
+                        "status": "processing",
+                        "mode": job.mode,
+                    }
+                )
+
+                try:
+                    playlist_count = None
+                    if youtube_url_kind(url) == "playlist":
+                        playlist_count = get_youtube_playlist_item_count(
+                            url,
+                            cookie_file_path=cookie_file_path,
+                            downloader_bin=config.youtube_downloader_bin,
+                        )
+                        if playlist_count is not None:
+                            job.emit(
+                                {
+                                    "type": "playlist",
+                                    "current": i,
+                                    "total": total,
+                                    "url": url,
+                                    "playlist_count": playlist_count,
+                                    "downloaded_count": 0,
+                                    "mode": job.mode,
+                                }
+                            )
+
+                    output_paths = []
+                    for update in iter_youtube_download(
+                        url,
+                        output_dir,
+                        mode=job.mode,
+                        cookie_file_path=cookie_file_path,
+                        downloader_bin=config.youtube_downloader_bin,
+                        timeout_seconds=config.youtube_download_timeout,
+                        keepalive_seconds=1.0,
+                    ):
+                        if update.kind == "keepalive":
+                            payload = {
+                                "type": "keepalive",
+                                "current": i,
+                                "total": total,
+                                "url": url,
+                                "mode": job.mode,
+                            }
+                            if playlist_count is not None:
+                                payload["playlist_count"] = playlist_count
+                                payload["downloaded_count"] = update.file_count or 0
+                            job.emit(payload)
+                        elif update.kind == "complete" and update.path is not None:
+                            output_paths.append(update.path)
+
+                    if not output_paths:
+                        raise RuntimeError("yt-dlp completed without an output file")
+
+                    current_downloads = []
+                    for output_path in output_paths:
+                        current_downloads.append(
+                            {
+                                "url": url,
+                                "filename": output_path.name,
+                                "size_bytes": output_path.stat().st_size,
+                                "mode": job.mode,
+                            }
+                        )
+                    downloads.extend(current_downloads)
+                    job.add_downloads(current_downloads)
+
+                    filename = output_paths[0].name
+                    if len(output_paths) > 1:
+                        filename = f"{len(output_paths)} files from playlist"
+
+                    success_payload = {
+                        "type": "progress",
+                        "current": i,
+                        "total": total,
+                        "url": url,
+                        "status": "success",
+                        "filename": filename,
+                        "file_count": len(output_paths),
+                        "mode": job.mode,
+                    }
+                    if playlist_count is not None:
+                        success_payload["playlist_count"] = playlist_count
+                        success_payload["downloaded_count"] = len(output_paths)
+                    job.emit(success_payload)
+
+                except Exception as exc:
+                    error = str(exc)
+                    log.warning("youtube_download_failed", url=url, mode=job.mode, error=error)
+                    error_payload = {"url": url, "error": error}
+                    errors.append(error_payload)
+                    job.add_error(error_payload)
+                    job.emit(
+                        {
+                            "type": "progress",
+                            "current": i,
+                            "total": total,
+                            "url": url,
+                            "status": "failed",
+                            "error": error,
+                            "mode": job.mode,
+                        }
+                    )
+
+        archive = _create_youtube_archive(output_dir, downloads, job.mode)
+        job.finish(
+            {
+                "type": "complete",
+                "downloads": downloads,
+                "archive": archive,
+                "errors": errors if errors else None,
+                "summary": {
+                    "total": total,
+                    "succeeded": len(downloads),
+                    "failed": len(errors),
+                    "files": len(downloads),
+                },
+                "mode": job.mode,
+            },
+            state="complete",
+        )
+    except Exception as exc:
+        log.error(
+            "youtube_download_job_failed",
+            job_id=job.job_id,
+            error=str(exc),
+            completed=len(downloads),
+        )
+        job.finish(
+            {"type": "error", "error": f"Server error: {exc}", "mode": job.mode},
+            state="failed",
+        )
+
+
+def _youtube_download_stream_response(job: YouTubeDownloadJob, *, start_sequence: int = 0):
+    """Build an SSE response for a YouTube job, replaying events from sequence."""
+
+    def generate():
+        sequence = max(start_sequence, 0)
+        try:
+            while True:
+                event = job.wait_for_event(
+                    sequence,
+                    timeout=YOUTUBE_DOWNLOAD_STREAM_KEEPALIVE_SECONDS,
+                )
+                if event is None:
+                    if job.done:
+                        break
+                    yield (
+                        "data: "
+                        + json_module.dumps(
+                            {
+                                "type": "job_keepalive",
+                                "job_id": job.job_id,
+                                "sequence": sequence,
+                                "state": job.state,
+                                "mode": job.mode,
+                            }
+                        )
+                        + "\n\n"
+                    )
+                    continue
+
+                sequence = event["sequence"] + 1
+                yield f"data: {json_module.dumps(event)}\n\n"
+                if event["type"] in {"complete", "error"}:
+                    break
+        except GeneratorExit:
+            log.warning(
+                "youtube_stream_client_disconnected",
+                job_id=job.job_id,
+                completed=len(job.downloads),
+                total=len(job.links),
+            )
+            return
+
+    response = Response(generate(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.headers["Connection"] = "keep-alive"
+    return response
 
 
 def _get_run_async():
@@ -1466,19 +1831,7 @@ def youtube_download():
     if not is_valid_csrf_request():
         return _csrf_error_response()
 
-    raw_cookies_supplied = False
-    if request.is_json:
-        data = request.get_json(silent=True) or {}
-        links = data.get("links", [])
-        mode = data.get("mode", "video")
-        raw_cookies_supplied = bool(str(data.get("cookies", "")).strip())
-    else:
-        links_text = request.form.get("links", "")
-        links = [line.strip() for line in links_text.split("\n") if line.strip()]
-        mode = request.form.get("mode", "video")
-        raw_cookies_supplied = bool(request.form.get("cookies", "").strip())
-
-    links = [link.strip() for link in links if link and link.strip()]
+    links, mode, raw_cookies_supplied = _parse_youtube_download_payload()
 
     if raw_cookies_supplied:
         return jsonify({"error": "Upload YouTube cookies to the server before downloading"}), 400
@@ -1489,12 +1842,7 @@ def youtube_download():
     if mode not in YOUTUBE_DOWNLOAD_MODES:
         return jsonify({"error": "Invalid mode. Use 'video' or 'mp3'."}), 400
 
-    from ..sources.youtube_downloader import (
-        get_youtube_playlist_item_count,
-        is_supported_youtube_url,
-        iter_youtube_download,
-        youtube_url_kind,
-    )
+    from ..sources.youtube_downloader import is_supported_youtube_url
 
     invalid_urls = [url for url in links if not is_supported_youtube_url(url)]
     if invalid_urls:
@@ -1509,137 +1857,31 @@ def youtube_download():
             400,
         )
 
-    config = get_config()
-    cookie_store = _get_youtube_cookie_store()
-    output_dir = config.output_dir / "youtube" / YOUTUBE_DOWNLOAD_MODES[mode]
+    job = _start_youtube_download_job(links=links, mode=mode)
+    return _youtube_download_stream_response(job)
 
-    def generate():
-        """Generator function for YouTube SSE stream."""
-        downloads = []
-        errors = []
-        total = len(links)
 
-        try:
-            yield f"data: {json_module.dumps({'type': 'start', 'total': total, 'mode': mode})}\n\n"
+@api_bp.route("/youtube/download/jobs/<job_id>", methods=["GET"])
+def youtube_download_job_status(job_id: str):
+    """GET /api/youtube/download/jobs/<job_id> - Read YouTube job state."""
+    job = _get_youtube_download_job(job_id)
+    if job is None:
+        return jsonify({"error": "YouTube download job not found"}), 404
+    return jsonify(job.snapshot())
 
-            cookie_context = (
-                cookie_store.temporary_cookie_file()
-                if cookie_store.is_configured()
-                else nullcontext(None)
-            )
-            with cookie_context as cookie_file_path:
-                for i, url in enumerate(links, 1):
-                    yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'processing', 'mode': mode})}\n\n"
 
-                    try:
-                        playlist_count = None
-                        if youtube_url_kind(url) == "playlist":
-                            playlist_count = get_youtube_playlist_item_count(
-                                url,
-                                cookie_file_path=cookie_file_path,
-                                downloader_bin=config.youtube_downloader_bin,
-                            )
-                            if playlist_count is not None:
-                                yield f"data: {json_module.dumps({'type': 'playlist', 'current': i, 'total': total, 'url': url, 'playlist_count': playlist_count, 'downloaded_count': 0, 'mode': mode})}\n\n"
+@api_bp.route("/youtube/download/jobs/<job_id>/stream", methods=["GET"])
+def youtube_download_job_stream(job_id: str):
+    """GET /api/youtube/download/jobs/<job_id>/stream - Reattach to job events."""
+    job = _get_youtube_download_job(job_id)
+    if job is None:
+        return jsonify({"error": "YouTube download job not found"}), 404
 
-                        output_paths = []
-                        for update in iter_youtube_download(
-                            url,
-                            output_dir,
-                            mode=mode,
-                            cookie_file_path=cookie_file_path,
-                            downloader_bin=config.youtube_downloader_bin,
-                            timeout_seconds=config.youtube_download_timeout,
-                            keepalive_seconds=1.0,
-                        ):
-                            if update.kind == "keepalive":
-                                payload = {
-                                    "type": "keepalive",
-                                    "current": i,
-                                    "total": total,
-                                    "url": url,
-                                    "mode": mode,
-                                }
-                                if playlist_count is not None:
-                                    payload["playlist_count"] = playlist_count
-                                    payload["downloaded_count"] = update.file_count or 0
-                                yield f"data: {json_module.dumps(payload)}\n\n"
-                            elif update.kind == "complete" and update.path is not None:
-                                output_paths.append(update.path)
-
-                        if not output_paths:
-                            raise RuntimeError("yt-dlp completed without an output file")
-
-                        for output_path in output_paths:
-                            downloads.append(
-                                {
-                                    "url": url,
-                                    "filename": output_path.name,
-                                    "size_bytes": output_path.stat().st_size,
-                                    "mode": mode,
-                                }
-                            )
-
-                        filename = output_paths[0].name
-                        if len(output_paths) > 1:
-                            filename = f"{len(output_paths)} files from playlist"
-
-                        success_payload = {
-                            "type": "progress",
-                            "current": i,
-                            "total": total,
-                            "url": url,
-                            "status": "success",
-                            "filename": filename,
-                            "file_count": len(output_paths),
-                            "mode": mode,
-                        }
-                        if playlist_count is not None:
-                            success_payload["playlist_count"] = playlist_count
-                            success_payload["downloaded_count"] = len(output_paths)
-                        yield f"data: {json_module.dumps(success_payload)}\n\n"
-
-                    except Exception as e:
-                        error = str(e)
-                        log.warning("youtube_download_failed", url=url, mode=mode, error=error)
-                        errors.append({"url": url, "error": error})
-                        yield f"data: {json_module.dumps({'type': 'progress', 'current': i, 'total': total, 'url': url, 'status': 'failed', 'error': error, 'mode': mode})}\n\n"
-
-        except GeneratorExit:
-            log.warning(
-                "youtube_stream_client_disconnected",
-                completed=len(downloads),
-                total=total,
-            )
-            return
-        except Exception as e:
-            log.error("youtube_stream_fatal_error", error=str(e), completed=len(downloads))
-            try:
-                yield f"data: {json_module.dumps({'type': 'error', 'error': f'Server error: {str(e)}'})}\n\n"
-            except GeneratorExit:
-                return
-
-        archive = _create_youtube_archive(output_dir, downloads, mode)
-        final_result = {
-            "type": "complete",
-            "downloads": downloads,
-            "archive": archive,
-            "errors": errors if errors else None,
-            "summary": {
-                "total": total,
-                "succeeded": len(downloads),
-                "failed": len(errors),
-                "files": len(downloads),
-            },
-            "mode": mode,
-        }
-        yield f"data: {json_module.dumps(final_result)}\n\n"
-
-    response = Response(generate(), mimetype="text/event-stream")
-    response.headers["Cache-Control"] = "no-cache"
-    response.headers["X-Accel-Buffering"] = "no"
-    response.headers["Connection"] = "keep-alive"
-    return response
+    try:
+        start_sequence = int(request.args.get("after", "0"))
+    except ValueError:
+        start_sequence = 0
+    return _youtube_download_stream_response(job, start_sequence=start_sequence)
 
 
 # --- Session Management Endpoints ---

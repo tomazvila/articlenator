@@ -602,6 +602,42 @@ class TestYouTubeFakeDownloadWorkflow:
         expect(youtube.status_text).to_contain_text("Downloading", timeout=10000)
         expect(youtube.results_section).to_be_visible(timeout=30000)
 
+    def test_server_job_continues_after_browser_reload(self, page: Page, base_url, flask_server):
+        """Test a dropped browser stream can reattach to a still-running server job."""
+        clear_fake_log(flask_server)
+        youtube = YouTubePage(page)
+        youtube.navigate(base_url)
+        youtube.enter_links(
+            [
+                "https://youtu.be/slow-reload-one",
+                "https://youtu.be/slow-reload-two",
+            ]
+        )
+        youtube.click_download()
+
+        expect(youtube.status_div).to_be_visible(timeout=10000)
+        page.wait_for_function("localStorage.getItem('articlenator_youtube_active_job')")
+        job_id = page.evaluate("localStorage.getItem('articlenator_youtube_active_job')")
+
+        page.reload()
+
+        expect(youtube.results_section).to_be_visible(timeout=60000)
+        expect(youtube.download_all_link).to_have_text("Download all 2 files as ZIP")
+        assert page.evaluate("localStorage.getItem('articlenator_youtube_active_job')") is None
+
+        archive_href = youtube.get_download_all_href()
+        assert archive_href is not None
+        response = page.request.get(f"{base_url}{archive_href}")
+        assert response.status == 200
+        with zipfile.ZipFile(io.BytesIO(response.body())) as archive:
+            assert len(archive.namelist()) == 2
+
+        status = page.request.get(f"{base_url}/api/youtube/download/jobs/{job_id}")
+        assert status.status == 200
+        status_data = status.json()
+        assert status_data["state"] == "complete"
+        assert status_data["completed"] == 2
+
 
 @pytest.mark.skipif(
     os.environ.get("RUN_REAL_YOUTUBE_E2E") != "1",

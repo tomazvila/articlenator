@@ -201,6 +201,8 @@ const YOUTUBE_LINKS_KEY = 'articlenator_youtube_links';
 const YOUTUBE_LEGACY_COOKIES_KEY = 'articlenator_youtube_cookies';
 const YOUTUBE_MODE_KEY = 'articlenator_youtube_mode';
 const YOUTUBE_LIKED_AUTOSTART_KEY = 'articlenator_youtube_liked_autostart';
+const YOUTUBE_ACTIVE_JOB_KEY = 'articlenator_youtube_active_job';
+const YOUTUBE_ACTIVE_JOB_FROM_LIKES_KEY = 'articlenator_youtube_active_job_from_likes';
 
 const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 const linksInput = document.getElementById('youtube-links-input');
@@ -655,46 +657,37 @@ function playlistProgressLabel(data) {
     return `${data.downloaded_count || 0} / ${data.playlist_count} songs · source ${data.current} / ${data.total}`;
 }
 
-document.getElementById('youtube-download-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    requestNotificationPermission();
+function rememberActiveYouTubeJob(jobId, fromLikedVideos) {
+    if (!jobId) return;
+    localStorage.setItem(YOUTUBE_ACTIVE_JOB_KEY, jobId);
+    localStorage.setItem(YOUTUBE_ACTIVE_JOB_FROM_LIKES_KEY, fromLikedVideos ? '1' : '0');
+}
 
-    if (youtubeDownloadInFlight) {
-        setError('A YouTube download is already running. Wait for it to finish before starting another one.');
-        return;
+function clearActiveYouTubeJob() {
+    localStorage.removeItem(YOUTUBE_ACTIVE_JOB_KEY);
+    localStorage.removeItem(YOUTUBE_ACTIVE_JOB_FROM_LIKES_KEY);
+}
+
+function setDownloadControlsRunning(running) {
+    const submitBtn = document.getElementById('youtube-download-btn');
+    submitBtn.disabled = running;
+    likedDownloadBtn.disabled = running;
+    if (!running) {
+        setButtonState(likedDownloadBtn, false, youtubeOAuthConnected ? 'Download liked MP3s' : 'Connect YouTube');
     }
+}
 
-    const resultsDiv = document.getElementById('results');
-    const errorDiv = document.getElementById('error');
-    const errorText = document.getElementById('error-text');
-    const warningDiv = document.getElementById('warning');
-    const warningText = document.getElementById('warning-text');
+function startDownloadUi({fromLikedVideos = false, resuming = false} = {}) {
     const statusDiv = document.getElementById('status');
     const statusText = document.getElementById('status-text');
     const progressDetails = document.getElementById('progress-details');
-    const progressBar = document.getElementById('progress-bar');
-    const progressInfo = document.getElementById('progress-info');
-    const downloadList = document.getElementById('download-list');
-    const submitBtn = document.getElementById('youtube-download-btn');
-    const fromLikedVideos = youtubeDownloadStartedFromLikes;
-    youtubeDownloadStartedFromLikes = false;
-
-    resetMessages();
-
-    const links = linksInput.value.trim().split('\n').map(l => l.trim()).filter(Boolean);
-    const mode = selectedMode();
-
-    if (links.length === 0) {
-        errorDiv.style.display = 'block';
-        errorText.textContent = 'Please enter at least one YouTube link';
-        return;
-    }
 
     youtubeDownloadInFlight = true;
-    submitBtn.disabled = true;
-    likedDownloadBtn.disabled = true;
+    setDownloadControlsRunning(true);
     statusDiv.style.display = 'flex';
-    statusText.textContent = 'Starting...';
+    statusText.textContent = resuming ? 'Reconnecting to server download...' : 'Starting...';
+    progressDetails.style.display = 'block';
+
     if (fromLikedVideos) {
         likedDownloadBtn.textContent = 'Downloading...';
         setOAuthState(
@@ -704,6 +697,253 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
         );
         statusDiv.scrollIntoView({behavior: 'smooth', block: 'center'});
     }
+}
+
+function stopDownloadUi() {
+    youtubeDownloadInFlight = false;
+    setDownloadControlsRunning(false);
+    const statusDiv = document.getElementById('status');
+    if (statusDiv.style.display !== 'none') {
+        statusDiv.style.display = 'none';
+    }
+}
+
+function renderYouTubeDownloadEvent(data, context) {
+    const resultsDiv = document.getElementById('results');
+    const errorDiv = document.getElementById('error');
+    const errorText = document.getElementById('error-text');
+    const warningDiv = document.getElementById('warning');
+    const warningText = document.getElementById('warning-text');
+    const statusDiv = document.getElementById('status');
+    const statusText = document.getElementById('status-text');
+    const progressBar = document.getElementById('progress-bar');
+    const progressInfo = document.getElementById('progress-info');
+    const downloadList = document.getElementById('download-list');
+    const fromLikedVideos = Boolean(context.fromLikedVideos);
+
+    if (data.job_id) {
+        context.jobId = data.job_id;
+    }
+
+    if (data.type === 'start') {
+        rememberActiveYouTubeJob(data.job_id, fromLikedVideos);
+        statusText.textContent = `Downloading ${data.total} source${data.total !== 1 ? 's' : ''}...`;
+        progressInfo.textContent = `0 / ${data.total}`;
+    } else if (data.type === 'job_keepalive') {
+        statusText.textContent = 'Download continues on the server...';
+    } else if (data.type === 'keepalive') {
+        if (data.playlist_count) {
+            const downloaded = data.downloaded_count || 0;
+            const sourceProgress = Math.min(downloaded / data.playlist_count, 0.98);
+            setOverallProgress(progressBar, progressInfo, data, sourceProgress, playlistProgressLabel(data));
+            setProgressItem(
+                data,
+                'processing',
+                `Playlist: ${downloaded} / ${data.playlist_count} songs downloaded`,
+                data.url
+            );
+            statusText.textContent = `Downloading playlist: ${downloaded} / ${data.playlist_count} songs...`;
+        } else {
+            setOverallProgress(progressBar, progressInfo, data, 0, `${data.current - 1} / ${data.total}`);
+            statusText.textContent = `Still downloading source ${data.current}/${data.total}...`;
+        }
+    } else if (data.type === 'playlist') {
+        setOverallProgress(progressBar, progressInfo, data, 0, playlistProgressLabel(data));
+        setProgressItem(data, 'processing', `Playlist: ${data.playlist_count} songs queued`, data.url);
+        statusText.textContent = `Downloading playlist: ${data.playlist_count} songs queued...`;
+    } else if (data.type === 'progress') {
+        if (data.status === 'processing') {
+            setOverallProgress(progressBar, progressInfo, data, 0, `${data.current - 1} / ${data.total}`);
+            setProgressItem(data, 'processing', data.url);
+            statusText.textContent = `Downloading ${data.current}/${data.total}: ${data.url.substring(0, 70)}...`;
+        } else if (data.status === 'success') {
+            setOverallProgress(progressBar, progressInfo, data, 1, `${data.current} / ${data.total}`);
+            if (data.playlist_count) {
+                setProgressItem(
+                    data,
+                    'success',
+                    `Playlist: ${data.file_count} / ${data.playlist_count} songs downloaded`,
+                    data.url
+                );
+            } else if (data.file_count && data.file_count > 1) {
+                setProgressItem(data, 'success', `${data.file_count} files downloaded from playlist`, data.url);
+            } else {
+                setProgressItem(data, 'success', data.filename);
+            }
+        } else if (data.status === 'failed') {
+            setOverallProgress(progressBar, progressInfo, data, 1, `${data.current} / ${data.total}`);
+            setProgressItem(data, 'failed', data.url, data.error);
+        }
+    } else if (data.type === 'complete') {
+        context.done = true;
+        clearActiveYouTubeJob();
+        statusDiv.style.display = 'none';
+        downloadList.replaceChildren();
+        document.getElementById('youtube-download-actions').style.display = 'none';
+        document.getElementById('youtube-download-all').href = '#';
+
+        if (data.downloads && data.downloads.length > 0) {
+            resultsDiv.style.display = 'block';
+            const downloadActions = document.getElementById('youtube-download-actions');
+            const downloadAll = document.getElementById('youtube-download-all');
+            if (data.archive && data.archive.href) {
+                downloadAll.href = data.archive.href;
+                downloadAll.textContent = `Download all ${data.downloads.length} files as ZIP`;
+                downloadActions.style.display = 'flex';
+            }
+
+            for (const item of data.downloads) {
+                const li = document.createElement('li');
+                const a = document.createElement('a');
+                const folder = item.mode === 'mp3' ? 'audio' : 'video';
+                a.href = `/download/youtube/${folder}/${item.filename}`;
+                a.textContent = `${item.filename} (${formatFileSize(item.size_bytes)})`;
+                li.appendChild(a);
+                downloadList.appendChild(li);
+            }
+        }
+
+        if (data.summary) {
+            const summaryLi = document.createElement('li');
+            summaryLi.className = 'summary';
+            if (data.summary.succeeded > data.summary.total) {
+                const sourceLabel = data.summary.total === 1 ? 'source' : 'sources';
+                summaryLi.textContent = `Summary: ${data.summary.succeeded} files downloaded from ${data.summary.total} ${sourceLabel}, ${data.summary.failed} failed`;
+            } else {
+                summaryLi.textContent = `Summary: ${data.summary.succeeded} downloaded, ${data.summary.failed} failed of ${data.summary.total} total`;
+            }
+            downloadList.appendChild(summaryLi);
+        }
+
+        if (data.errors && data.errors.length > 0) {
+            warningDiv.style.display = 'block';
+            const failedUrls = data.errors.map(err => `${err.url}:\n  ${err.error}`).join('\n\n');
+            warningText.textContent = `${data.errors.length} download(s) failed:\n\n${failedUrls}`;
+        }
+
+        const count = data.summary ? data.summary.succeeded : 0;
+        if (fromLikedVideos) {
+            if (count > 0) {
+                setOAuthState(
+                    'verified',
+                    'Liked MP3 download complete',
+                    data.archive && data.archive.href
+                        ? 'Use the ZIP link below to download the full batch.'
+                        : `${count} file${count !== 1 ? 's' : ''} downloaded.`
+                );
+            } else {
+                setOAuthState(
+                    'problem',
+                    'Liked MP3 download finished without files',
+                    'Check the warning details below for failed videos.'
+                );
+            }
+        }
+        sendNotification('YouTube Downloads Ready', `${count} file${count !== 1 ? 's' : ''} downloaded`);
+        stopDownloadUi();
+    } else if (data.type === 'error') {
+        context.done = true;
+        clearActiveYouTubeJob();
+        statusDiv.style.display = 'none';
+        errorDiv.style.display = 'block';
+        errorText.textContent = data.error;
+        if (fromLikedVideos) {
+            setOAuthState('problem', 'Liked MP3 download failed', data.error);
+        }
+        stopDownloadUi();
+    }
+}
+
+async function consumeYouTubeDownloadStream(response, context) {
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+        const data = await response.json();
+        throw new Error(data.error || 'Server returned an unexpected JSON response');
+    }
+    if (!response.ok) {
+        throw new Error(`Server returned HTTP ${response.status}`);
+    }
+    if (!response.body) {
+        throw new Error('Server did not return a stream');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        const {value, done} = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, {stream: true});
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = JSON.parse(line.slice(6));
+            renderYouTubeDownloadEvent(data, context);
+        }
+    }
+}
+
+async function attachToYouTubeDownloadJob(jobId, context) {
+    const response = await fetch(`/api/youtube/download/jobs/${jobId}/stream`);
+    await consumeYouTubeDownloadStream(response, context);
+}
+
+async function resumeActiveYouTubeDownload() {
+    const jobId = localStorage.getItem(YOUTUBE_ACTIVE_JOB_KEY);
+    if (!jobId || youtubeDownloadInFlight) return;
+
+    const fromLikedVideos = localStorage.getItem(YOUTUBE_ACTIVE_JOB_FROM_LIKES_KEY) === '1';
+    try {
+        const statusResponse = await fetch(`/api/youtube/download/jobs/${jobId}`);
+        if (!statusResponse.ok) {
+            clearActiveYouTubeJob();
+            return;
+        }
+
+        resetMessages();
+        startDownloadUi({fromLikedVideos, resuming: true});
+        const context = {fromLikedVideos, jobId, done: false};
+        await attachToYouTubeDownloadJob(jobId, context);
+        if (!context.done) {
+            document.getElementById('status-text').textContent = 'Download continues on the server. Keep this tab open to reconnect.';
+        }
+    } catch (err) {
+        document.getElementById('status').style.display = 'flex';
+        document.getElementById('status-text').textContent = 'Download continues on the server. Refresh this page to reconnect.';
+        if (fromLikedVideos) {
+            setOAuthState('checking', 'MP3 download still running', 'Refresh this page to reconnect to progress.');
+        }
+    }
+}
+
+document.getElementById('youtube-download-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    requestNotificationPermission();
+
+    if (youtubeDownloadInFlight) {
+        setError('A YouTube download is already running. Wait for it to finish before starting another one.');
+        return;
+    }
+
+    const links = linksInput.value.trim().split('\n').map(l => l.trim()).filter(Boolean);
+    const mode = selectedMode();
+    const fromLikedVideos = youtubeDownloadStartedFromLikes;
+    youtubeDownloadStartedFromLikes = false;
+
+    resetMessages();
+
+    if (links.length === 0) {
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error-text').textContent = 'Please enter at least one YouTube link';
+        return;
+    }
+
+    startDownloadUi({fromLikedVideos});
+    const context = {fromLikedVideos, jobId: null, done: false};
 
     try {
         const response = await fetch('/api/youtube/download', {
@@ -711,165 +951,26 @@ document.getElementById('youtube-download-form').addEventListener('submit', asyn
             headers: apiHeaders({'Content-Type': 'application/json'}),
             body: JSON.stringify({links: links, mode: mode})
         });
-
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-            const data = await response.json();
-            if (data.error) {
-                errorDiv.style.display = 'block';
-                errorText.textContent = data.error;
-                statusDiv.style.display = 'none';
-                return;
-            }
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        progressDetails.style.display = 'block';
-
-        while (true) {
-            const {value, done} = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, {stream: true});
-            const lines = buffer.split('\n\n');
-            buffer = lines.pop();
-
-            for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                const data = JSON.parse(line.slice(6));
-
-                if (data.type === 'start') {
-                    statusText.textContent = `Downloading ${data.total} source${data.total !== 1 ? 's' : ''}...`;
-                    progressInfo.textContent = `0 / ${data.total}`;
-                } else if (data.type === 'keepalive') {
-                    if (data.playlist_count) {
-                        const downloaded = data.downloaded_count || 0;
-                        const sourceProgress = Math.min(downloaded / data.playlist_count, 0.98);
-                        setOverallProgress(progressBar, progressInfo, data, sourceProgress, playlistProgressLabel(data));
-                        setProgressItem(
-                            data,
-                            'processing',
-                            `Playlist: ${downloaded} / ${data.playlist_count} songs downloaded`,
-                            data.url
-                        );
-                        statusText.textContent = `Downloading playlist: ${downloaded} / ${data.playlist_count} songs...`;
-                    } else {
-                        setOverallProgress(progressBar, progressInfo, data, 0, `${data.current - 1} / ${data.total}`);
-                        statusText.textContent = `Still downloading source ${data.current}/${data.total}...`;
-                    }
-                } else if (data.type === 'playlist') {
-                    setOverallProgress(progressBar, progressInfo, data, 0, playlistProgressLabel(data));
-                    setProgressItem(data, 'processing', `Playlist: ${data.playlist_count} songs queued`, data.url);
-                    statusText.textContent = `Downloading playlist: ${data.playlist_count} songs queued...`;
-                } else if (data.type === 'progress') {
-                    if (data.status === 'processing') {
-                        setOverallProgress(progressBar, progressInfo, data, 0, `${data.current - 1} / ${data.total}`);
-                        setProgressItem(data, 'processing', data.url);
-                        statusText.textContent = `Downloading ${data.current}/${data.total}: ${data.url.substring(0, 70)}...`;
-                    } else if (data.status === 'success') {
-                        setOverallProgress(progressBar, progressInfo, data, 1, `${data.current} / ${data.total}`);
-                        if (data.playlist_count) {
-                            setProgressItem(
-                                data,
-                                'success',
-                                `Playlist: ${data.file_count} / ${data.playlist_count} songs downloaded`,
-                                data.url
-                            );
-                        } else if (data.file_count && data.file_count > 1) {
-                            setProgressItem(data, 'success', `${data.file_count} files downloaded from playlist`, data.url);
-                        } else {
-                            setProgressItem(data, 'success', data.filename);
-                        }
-                    } else if (data.status === 'failed') {
-                        setOverallProgress(progressBar, progressInfo, data, 1, `${data.current} / ${data.total}`);
-                        setProgressItem(data, 'failed', data.url, data.error);
-                    }
-                } else if (data.type === 'complete') {
-                    statusDiv.style.display = 'none';
-
-                    if (data.downloads && data.downloads.length > 0) {
-                        resultsDiv.style.display = 'block';
-                        const downloadActions = document.getElementById('youtube-download-actions');
-                        const downloadAll = document.getElementById('youtube-download-all');
-                        if (data.archive && data.archive.href) {
-                            downloadAll.href = data.archive.href;
-                            downloadAll.textContent = `Download all ${data.downloads.length} files as ZIP`;
-                            downloadActions.style.display = 'flex';
-                        }
-
-                        for (const item of data.downloads) {
-                            const li = document.createElement('li');
-                            const a = document.createElement('a');
-                            const folder = item.mode === 'mp3' ? 'audio' : 'video';
-                            a.href = `/download/youtube/${folder}/${item.filename}`;
-                            a.textContent = `${item.filename} (${formatFileSize(item.size_bytes)})`;
-                            li.appendChild(a);
-                            downloadList.appendChild(li);
-                        }
-                    }
-
-                    if (data.summary) {
-                        const summaryLi = document.createElement('li');
-                        summaryLi.className = 'summary';
-                        if (data.summary.succeeded > data.summary.total) {
-                            const sourceLabel = data.summary.total === 1 ? 'source' : 'sources';
-                            summaryLi.textContent = `Summary: ${data.summary.succeeded} files downloaded from ${data.summary.total} ${sourceLabel}, ${data.summary.failed} failed`;
-                        } else {
-                            summaryLi.textContent = `Summary: ${data.summary.succeeded} downloaded, ${data.summary.failed} failed of ${data.summary.total} total`;
-                        }
-                        downloadList.appendChild(summaryLi);
-                    }
-
-                    if (data.errors && data.errors.length > 0) {
-                        warningDiv.style.display = 'block';
-                        const failedUrls = data.errors.map(err => `${err.url}:\n  ${err.error}`).join('\n\n');
-                        warningText.textContent = `${data.errors.length} download(s) failed:\n\n${failedUrls}`;
-                    }
-
-                    const count = data.summary ? data.summary.succeeded : 0;
-                    if (fromLikedVideos) {
-                        if (count > 0) {
-                            setOAuthState(
-                                'verified',
-                                'Liked MP3 download complete',
-                                data.archive && data.archive.href
-                                    ? 'Use the ZIP link below to download the full batch.'
-                                    : `${count} file${count !== 1 ? 's' : ''} downloaded.`
-                            );
-                        } else {
-                            setOAuthState(
-                                'problem',
-                                'Liked MP3 download finished without files',
-                                'Check the warning details below for failed videos.'
-                            );
-                        }
-                    }
-                    sendNotification('YouTube Downloads Ready', `${count} file${count !== 1 ? 's' : ''} downloaded`);
-                } else if (data.type === 'error') {
-                    statusDiv.style.display = 'none';
-                    errorDiv.style.display = 'block';
-                    errorText.textContent = data.error;
-                    if (fromLikedVideos) {
-                        setOAuthState('problem', 'Liked MP3 download failed', data.error);
-                    }
-                }
-            }
+        await consumeYouTubeDownloadStream(response, context);
+        if (!context.done && context.jobId) {
+            document.getElementById('status-text').textContent = 'Connection closed. Reconnecting to server download...';
+            await attachToYouTubeDownloadJob(context.jobId, context);
         }
     } catch (err) {
         console.error('YouTube download error:', err);
-        errorDiv.style.display = 'block';
-        errorText.textContent = 'Failed to connect to server: ' + err.message;
-        if (fromLikedVideos) {
-            setOAuthState('problem', 'Liked MP3 download connection failed', err.message);
-        }
-    } finally {
-        youtubeDownloadInFlight = false;
-        submitBtn.disabled = false;
-        setButtonState(likedDownloadBtn, false, youtubeOAuthConnected ? 'Download liked MP3s' : 'Connect YouTube');
-        if (statusDiv.style.display !== 'none') {
-            statusDiv.style.display = 'none';
+        if (context.jobId && !context.done) {
+            document.getElementById('status').style.display = 'flex';
+            document.getElementById('status-text').textContent = 'Download continues on the server. Refresh this page to reconnect.';
+            if (fromLikedVideos) {
+                setOAuthState('checking', 'MP3 download still running', 'Refresh this page to reconnect to progress.');
+            }
+        } else {
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error-text').textContent = 'Failed to connect to server: ' + err.message;
+            if (fromLikedVideos) {
+                setOAuthState('problem', 'Liked MP3 download connection failed', err.message);
+            }
+            stopDownloadUi();
         }
     }
 });
@@ -896,6 +997,8 @@ loadOAuthStatus().then(() => {
         setError('Google did not connect YouTube. Try again from the liked videos panel.');
         window.history.replaceState({}, document.title, window.location.pathname);
     }
+}).finally(() => {
+    resumeActiveYouTubeDownload();
 });
 </script>
 {% endblock %}
