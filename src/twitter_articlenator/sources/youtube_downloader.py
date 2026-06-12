@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import tempfile
 import time
@@ -345,9 +346,18 @@ def get_youtube_playlist_item_count(
 
 
 def _only_skippable_playlist_errors(stderr: str) -> bool:
-    """Return whether yt-dlp errors only describe unavailable playlist items."""
+    """Return whether yt-dlp errors are all scoped to individual playlist items.
+
+    A failure attributable to a single video (unavailable, removed, private,
+    blocked, ...) must not sink the rest of the playlist; yt-dlp wordings vary
+    too much to enumerate, so any `ERROR: [youtube] <id>: ...` line counts.
+    Operational errors without a video scope (disk full, postprocessing,
+    network) still fail the whole download.
+    """
     error_lines = [line for line in stderr.splitlines() if line.startswith("ERROR:")]
-    return bool(error_lines) and all("Video unavailable" in line for line in error_lines)
+    return bool(error_lines) and all(
+        re.match(r"ERROR:\s+\[youtube[^\]]*\]\s+[\w-]+:", line) for line in error_lines
+    )
 
 
 def _snapshot_downloaded_files(

@@ -160,6 +160,26 @@ def test_only_skippable_playlist_errors_accepts_unavailable_videos():
     assert _only_skippable_playlist_errors(stderr)
 
 
+def test_only_skippable_playlist_errors_accepts_any_per_video_error():
+    """Test every per-video extraction error wording is tolerated, not just one phrase."""
+    stderr = "\n".join(
+        [
+            "ERROR: [youtube] fDWFVI8PQOI: This video has been removed for violating "
+            "YouTube's Terms of Service",
+            "ERROR: [youtube] QZSDbUTgGXM: Video unavailable. This video is no longer "
+            "available due to a copyright claim by Manners McDade Music Publishing",
+            "ERROR: [youtube] i5CnUpxUgNE: Video unavailable. This video is no longer "
+            "available because the YouTube account associated with this video has been "
+            "terminated.",
+            "ERROR: [youtube] M-FlrqHE5MY: Video unavailable. This video is not available",
+            "ERROR: [youtube] _0-aZb9c1D2: Private video. Sign in if you've been granted "
+            "access to this video",
+        ]
+    )
+
+    assert _only_skippable_playlist_errors(stderr)
+
+
 @pytest.mark.parametrize(
     "stderr",
     [
@@ -167,6 +187,7 @@ def test_only_skippable_playlist_errors_accepts_unavailable_videos():
         "WARNING: [youtube] abc: Video unavailable. This video is not available",
         "ERROR: Postprocessing: audio conversion failed: Conversion failed!",
         "ERROR: [Errno 28] No space left on device",
+        "ERROR: unable to download video data: <urlopen error [Errno -3] Temporary failure>",
         "\n".join(
             [
                 "ERROR: [youtube] abc: Video unavailable. This video is not available",
