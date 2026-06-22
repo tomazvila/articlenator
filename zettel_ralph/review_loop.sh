@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Phase C: the review Ralph loop — item-batched (WIP=1), not one agent over the whole vault.
+#
+# Per-note passes (atomicity, linking, source-free) iterate ONE note per fresh agent,
+# tracked in staging/review_queue.json, each gated by validate.py and committed. The
+# clustering pass is the one genuinely cross-note step; it is driven by a DETERMINISTIC
+# squeeze table (validate.py --squeeze) rather than the agent eyeballing every topic. A
+# final strict validation closes the run. Mirrors loop.sh's gate/bail discipline.
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VAULT="${VAULT:-$HOME/Documents/Themis 2.0}"
+ZK_FOLDER="${ZK_FOLDER:-Twitter Bookmarks Zettelkasten}"
+ZK_DIR="$VAULT/$ZK_FOLDER"
+MODEL="${MODEL:-claude-opus-4-8}"
+REVIEW_MAX_ITERS="${REVIEW_MAX_ITERS:-3000}"
+AGENT_CMD=${AGENT_CMD:-"claude -p --model $MODEL --permission-mode acceptEdits"}
+export VAULT ZK_FOLDER ZK_DIR HERE
+
+PER_NOTE_PASSES=("atomicity" "linking" "source-free")
+GIT=0; git -C "$ZK_DIR" rev-parse >/dev/null 2>&1 && GIT=1
+
+python3 "$HERE/review_queue.py" build --vault "$ZK_DIR"
+
+for pass in "${PER_NOTE_PASSES[@]}"; do
+  echo "=== review pass (per-note): $pass ==="
+  i=0
+  while :; do
+    i=$((i + 1))
+    if [ "$i" -gt "$REVIEW_MAX_ITERS" ]; then echo "review iter cap hit"; exit 2; fi
+    note="$(python3 "$HERE/review_queue.py" next --pass "$pass")"
+    [ -z "$note" ] && { echo "pass '$pass' complete"; break; }
+
+    ( cd "$HERE" && $AGENT_CMD "Read $HERE/prompts/review.md. Run ONLY review pass \
+'$pass' on this SINGLE note: \"$ZK_DIR/$note\". Use $HERE/index_query.py for any dedup \
+check. Apply fixes for this pass only, then stop." )
+
+    if ! python3 "$HERE/validate.py" --vault "$ZK_DIR"; then
+      echo "VALIDATE FAILED at $pass / $note - stopping for human review."
+      exit 4
+    fi
+    python3 "$HERE/review_queue.py" done --pass "$pass" --file "$note"
+    if [ "$GIT" -eq 1 ]; then
+      git -C "$ZK_DIR" add -A
+      git -C "$ZK_DIR" commit -q -m "review $pass: $note" || true
+    fi
+  done
+done
+
+echo "=== clustering pass (squeeze-driven, deterministic trigger) ==="
+python3 "$HERE/validate.py" --vault "$ZK_DIR" --squeeze >"$HERE/staging/squeeze.json"
+( cd "$HERE" && $AGENT_CMD "Read $HERE/prompts/review.md and run the 'clustering' pass. \
+Authoritative topic counts (from disk) are in $HERE/staging/squeeze.json: build or refresh \
+an MOC for every topic where at_squeeze is true, link its notes with context, and link the \
+MOC from Home.md. Then stop." )
+[ "$GIT" -eq 1 ] && { git -C "$ZK_DIR" add -A; git -C "$ZK_DIR" commit -q -m "review clustering: MOCs" || true; }
+
+echo "=== final strict validation ==="
+python3 "$HERE/validate.py" --vault "$ZK_DIR" --strict
