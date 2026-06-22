@@ -214,6 +214,7 @@ async def main() -> None:
     ap.add_argument("--max-consecutive-fail", type=int, default=8)
     ap.add_argument("--include-videos", action="store_true", help="also extract video items (else skipped)")
     ap.add_argument("--rebuild", action="store_true", help="rebuild queue.json from scratch")
+    ap.add_argument("--limit", type=int, default=0, help="extract at most N pending items (0 = all; for pilots)")
     args = ap.parse_args()
 
     cookies = os.environ.get("X_COOKIES")
@@ -228,7 +229,9 @@ async def main() -> None:
         save_queue(q)
 
     todo = [it for it in q["items"] if it["stage"] == "pending"]
-    print(f"START items={len(q['items'])} pending={len(todo)}", flush=True)
+    if args.limit:
+        todo = todo[: args.limit]
+    print(f"START items={len(q['items'])} pending={len(todo)}" + (" (limited)" if args.limit else ""), flush=True)
 
     consecutive_fail = 0
     processed = 0

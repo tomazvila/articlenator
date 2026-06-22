@@ -1,2 +1,4 @@
 staging/
 __pycache__/
+data/pilot.json
+data/bookmarks_ordered.json

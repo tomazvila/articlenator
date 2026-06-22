@@ -11,6 +11,8 @@ Exit code 0 = no errors (warnings allowed). Exit code 1 = at least one error.
 """
 from __future__ import annotations
 
+from __future__ import annotations
+
 import argparse
 import json
 import re

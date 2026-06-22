@@ -19,14 +19,10 @@ survives. **What is not in these files does not exist.**
 5. Run `python validate.py --vault "$ZK_DIR" --squeeze` for authoritative, on-disk topic
    counts (which themes are at a MOC squeeze point). Act on these numbers; do not eyeball.
 
-## Pick exactly ONE work unit
-From `staging/queue.json`, pick the next unit whose `stage` is `extracted` (WIP = 1) by
-its precomputed `cluster` id:
-- an article/video is its own unit (`cluster` = `single-<id>`);
-- tweets are already grouped into themed clusters (`cluster` = `cl-NNNN`) by `cluster.py`.
-
-Read only that unit's literature note(s) from `staging/lit/`. **Never scan the corpus or
-form clusters yourself** — clustering is precomputed.
+## Your work unit is GIVEN to you
+The invocation prompt contains your pre-selected unit as JSON: `{cluster, kind, ids,
+lit_notes}` (WIP = 1). **Do not open `staging/queue.json`** — it has 1,500+ items. Read only
+the `lit_notes` paths listed for your unit, from `staging/lit/`.
 
 ## Do the work
 Follow `prompts/synthesis.md`: decompose into atomic claims → for each, `index_query.py`
@@ -40,8 +36,9 @@ claim) make a TENSION note → add contextual wikilinks → if `--squeeze` flags
 2. For every concept you touched, run `python index_add.py --title ... --file ... --gist
    ... --tags ... --source <id> [--claim-inc]`. This updates the index AND records
    provenance keyed by note file — you never open the index yourself.
-3. In `staging/queue.json`, set the unit's item(s) `stage` to `synthesized` with
-   `notes_emitted[]` (or `skipped` + reason if the source has no reusable idea).
+3. Mark the unit done via `python queue_mark.py --ids <id1,id2> --stage synthesized
+   --notes "Title A;Title B"` (or `--stage skipped --reason "no reusable idea: <claim>"`).
+   Never open `staging/queue.json` yourself.
 4. If you made a lasting structural call (a canonical title for a recurring concept, a
    fold-vs-split ruling), append one line to `staging/DECISIONS.md`.
 5. **Rewrite** `staging/STATE.md` compactly (consolidate, do not append).

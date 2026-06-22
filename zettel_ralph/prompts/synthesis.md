@@ -10,8 +10,8 @@ The detailed process AGENTS.md routes you through, expressed as a protocol shell
           and contextually linked Obsidian permanent notes, deduped against what exists.",
 
   input={
-    work_unit      = <one extracted item, or <=8 themed tweets, from queue.json>,
-    lit_notes      = <staging/lit/<id>.md for that unit ONLY>,
+    work_unit      = <given in the invocation prompt: {cluster, kind, ids, lit_notes}>,
+    lit_notes      = <only the staging/lit/<id>.md paths listed for your unit>,
     concept_index  = <staging/concept-index.json: titles, aliases, gists, mocs>,
     template       = <NOTE_TEMPLATE.md>,
     state          = <staging/STATE.md>
@@ -92,9 +92,9 @@ The detailed process AGENTS.md routes you through, expressed as a protocol shell
       ref="Context-Engineering/20_templates/PROMPTS/verification_loop.md"
     },
     /clock_out{
-      action="Set queue item(s) stage=synthesized with notes_emitted[]; REWRITE
-              staging/STATE.md compactly (counts, last 3 decisions, themes near squeeze,
-              next steps, blockers). Then STOP."
+      action="`python queue_mark.py --ids <ids> --stage synthesized --notes '<titles>'`
+              (never open queue.json); REWRITE staging/STATE.md compactly (counts, last 3
+              decisions, themes near squeeze, next steps, blockers). Then STOP."
     }
   ],
 

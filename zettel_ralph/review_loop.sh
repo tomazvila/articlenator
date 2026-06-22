@@ -12,9 +12,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VAULT="${VAULT:-$HOME/Documents/Themis 2.0}"
 ZK_FOLDER="${ZK_FOLDER:-Twitter Bookmarks Zettelkasten}"
 ZK_DIR="$VAULT/$ZK_FOLDER"
-MODEL="${MODEL:-claude-opus-4-8}"
+MODEL="${MODEL:-}"
 REVIEW_MAX_ITERS="${REVIEW_MAX_ITERS:-3000}"
-AGENT_CMD=${AGENT_CMD:-"claude -p --model $MODEL --permission-mode acceptEdits"}
+AGENT=(claude -p --permission-mode bypassPermissions --add-dir "$VAULT")
+[ -n "$MODEL" ] && AGENT+=(--model "$MODEL")
 export VAULT ZK_FOLDER ZK_DIR HERE
 
 PER_NOTE_PASSES=("atomicity" "linking" "source-free")
@@ -31,7 +32,7 @@ for pass in "${PER_NOTE_PASSES[@]}"; do
     note="$(python3 "$HERE/review_queue.py" next --pass "$pass")"
     [ -z "$note" ] && { echo "pass '$pass' complete"; break; }
 
-    ( cd "$HERE" && $AGENT_CMD "Read $HERE/prompts/review.md. Run ONLY review pass \
+    ( cd "$HERE" && "${AGENT[@]}" "Read $HERE/prompts/review.md. Run ONLY review pass \
 '$pass' on this SINGLE note: \"$ZK_DIR/$note\". Use $HERE/index_query.py for any dedup \
 check. Apply fixes for this pass only, then stop." )
 
@@ -49,7 +50,7 @@ done
 
 echo "=== clustering pass (squeeze-driven, deterministic trigger) ==="
 python3 "$HERE/validate.py" --vault "$ZK_DIR" --squeeze >"$HERE/staging/squeeze.json"
-( cd "$HERE" && $AGENT_CMD "Read $HERE/prompts/review.md and run the 'clustering' pass. \
+( cd "$HERE" && "${AGENT[@]}" "Read $HERE/prompts/review.md and run the 'clustering' pass. \
 Authoritative topic counts (from disk) are in $HERE/staging/squeeze.json: build or refresh \
 an MOC for every topic where at_squeeze is true, link its notes with context, and link the \
 MOC from Home.md. Then stop." )

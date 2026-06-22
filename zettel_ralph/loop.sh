@@ -18,17 +18,22 @@ VAULT="${VAULT:-$HOME/Documents/Themis 2.0}"
 ZK_FOLDER="${ZK_FOLDER:-Twitter Bookmarks Zettelkasten}"
 ZK_DIR="$VAULT/$ZK_FOLDER"
 MAX_ITERS="${MAX_ITERS:-400}"
-MODEL="${MODEL:-claude-opus-4-8}"
-# The agent command. AGENTS.md is the real instruction set; the -p prompt just routes.
-AGENT_CMD=${AGENT_CMD:-"claude -p --model $MODEL --permission-mode acceptEdits"}
+MODEL="${MODEL:-}"  # empty = use the CLI's default model
+# Agent command as an ARRAY (so the space in the vault path survives). --add-dir grants the
+# agent write access to the vault (it lives outside the cwd); bypassPermissions lets the
+# headless agent run its python tools + write notes without interactive prompts.
+AGENT=(claude -p --permission-mode bypassPermissions --add-dir "$VAULT")
+[ -n "$MODEL" ] && AGENT+=(--model "$MODEL")
 
 export VAULT ZK_FOLDER ZK_DIR STAGING QUEUE HERE
 
+# Count items READY for synthesis (extracted). `pending` items aren't ingested yet, so they
+# are not the synthesis loop's concern; ingestion (Phase A) turns them into extracted/failed.
 pending_count() {
   python3 - "$QUEUE" <<'PY'
 import json, sys
 q = json.load(open(sys.argv[1]))
-print(sum(1 for it in q["items"] if it["stage"] in ("pending", "extracted")))
+print(sum(1 for it in q["items"] if it["stage"] == "extracted"))
 PY
 }
 
@@ -57,14 +62,17 @@ while :; do
   if [ "$i" -gt "$MAX_ITERS" ]; then echo "iter cap ($MAX_ITERS) hit"; exit 2; fi
 
   remaining="$(pending_count)"
-  if [ "$remaining" -eq 0 ]; then echo "ALL ITEMS PROCESSED - phase B done"; exit 0; fi
+  if [ "$remaining" -eq 0 ]; then echo "ALL EXTRACTED ITEMS PROCESSED - phase B done"; exit 0; fi
+  unit="$(python3 "$HERE/queue_next.py")"
+  if [ "$unit" = "{}" ]; then echo "no extractable unit left - done"; exit 0; fi
   echo "=== iter $i | remaining=$remaining synthesized=$(synthesized_count) ==="
+  echo "  unit: $unit"
 
-  # Fresh-context agent. cd so AGENTS.md relative paths resolve; pass the resolved vault
-  # path explicitly (markdown isn't shell-expanded, so the agent needs the literal path).
-  ( cd "$HERE" && $AGENT_CMD "Read $HERE/AGENTS.md and follow it exactly. Do ONE work \
-unit of the synthesis phase from $QUEUE, then stop. Write all notes under this folder: \
-$ZK_DIR" )
+  # Fresh-context agent. cd so AGENTS.md relative paths resolve; the work unit is pre-selected
+  # (agent never scans the big queue); pass the resolved vault path explicitly.
+  ( cd "$HERE" && "${AGENT[@]}" "Read $HERE/AGENTS.md and follow it exactly. Your pre-selected \
+work unit is: $unit . Synthesize ONLY this unit, then stop. Write all notes under this \
+folder: $ZK_DIR" )
 
   # Verification gate (worker != checker). --staging enables the own-words overlap check.
   if ! python3 "$HERE/validate.py" --vault "$ZK_DIR" --staging "$STAGING"; then
