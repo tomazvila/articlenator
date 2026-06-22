@@ -215,6 +215,9 @@ async def main() -> None:
     ap.add_argument("--include-videos", action="store_true", help="also extract video items (else skipped)")
     ap.add_argument("--rebuild", action="store_true", help="rebuild queue.json from scratch")
     ap.add_argument("--limit", type=int, default=0, help="extract at most N pending items (0 = all; for pilots)")
+    ap.add_argument("--max-attempts", type=int, default=3, help="retry failed items up to N times across runs")
+    ap.add_argument("--rate-waves", type=int, default=4, help="back off and continue this many rate-limit waves")
+    ap.add_argument("--wave-backoff", type=float, default=180.0, help="seconds to wait out a rate-limit wave")
     args = ap.parse_args()
 
     cookies = os.environ.get("X_COOKIES")
@@ -228,12 +231,19 @@ async def main() -> None:
         q = build_queue(json.loads(Path(args.bookmarks).read_text()))
         save_queue(q)
 
-    todo = [it for it in q["items"] if it["stage"] == "pending"]
+    # Retry failed items too (transient rate-limit/network failures shouldn't be permanent),
+    # bounded by --max-attempts so genuinely dead links don't loop forever.
+    todo = [
+        it
+        for it in q["items"]
+        if it["stage"] == "pending" or (it["stage"] == "failed" and it.get("attempts", 0) < args.max_attempts)
+    ]
     if args.limit:
         todo = todo[: args.limit]
-    print(f"START items={len(q['items'])} pending={len(todo)}" + (" (limited)" if args.limit else ""), flush=True)
+    print(f"START items={len(q['items'])} todo={len(todo)}" + (" (limited)" if args.limit else ""), flush=True)
 
     consecutive_fail = 0
+    waves = 0
     processed = 0
     for it in todo:
         if it["kind"] == "video" and not args.include_videos:
@@ -256,10 +266,18 @@ async def main() -> None:
             consecutive_fail += 1
             print(f"FAIL {it['id']} :: {err}", flush=True)
             if is_rate_limit(err):
-                print("  !! rate-limit/auth signal; consider refreshing cookies", flush=True)
+                print("  !! rate-limit/auth signal", flush=True)
             if consecutive_fail >= args.max_consecutive_fail:
                 save_queue(q)
-                raise SystemExit(f"STOP: {consecutive_fail} consecutive failures - refresh cookies and re-run.")
+                waves += 1
+                if waves <= args.rate_waves:
+                    print(f"  rate/auth wall (wave {waves}/{args.rate_waves}); backing off "
+                          f"{args.wave_backoff:.0f}s then continuing", flush=True)
+                    await asyncio.sleep(args.wave_backoff)
+                    consecutive_fail = 0
+                else:
+                    print("STOP: repeated failure waves - refresh X_COOKIES and re-run (resumes).", flush=True)
+                    return
 
         processed += 1
         if processed % args.chunk == 0:

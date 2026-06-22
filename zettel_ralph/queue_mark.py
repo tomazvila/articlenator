@@ -8,6 +8,8 @@ import argparse
 import json
 from pathlib import Path
 
+from _lock import state_lock
+
 HERE = Path(__file__).resolve().parent
 Q = HERE / "staging" / "queue.json"
 
@@ -22,19 +24,21 @@ def main() -> None:
 
     ids = {x.strip() for x in a.ids.split(",") if x.strip()}
     notes = [x.strip() for x in a.notes.split(";") if x.strip()]
-    q = json.loads(Q.read_text())
-    n = 0
-    for it in q["items"]:
-        if it["id"] in ids:
-            it["stage"] = a.stage
-            if notes:
-                it["notes_emitted"] = notes
-            if a.reason:
-                it["error"] = a.reason
-            n += 1
-    tmp = Q.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(q, indent=2, ensure_ascii=False))
-    tmp.replace(Q)
+    with state_lock():
+        q = json.loads(Q.read_text())
+        n = 0
+        for it in q["items"]:
+            if it["id"] in ids:
+                it["stage"] = a.stage
+                it.pop("worker", None)
+                if notes:
+                    it["notes_emitted"] = notes
+                if a.reason:
+                    it["error"] = a.reason
+                n += 1
+        tmp = Q.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(q, indent=2, ensure_ascii=False))
+        tmp.replace(Q)
     print(f"marked {n} item(s) {a.stage}")
 
 

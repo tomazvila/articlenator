@@ -18,6 +18,8 @@ import argparse
 import json
 from pathlib import Path
 
+from _lock import state_lock
+
 HERE = Path(__file__).resolve().parent
 INDEX = HERE / "staging" / "concept-index.json"
 PROV = HERE / "staging" / "provenance.json"
@@ -49,29 +51,30 @@ def main() -> None:
     ap.add_argument("--claim-inc", action="store_true", help="increment claim_count")
     a = ap.parse_args()
 
-    idx = _load(INDEX, {"version": 1, "concepts": [], "mocs": []})
-    entry = next((c for c in idx["concepts"] if c["title"] == a.title), None)
-    if entry is None:
-        entry = {"title": a.title, "file": a.file, "aliases": [], "gist": "", "tags": [], "mocs": [], "claim_count": 0}
-        idx["concepts"].append(entry)
+    with state_lock():
+        idx = _load(INDEX, {"version": 1, "concepts": [], "mocs": []})
+        entry = next((c for c in idx["concepts"] if c["title"] == a.title), None)
+        if entry is None:
+            entry = {"title": a.title, "file": a.file, "aliases": [], "gist": "", "tags": [], "mocs": [], "claim_count": 0}
+            idx["concepts"].append(entry)
 
-    entry["file"] = a.file
-    if a.gist:
-        entry["gist"] = a.gist
-    entry["aliases"] = sorted(set(entry.get("aliases", []) + _csv(a.aliases, ";")))
-    entry["tags"] = sorted(set(entry.get("tags", []) + _csv(a.tags)))
-    if a.moc:
-        entry["mocs"] = sorted(set(entry.get("mocs", []) + [a.moc]))
-    if a.claim_inc:
-        entry["claim_count"] = entry.get("claim_count", 0) + 1
-    _save(INDEX, idx)
+        entry["file"] = a.file
+        if a.gist:
+            entry["gist"] = a.gist
+        entry["aliases"] = sorted(set(entry.get("aliases", []) + _csv(a.aliases, ";")))
+        entry["tags"] = sorted(set(entry.get("tags", []) + _csv(a.tags)))
+        if a.moc:
+            entry["mocs"] = sorted(set(entry.get("mocs", []) + [a.moc]))
+        if a.claim_inc:
+            entry["claim_count"] = entry.get("claim_count", 0) + 1
+        _save(INDEX, idx)
 
-    if a.source:
-        prov = _load(PROV, {})
-        prov.setdefault(a.file, [])
-        if a.source not in prov[a.file]:
-            prov[a.file].append(a.source)
-        _save(PROV, prov)
+        if a.source:
+            prov = _load(PROV, {})
+            prov.setdefault(a.file, [])
+            if a.source not in prov[a.file]:
+                prov[a.file].append(a.source)
+            _save(PROV, prov)
 
     print(f"upserted: {a.title}  (sources for file: {len(_load(PROV, {}).get(a.file, []))})")
 

@@ -22,7 +22,8 @@ MODEL="${MODEL:-}"  # empty = use the CLI's default model
 # Agent command as an ARRAY (so the space in the vault path survives). --add-dir grants the
 # agent write access to the vault (it lives outside the cwd); bypassPermissions lets the
 # headless agent run its python tools + write notes without interactive prompts.
-AGENT=(claude -p --permission-mode bypassPermissions --add-dir "$VAULT")
+# Sandboxed agent: only file edits + python3 helpers (no bash/sh/claude -> no recursion).
+AGENT=(claude -p --add-dir "$VAULT" --allowedTools Read Edit Write "Bash(python3:*)" "Bash(python:*)")
 [ -n "$MODEL" ] && AGENT+=(--model "$MODEL")
 
 export VAULT ZK_FOLDER ZK_DIR STAGING QUEUE HERE
@@ -57,22 +58,27 @@ mkdir -p "$ZK_DIR/00 Maps" "$ZK_DIR/01 Permanent Notes" "$ZK_DIR/02 Examples" "$
 GIT=0; git -C "$ZK_DIR" rev-parse >/dev/null 2>&1 && GIT=1
 
 i=0
+stall=0
 while :; do
   i=$((i + 1))
   if [ "$i" -gt "$MAX_ITERS" ]; then echo "iter cap ($MAX_ITERS) hit"; exit 2; fi
 
   remaining="$(pending_count)"
   if [ "$remaining" -eq 0 ]; then echo "ALL EXTRACTED ITEMS PROCESSED - phase B done"; exit 0; fi
+  # Rebuild the dedup index from disk so a prior crashed iteration's notes are seen
+  # (re-processing folds instead of duplicating).
+  python3 "$HERE/index_rebuild.py" >/dev/null 2>&1 || true
   unit="$(python3 "$HERE/queue_next.py")"
   if [ "$unit" = "{}" ]; then echo "no extractable unit left - done"; exit 0; fi
   echo "=== iter $i | remaining=$remaining synthesized=$(synthesized_count) ==="
   echo "  unit: $unit"
 
   # Fresh-context agent. cd so AGENTS.md relative paths resolve; the work unit is pre-selected
-  # (agent never scans the big queue); pass the resolved vault path explicitly.
-  ( cd "$HERE" && "${AGENT[@]}" "Read $HERE/AGENTS.md and follow it exactly. Your pre-selected \
-work unit is: $unit . Synthesize ONLY this unit, then stop. Write all notes under this \
-folder: $ZK_DIR" )
+  # (agent never scans the big queue). Prompt via stdin (--add-dir is variadic and would eat a
+  # positional prompt arg).
+  PROMPT="Read $HERE/AGENTS.md and follow it exactly. Your pre-selected work unit is: $unit . \
+Synthesize ONLY this unit, then stop. Write all notes under this folder: $ZK_DIR"
+  ( cd "$HERE" && printf '%s' "$PROMPT" | timeout "${AGENT_TIMEOUT:-1800}" "${AGENT[@]}" )
 
   # Verification gate (worker != checker). --staging enables the own-words overlap check.
   if ! python3 "$HERE/validate.py" --vault "$ZK_DIR" --staging "$STAGING"; then
@@ -80,12 +86,17 @@ folder: $ZK_DIR" )
     exit 4
   fi
 
-  # Progress = the unit left pending/extracted (synthesized OR skipped both count).
+  # Progress = the unit left extracted (synthesized OR skipped). Transient API errors can
+  # interrupt an iteration; retry the unit a few times before giving up (index was rebuilt
+  # from disk above, so retries fold rather than duplicate).
   after="$(pending_count)"
   if [ "$after" -ge "$remaining" ]; then
-    echo "NO PROGRESS this iter (remaining $remaining -> $after) - stopping for review."
-    exit 3
+    stall=$((stall + 1))
+    echo "  no progress (stall $stall/3) on this unit - retrying."
+    if [ "$stall" -ge 3 ]; then echo "NO PROGRESS after 3 attempts - stopping for review."; exit 3; fi
+    continue
   fi
+  stall=0
 
   # Durable checkpoint of the source-of-truth state + the vault.
   cp "$QUEUE" "$STAGING/queue.bak.json"

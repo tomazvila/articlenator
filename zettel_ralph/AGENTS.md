@@ -69,6 +69,10 @@ claim) make a TENSION note → add contextual wikilinks → if `--squeeze` flags
 13. **Two-level tags.** Every permanent note carries one broad domain tag (e.g. `ai`,
     `markets`, `geopolitics`) AND ≥1 fine topic tag. MOCs form around the fine tags; domains
     are indexed on Home.md.
+14. **Never run scripts or spawn processes.** Do NOT run any `.sh` file, `bash`, `sh`, or
+    `claude`, and never start a loop, worker, or sub-agent. Your ONLY shell commands are the
+    named `python3` helpers (`index_query.py`, `index_add.py`, `queue_mark.py`,
+    `validate.py`). You are one unit of work — synthesize it and stop.
 8. **Match the template exactly** (`NOTE_TEMPLATE.md`) — frontmatter, sections, folders.
 9. **Idempotent.** If the unit is already `synthesized`, pick another. Never duplicate a
    note that already exists.
