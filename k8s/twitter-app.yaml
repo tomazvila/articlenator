@@ -26,11 +26,40 @@ spec:
       labels:
         app: twitter-articlenator
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
       nodeSelector:
         workload: enabled
       # Uncomment for private ghcr.io repos:
       # imagePullSecrets:
       #   - name: ghcr-secret
+      initContainers:
+        - name: prepare-output-permissions
+          image: ghcr.io/tomazvila/articlenator:main
+          imagePullPolicy: Always
+          command:
+            - /bin/bash
+            - -c
+            - chown 10001:10001 /data/output && chmod 0750 /data/output
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - FOWNER
+            runAsNonRoot: false
+            runAsUser: 0
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: output
+              mountPath: /data/output
       containers:
         - name: twitter-articlenator
           image: ghcr.io/tomazvila/articlenator:main
@@ -61,6 +90,10 @@ spec:
               value: "1"
             - name: TWITTER_ARTICLENATOR_TRANSCRIPTION_GLOBAL_LIMIT
               value: "1"
+            - name: TWITTER_ARTICLENATOR_DOWNLOAD_PER_USER_LIMIT
+              value: "1"
+            - name: TWITTER_ARTICLENATOR_DOWNLOAD_GLOBAL_LIMIT
+              value: "2"
             - name: TWITTER_ARTICLENATOR_YOUTUBE_OAUTH_REDIRECT_URI
               value: "https://articlenator.homelab.tomazvi.la/api/youtube/oauth/callback"
             - name: TWITTER_ARTICLENATOR_YOUTUBE_LIKED_MAX_RESULTS
@@ -111,6 +144,17 @@ spec:
               mountPath: /data
             - name: output
               mountPath: /data/output
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
       volumes:
         - name: data
           persistentVolumeClaim:
@@ -119,6 +163,8 @@ spec:
           hostPath:
             path: /mnt/ssdb/articlenator/output
             type: DirectoryOrCreate
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

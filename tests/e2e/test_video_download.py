@@ -2,18 +2,13 @@
 
 import os
 
+import pytest
 from playwright.sync_api import Page, expect
 
 from .pages import CookieGuidePage, VideosPage
 
 # Real cookies for testing - loaded from env or hardcoded for CI
-TEST_COOKIES = os.environ.get(
-    "TEST_TWITTER_COOKIES",
-    "auth_token=c9dcae216409b4b5f1c8c3139af9889843f50bdb; "
-    "ct0=7eace32cd8d783b3d9a7f64c25e7c4a74519a829867e95b43cb595afea415c68"
-    "ff6262ada0404975a43b386412f36896e532237c684d9daa963323f2682b69ddee"
-    "abd58385f53d948aedcdba3d4f6b9f",
-)
+TEST_COOKIES = os.environ.get("TEST_TWITTER_COOKIES")
 
 # Test video URL
 TEST_VIDEO_URL = "https://x.com/catshealdeprsn/status/2031385297305612771"
@@ -47,6 +42,10 @@ class TestVideosPage:
         expect(nav_link).to_be_visible()
         expect(nav_link).to_have_text("Videos")
 
+    @pytest.mark.skipif(
+        os.environ.get("RUN_REAL_TWITTER_E2E") != "1",
+        reason="Set RUN_REAL_TWITTER_E2E=1 to exercise a live Twitter download",
+    )
     def test_download_without_cookies_starts_processing(self, page: Page, base_url):
         """Test downloading without cookies still starts processing (yt-dlp handles it)."""
         page.goto(f"{base_url}/videos")
@@ -80,6 +79,10 @@ class TestVideosPage:
         expect(videos.links_textarea).to_be_empty()
 
 
+@pytest.mark.skipif(
+    os.environ.get("RUN_REAL_TWITTER_E2E") != "1" or not TEST_COOKIES,
+    reason="Set RUN_REAL_TWITTER_E2E=1 and TEST_TWITTER_COOKIES",
+)
 class TestVideoDownloadWorkflow:
     """E2E test for the full video download workflow with real Twitter cookies."""
 
@@ -108,7 +111,9 @@ class TestVideoDownloadWorkflow:
 
         # Verify download links appear
         download_links = videos.get_download_links()
-        assert len(download_links) >= 1, f"Expected at least 1 download link, got {len(download_links)}"
+        assert len(download_links) >= 1, (
+            f"Expected at least 1 download link, got {len(download_links)}"
+        )
 
         # Verify the download link points to a video file
         for link in download_links:

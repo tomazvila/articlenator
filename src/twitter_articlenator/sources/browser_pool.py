@@ -139,7 +139,6 @@ class BrowserPool:
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
-                "--no-sandbox",
             ],
         )
         self._browser_count += 1

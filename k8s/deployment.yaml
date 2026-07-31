@@ -14,6 +14,12 @@ spec:
       labels:
         app: twitter-articlenator
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: twitter-articlenator
           image: twitter-articlenator:latest
@@ -44,6 +50,10 @@ spec:
               value: "1"
             - name: TWITTER_ARTICLENATOR_TRANSCRIPTION_GLOBAL_LIMIT
               value: "1"
+            - name: TWITTER_ARTICLENATOR_DOWNLOAD_PER_USER_LIMIT
+              value: "1"
+            - name: TWITTER_ARTICLENATOR_DOWNLOAD_GLOBAL_LIMIT
+              value: "2"
             - name: TWITTER_ARTICLENATOR_SECRET_KEY
               valueFrom:
                 secretKeyRef:
@@ -54,9 +64,6 @@ spec:
                 secretKeyRef:
                   name: twitter-articlenator-secrets
                   key: youtube-cookie-encryption-key
-          volumeMounts:
-            - name: data
-              mountPath: /data
           resources:
             requests:
               memory: "512Mi"
@@ -77,12 +84,25 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
           securityContext:
-            readOnlyRootFilesystem: false
-            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: twitter-articlenator-data
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

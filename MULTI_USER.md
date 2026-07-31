@@ -71,12 +71,15 @@ Heavy work is rejected with HTTP 429 when a cap is full. Defaults are:
 |---|---:|---:|
 | Playwright conversion/bookmark work | 1 | 2 |
 | Transcription/channel work | 1 | 1 |
+| Twitter/YouTube downloads | 1 | 2 |
 
 Configure the caps with:
 - `TWITTER_ARTICLENATOR_PLAYWRIGHT_PER_USER_LIMIT`
 - `TWITTER_ARTICLENATOR_PLAYWRIGHT_GLOBAL_LIMIT`
 - `TWITTER_ARTICLENATOR_TRANSCRIPTION_PER_USER_LIMIT`
 - `TWITTER_ARTICLENATOR_TRANSCRIPTION_GLOBAL_LIMIT`
+- `TWITTER_ARTICLENATOR_DOWNLOAD_PER_USER_LIMIT`
+- `TWITTER_ARTICLENATOR_DOWNLOAD_GLOBAL_LIMIT`
 
 The limiter is in-process. Run one application replica when these global caps must be authoritative. Persisted channel jobs resumed at startup also acquire transcription capacity; jobs beyond the cap remain resumable but are deferred.
 

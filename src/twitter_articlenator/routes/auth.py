@@ -44,7 +44,6 @@ def login():
         rate_limiter.record_failure(attempt_key)
         return render_template("login.html", error="Invalid username or password"), 401
 
-    rate_limiter.clear(attempt_key)
     next_target = _safe_next(request.args.get("next"))
     session.clear()
     session[SESSION_USER_KEY] = user.id

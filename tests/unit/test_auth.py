@@ -157,6 +157,18 @@ def test_login_rate_limits_repeated_failures(auth_client):
     assert b"Too many login attempts" in blocked.data
 
 
+def test_successful_login_does_not_clear_other_failures_from_same_address(auth_client):
+    for _ in range(4):
+        assert _login(auth_client, "admin", "wrong password").status_code == 401
+
+    assert _login(auth_client, "reader", "another correct horse battery staple").status_code == 302
+    page = auth_client.get("/")
+    auth_client.post("/logout", data={"csrf_token": _csrf(page)})
+
+    assert _login(auth_client, "admin", "wrong password").status_code == 401
+    assert _login(auth_client, "admin", "wrong password").status_code == 429
+
+
 def test_login_limiter_bounds_tracked_addresses():
     from twitter_articlenator.auth import LoginRateLimiter
 

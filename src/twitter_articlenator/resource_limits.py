@@ -6,7 +6,7 @@ import threading
 from collections.abc import Callable
 from functools import wraps
 
-from flask import Response, current_app, jsonify, make_response
+from flask import Response, current_app, g, jsonify, make_response
 
 from .auth import current_user
 
@@ -25,6 +25,59 @@ class ResourceLease:
                 return
             self._released = True
         self._release_callback()
+
+
+class StreamResourceLease:
+    """Keep a streamed response lease while its background workers are active."""
+
+    def __init__(self, lease: ResourceLease) -> None:
+        self._lease = lease
+        self._response_closed = False
+        self._active_workers = 0
+        self._lock = threading.Lock()
+
+    def start_thread(
+        self,
+        *,
+        target: Callable[[], None],
+        daemon: bool = False,
+        name: str | None = None,
+    ) -> threading.Thread:
+        """Start a worker whose lifetime extends the underlying resource lease."""
+        with self._lock:
+            if self._response_closed:
+                raise RuntimeError("Cannot start a resource worker after response close")
+            self._active_workers += 1
+
+        def tracked_target() -> None:
+            try:
+                target()
+            finally:
+                self._worker_finished()
+
+        thread = threading.Thread(target=tracked_target, daemon=daemon, name=name)
+        try:
+            thread.start()
+        except Exception:
+            self._worker_finished()
+            raise
+        return thread
+
+    def response_closed(self) -> None:
+        should_release = False
+        with self._lock:
+            self._response_closed = True
+            should_release = self._active_workers == 0
+        if should_release:
+            self._lease.release()
+
+    def _worker_finished(self) -> None:
+        should_release = False
+        with self._lock:
+            self._active_workers = max(0, self._active_workers - 1)
+            should_release = self._response_closed and self._active_workers == 0
+        if should_release:
+            self._lease.release()
 
 
 class ResourceLimiter:
@@ -78,6 +131,15 @@ def acquire_for_current_user(resource: str) -> ResourceLease | None:
     return get_resource_limiter().try_acquire(resource, user_id)
 
 
+def current_stream_resource_lease(resource: str) -> StreamResourceLease:
+    """Return the lease tracker installed by ``limit_resource`` for this request."""
+    trackers = getattr(g, "_resource_lease_trackers", {})
+    try:
+        return trackers[resource]
+    except KeyError as exc:
+        raise RuntimeError(f"No active resource lease for {resource}") from exc
+
+
 def limit_resource(resource: str):
     """Hold a lease until a normal response or streamed response closes."""
 
@@ -94,15 +156,21 @@ def limit_resource(resource: str):
                 )
                 response.headers["Retry-After"] = "5"
                 return response, 429
+            tracker = StreamResourceLease(lease)
+            trackers = getattr(g, "_resource_lease_trackers", None)
+            if trackers is None:
+                trackers = {}
+                g._resource_lease_trackers = trackers
+            trackers[resource] = tracker
             try:
                 response: Response = make_response(view(*args, **kwargs))
             except Exception:
-                lease.release()
+                tracker.response_closed()
                 raise
             if response.is_streamed:
-                response.call_on_close(lease.release)
+                response.call_on_close(tracker.response_closed)
             else:
-                lease.release()
+                tracker.response_closed()
             return response
 
         return wrapped

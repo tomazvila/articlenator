@@ -22,8 +22,8 @@ from ..pdf.generator import (
     generate_combined_pdf,
     generate_pdfs,
 )
+from ..resource_limits import current_stream_resource_lease, limit_resource
 from ..security import is_valid_csrf_request
-from ..resource_limits import limit_resource
 from ..sources import get_source_for_url
 from ..sources.base import Article
 from ..sources.twitter_playwright import TwitterPlaywrightSource
@@ -332,14 +332,12 @@ def _start_youtube_download_job(*, links: list[str], mode: str) -> YouTubeDownlo
     with _youtube_download_jobs_lock:
         _youtube_download_jobs[job.job_id] = job
 
-    thread = threading.Thread(
-        target=_run_youtube_download_job,
-        args=(job,),
+    thread = current_stream_resource_lease("download").start_thread(
+        target=lambda: _run_youtube_download_job(job),
         daemon=True,
         name=f"youtube-download-{job.job_id[:8]}",
     )
     job.thread = thread
-    thread.start()
     return job
 
 
@@ -980,6 +978,7 @@ def convert_stream():
     import threading
 
     run_async = _get_run_async()
+    resource_lease = current_stream_resource_lease("playwright")
     output_dir = current_user_paths().output_dir
 
     # Handle both JSON and form data
@@ -1102,7 +1101,7 @@ def convert_stream():
                             except Exception as exc:
                                 fetch_q.put(("err", exc))
 
-                        threading.Thread(target=_do_fetch, daemon=True).start()
+                        resource_lease.start_thread(target=_do_fetch, daemon=True)
 
                         # Wait with hard timeout to kill stuck fetches
                         fetch_start = time.time()
@@ -1270,9 +1269,9 @@ def bookmarks_fetch():
     which can exceed the run_async timeout for large bookmark lists).
     """
     import queue
-    import threading
 
     run_async = _get_run_async()
+    resource_lease = current_stream_resource_lease("playwright")
     cookies = _get_cookies_from_request()
 
     if not cookies:
@@ -1322,8 +1321,7 @@ def bookmarks_fetch():
         yield f"data: {json_module.dumps({'type': 'start'})}\n\n"
 
         # Start scraping in a background thread
-        thread = threading.Thread(target=_run_scrape, daemon=True)
-        thread.start()
+        resource_lease.start_thread(target=_run_scrape, daemon=True)
 
         count = 0
         idle_seconds = 0
@@ -1369,6 +1367,7 @@ def bookmarks_convert():
     import threading
 
     run_async = _get_run_async()
+    resource_lease = current_stream_resource_lease("playwright")
     output_dir = current_user_paths().output_dir
 
     if request.is_json:
@@ -1471,7 +1470,7 @@ def bookmarks_convert():
                             except Exception as exc:
                                 fetch_q.put(("err", exc))
 
-                        threading.Thread(target=_do_fetch, daemon=True).start()
+                        resource_lease.start_thread(target=_do_fetch, daemon=True)
 
                         fetch_start = time.time()
                         while True:
@@ -1621,6 +1620,7 @@ def bookmarks_convert():
 
 
 @api_bp.route("/videos/download", methods=["POST"])
+@limit_resource("download")
 def videos_download():
     """POST /api/videos/download - Download videos from Twitter/X links.
 
@@ -1931,6 +1931,7 @@ def youtube_oauth_liked():
 
 
 @api_bp.route("/youtube/download", methods=["POST"])
+@limit_resource("download")
 def youtube_download():
     """POST /api/youtube/download - Download YouTube video, playlist, or MP3 files."""
     if not is_valid_csrf_request():
@@ -2085,6 +2086,7 @@ def session_pdf(session_id):
 
 
 @api_bp.route("/sessions/<session_id>/resume", methods=["POST"])
+@limit_resource("playwright")
 def resume_session(session_id):
     """POST /api/sessions/<id>/resume - Resume processing a session.
 
@@ -2109,6 +2111,7 @@ def resume_session(session_id):
         return jsonify({"error": "Session has no metadata (cannot determine URL list)"}), 404
 
     run_async = _get_run_async()
+    resource_lease = current_stream_resource_lease("playwright")
     cookies = _get_cookies_from_request()
     urls = meta["urls"]
 
@@ -2168,7 +2171,7 @@ def resume_session(session_id):
                             except Exception as exc:
                                 fetch_q.put(("err", exc))
 
-                        threading.Thread(target=_do_fetch, daemon=True).start()
+                        resource_lease.start_thread(target=_do_fetch, daemon=True)
 
                         fetch_start = time.time()
                         while True:

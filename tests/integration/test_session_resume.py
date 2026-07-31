@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-VALID_COOKIES = "auth_token=test123456789012345678901234567890; ct0=test123456789012345678901234567890"
+VALID_COOKIES = (
+    "auth_token=test123456789012345678901234567890; ct0=test123456789012345678901234567890"
+)
 
 
 @pytest.fixture
@@ -102,9 +104,7 @@ class TestListSessions:
 
     def test_returns_multiple_sessions(self, client, tmp_path):
         """Multiple sessions are all listed."""
-        _create_session_with_articles(
-            tmp_path, "session-1", ["https://example.com/1"]
-        )
+        _create_session_with_articles(tmp_path, "session-1", ["https://example.com/1"])
         _create_session_with_articles(
             tmp_path, "session-2", ["https://example.com/2", "https://example.com/3"]
         )
@@ -145,9 +145,7 @@ class TestSessionPdf:
         urls = ["https://example.com/1", "https://example.com/2"]
         _create_session_with_articles(tmp_path, "session-pdf", urls)
 
-        with patch(
-            "twitter_articlenator.routes.api.generate_combined_pdf"
-        ) as mock_pdf:
+        with patch("twitter_articlenator.routes.api.generate_combined_pdf") as mock_pdf:
             mock_pdf.return_value = tmp_path / "output" / "test.pdf"
             (tmp_path / "output" / "test.pdf").write_bytes(b"%PDF-1.4")
 
@@ -186,13 +184,9 @@ class TestSessionResume:
         urls = ["https://example.com/1", "https://example.com/2"]
         _create_session_with_articles(tmp_path, "session-resume", urls, num_saved=1)
 
-        mock_article = _make_mock_article(
-            "https://example.com/2", "Second Article"
-        )
+        mock_article = _make_mock_article("https://example.com/2", "Second Article")
 
-        with patch(
-            "twitter_articlenator.routes.api.get_source_for_url"
-        ) as mock_get_source:
+        with patch("twitter_articlenator.routes.api.get_source_for_url") as mock_get_source:
             mock_source = AsyncMock()
             mock_source.fetch = AsyncMock(return_value=mock_article)
             mock_get_source.return_value = mock_source
@@ -226,6 +220,27 @@ class TestSessionResume:
         )
         assert response.status_code == 404
 
+    def test_resume_obeys_playwright_limit(self, app, client, tmp_path):
+        _create_session_with_articles(
+            tmp_path,
+            "limited-session",
+            ["https://example.com/1"],
+            num_saved=0,
+        )
+        lease = app.extensions["resource_limiter"].try_acquire("playwright", "legacy-test-mode")
+        assert lease is not None
+
+        try:
+            response = client.post(
+                "/api/sessions/limited-session/resume",
+                json={"cookies": VALID_COOKIES},
+            )
+        finally:
+            lease.release()
+
+        assert response.status_code == 429
+        assert response.get_json()["resource"] == "playwright"
+
 
 class TestStreamSessionMeta:
     """Tests for session metadata being saved during streaming."""
@@ -234,9 +249,7 @@ class TestStreamSessionMeta:
         """convert/stream saves session metadata on start."""
         mock_article = _make_mock_article()
 
-        with patch(
-            "twitter_articlenator.routes.api.get_source_for_url"
-        ) as mock_get_source:
+        with patch("twitter_articlenator.routes.api.get_source_for_url") as mock_get_source:
             mock_source = AsyncMock()
             mock_source.fetch = AsyncMock(return_value=mock_article)
             mock_get_source.return_value = mock_source
@@ -251,9 +264,7 @@ class TestStreamSessionMeta:
             )
 
         # Check that meta was saved
-        meta_path = (
-            tmp_path / "output" / "sessions" / "meta-test-session" / "_meta.json"
-        )
+        meta_path = tmp_path / "output" / "sessions" / "meta-test-session" / "_meta.json"
         assert meta_path.exists()
         meta = json.loads(meta_path.read_text())
         assert meta["urls"] == ["https://example.com/1"]
@@ -263,9 +274,7 @@ class TestStreamSessionMeta:
         """bookmarks/convert saves session metadata on start."""
         mock_article = _make_mock_article()
 
-        with patch(
-            "twitter_articlenator.routes.api.get_source_for_url"
-        ) as mock_get_source:
+        with patch("twitter_articlenator.routes.api.get_source_for_url") as mock_get_source:
             mock_source = AsyncMock()
             mock_source.fetch = AsyncMock(return_value=mock_article)
             mock_get_source.return_value = mock_source
@@ -279,9 +288,7 @@ class TestStreamSessionMeta:
                 },
             )
 
-        meta_path = (
-            tmp_path / "output" / "sessions" / "bkmk-meta-session" / "_meta.json"
-        )
+        meta_path = tmp_path / "output" / "sessions" / "bkmk-meta-session" / "_meta.json"
         assert meta_path.exists()
 
 
@@ -296,10 +303,9 @@ class TestFetchTimeout:
             time_module.sleep(5)
             return _make_mock_article()
 
-        with patch(
-            "twitter_articlenator.routes.api.get_source_for_url"
-        ) as mock_get_source, patch(
-            "twitter_articlenator.routes.api.FETCH_TIMEOUT", 1
+        with (
+            patch("twitter_articlenator.routes.api.get_source_for_url") as mock_get_source,
+            patch("twitter_articlenator.routes.api.FETCH_TIMEOUT", 1),
         ):
             mock_source = AsyncMock()
             mock_source.fetch = AsyncMock(side_effect=slow_fetch)

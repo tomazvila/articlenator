@@ -74,6 +74,8 @@ class TestBrowserPoolAcquireRelease:
             browser = await pool.acquire()
             assert browser is mock_browser
             assert pool._browser_count == 1
+            launch_args = mock_playwright.chromium.launch.await_args.kwargs["args"]
+            assert "--no-sandbox" not in launch_args
 
     @pytest.mark.asyncio
     async def test_release_returns_browser_to_pool(self):

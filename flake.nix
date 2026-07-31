@@ -171,10 +171,15 @@
                 ] ++ runtimeDeps;
 
                 extraCommands = ''
-                  mkdir -p data/output tmp
+                  mkdir -p data/config data/output tmp
+                '';
+                fakeRootCommands = ''
+                  chown -R 10001:10001 data
+                  chmod 1777 tmp
                 '';
 
                 config = {
+                  User = "10001:10001";
                   Entrypoint = [ "${entrypoint}/bin/entrypoint" ];
                   Env = [
                     "PYTHONUNBUFFERED=1"

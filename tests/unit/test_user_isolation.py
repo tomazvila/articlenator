@@ -19,8 +19,7 @@ from twitter_articlenator.user_data import paths_for_user
 VALID_COOKIES_A = "auth_token=" + "a" * 40 + "; ct0=" + "b" * 64
 VALID_COOKIES_B = "auth_token=" + "c" * 40 + "; ct0=" + "d" * 64
 VALID_YOUTUBE_COOKIES = (
-    "# Netscape HTTP Cookie File\n"
-    ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret-session-value\n"
+    "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret-session-value\n"
 )
 
 
@@ -61,18 +60,16 @@ def isolated_app(tmp_path):
             "REQUIRE_COOKIE_ENCRYPTION": True,
         }
     )
-    alice = app.extensions["user_store"].create_user(
-        "alice", "correct horse battery staple"
-    )
-    bob = app.extensions["user_store"].create_user(
-        "bob", "another correct horse battery staple"
-    )
+    alice = app.extensions["user_store"].create_user("alice", "correct horse battery staple")
+    bob = app.extensions["user_store"].create_user("bob", "another correct horse battery staple")
     app.config["TEST_USERS"] = {"alice": alice, "bob": bob}
     return app
 
 
 def test_user_paths_are_namespaced_and_do_not_use_legacy_roots(tmp_path):
-    alice = paths_for_user("123e4567-e89b-12d3-a456-426614174000", tmp_path / "out", tmp_path / "cfg")
+    alice = paths_for_user(
+        "123e4567-e89b-12d3-a456-426614174000", tmp_path / "out", tmp_path / "cfg"
+    )
     bob = paths_for_user("123e4567-e89b-12d3-a456-426614174001", tmp_path / "out", tmp_path / "cfg")
 
     assert alice.output_dir == tmp_path / "out" / "users" / alice.user_id
@@ -146,16 +143,22 @@ def test_twitter_cookie_endpoints_are_isolated_between_users(isolated_app):
         isolated_app.config["OUTPUT_ROOT"],
         isolated_app.config["CONFIG_ROOT"],
     )
-    assert TwitterCookieStore(
-        path=alice_paths.twitter_cookie_path,
-        encryption_key=isolated_app.config["COOKIE_ENCRYPTION_KEY"],
-        require_encryption=True,
-    ).read() == VALID_COOKIES_A
-    assert TwitterCookieStore(
-        path=bob_paths.twitter_cookie_path,
-        encryption_key=isolated_app.config["COOKIE_ENCRYPTION_KEY"],
-        require_encryption=True,
-    ).read() == VALID_COOKIES_B
+    assert (
+        TwitterCookieStore(
+            path=alice_paths.twitter_cookie_path,
+            encryption_key=isolated_app.config["COOKIE_ENCRYPTION_KEY"],
+            require_encryption=True,
+        ).read()
+        == VALID_COOKIES_A
+    )
+    assert (
+        TwitterCookieStore(
+            path=bob_paths.twitter_cookie_path,
+            encryption_key=isolated_app.config["COOKIE_ENCRYPTION_KEY"],
+            require_encryption=True,
+        ).read()
+        == VALID_COOKIES_B
+    )
 
 
 def test_downloads_cannot_cross_user_boundaries(isolated_app):
@@ -386,3 +389,35 @@ def test_streaming_playwright_limit_is_held_until_response_closes(isolated_app):
         "global": 0,
         "users": {},
     }
+
+
+def test_download_limits_cover_twitter_and_youtube_jobs(isolated_app):
+    client = isolated_app.test_client()
+    _login(client, "alice", "correct horse battery staple")
+    token = _csrf(client.get("/videos"))
+    user_id = isolated_app.config["TEST_USERS"]["alice"].id
+    lease = isolated_app.extensions["resource_limiter"].try_acquire("download", user_id)
+    assert lease is not None
+
+    headers = {"X-CSRF-Token": token}
+    try:
+        twitter_response = client.post(
+            "/api/videos/download",
+            json={"links": ["https://x.com/example/status/123"]},
+            headers=headers,
+        )
+        youtube_response = client.post(
+            "/api/youtube/download",
+            json={
+                "links": ["https://www.youtube.com/watch?v=abcdEFGHijk"],
+                "mode": "video",
+            },
+            headers=headers,
+        )
+    finally:
+        lease.release()
+
+    assert twitter_response.status_code == 429
+    assert twitter_response.get_json()["resource"] == "download"
+    assert youtube_response.status_code == 429
+    assert youtube_response.get_json()["resource"] == "download"

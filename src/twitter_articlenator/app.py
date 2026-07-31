@@ -192,6 +192,12 @@ def create_app(
         TRANSCRIPTION_GLOBAL_LIMIT=int(
             os.environ.get("TWITTER_ARTICLENATOR_TRANSCRIPTION_GLOBAL_LIMIT", "1")
         ),
+        DOWNLOAD_PER_USER_LIMIT=int(
+            os.environ.get("TWITTER_ARTICLENATOR_DOWNLOAD_PER_USER_LIMIT", "1")
+        ),
+        DOWNLOAD_GLOBAL_LIMIT=int(
+            os.environ.get("TWITTER_ARTICLENATOR_DOWNLOAD_GLOBAL_LIMIT", "2")
+        ),
         LOGIN_MAX_FAILURES=int(os.environ.get("TWITTER_ARTICLENATOR_LOGIN_MAX_FAILURES", "5")),
         LOGIN_FAILURE_WINDOW_SECONDS=int(
             os.environ.get("TWITTER_ARTICLENATOR_LOGIN_FAILURE_WINDOW_SECONDS", "900")
@@ -232,6 +238,10 @@ def create_app(
             "transcription": (
                 app.config["TRANSCRIPTION_PER_USER_LIMIT"],
                 app.config["TRANSCRIPTION_GLOBAL_LIMIT"],
+            ),
+            "download": (
+                app.config["DOWNLOAD_PER_USER_LIMIT"],
+                app.config["DOWNLOAD_GLOBAL_LIMIT"],
             ),
         }
     )
