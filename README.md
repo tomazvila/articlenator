@@ -8,6 +8,8 @@ Convert Twitter/X content (tweets, threads, and articles) and web articles to e-
 - **Web Articles**: Supports any HTTP(S) web article with smart content extraction
 - **E-Reader Optimized**: Clean, readable PDFs designed for Kindle, Kobo, and other e-readers
 - **Private Accounts**: Administrator-created logins with isolated credentials, jobs, bookmarks, and output
+- **Zettelkasten Pipeline**: Resumable source ingestion, agentic synthesis/review, provenance,
+  validation, and safe maintenance tooling under `zettel_ralph/`
 
 ## Quick Start
 
@@ -47,6 +49,19 @@ See [MULTI_USER.md](MULTI_USER.md) for account administration, storage isolation
 2. Paste article URLs (one per line)
 3. Click "Convert to PDF"
 4. Download the generated PDFs
+
+## Zettelkasten Pipeline
+The repository also contains the operator-oriented [Zettel-Ralph pipeline](zettel_ralph/README.md)
+used to turn large Twitter and transcript corpora into atomic, linked Obsidian notes. It
+currently runs separately from the Flask UI but shares Articlenator's collection workflow.
+Its source-adapter contract supports the current direct bookmark and transcript paths and
+defines the handoff for a future Articlenator PDF ingestion adapter.
+
+The maintenance CLI preserves provenance/link diagnostics and controlled repair operations
+from the first large run without hard-coded local paths:
+```bash
+python zettel_ralph/maintenance.py --help
+```
 
 ## Supported Sources
 
@@ -414,6 +429,7 @@ twitterArticleNator/
 │   ├── unit/              # Unit tests
 │   ├── integration/       # Flask route tests
 │   └── e2e/               # Playwright browser tests
+├── zettel_ralph/          # Agentic source-to-zettelkasten pipeline and maintenance CLI
 ├── k8s/
 │   └── deployment.yaml    # Kubernetes manifests
 ├── DOCKER.md              # Docker/K8s deployment guide

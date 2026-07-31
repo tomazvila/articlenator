@@ -85,6 +85,34 @@ Martin, via `lessons/0003`) are applied deliberately:
 All three loops gate on **`validate.py`** (the deterministic verification step) and
 checkpoint with **git** after every iteration.
 
+### Articlenator handoff and future PDF ingestion
+The June 2026 workflow used Articlenator to capture a large Twitter corpus and generate
+batched PDFs for reading/export. The committed Zettel-Ralph harness deliberately did not
+parse those PDFs: `ingest.py` re-extracts the original bookmark URLs into clean literature
+notes because PDF text can lose article boundaries, URLs, and document structure.
+
+Both paths belong to the same product workflow, but meet at a source-adapter boundary:
+```
+Articlenator bookmarks/articles ──► direct URL adapter (`ingest.py`) ──┐
+                              └──► generated PDF ─► future PDF adapter ├─► staging/lit/*.md
+YouTube channel jobs ─────────────► transcript adapter                 ┘   + queue.json
+                                                                         │
+                                                      synthesis + review Ralph loops
+                                                                         │
+                                                               Obsidian zettelkasten
+```
+
+Any future PDF adapter should emit the existing Phase-A contract rather than coupling PDF
+parsing to agent reasoning:
+- one bounded Markdown literature note under `staging/lit/<source-id>.md` per recovered
+  source unit;
+- one matching `queue.json` item with `id`, `kind`, `stage: "extracted"`, and `lit_note`;
+- enough source metadata to record provenance and reconcile duplicate material;
+- explicit failed items when a PDF page range cannot be assigned to a source.
+
+This keeps later application integration source-format agnostic: Articlenator supplies
+captured text or PDFs, while the agentic stages consume the same resumable staging format.
+
 ---
 
 ## 3. On-disk state (the contract between iterations)
@@ -184,6 +212,44 @@ with `DEEPSEEK_MODEL`. The API key is read from `DEEPSEEK_API_KEY` or `deepseek.
 Defaults target a **new** vault folder
 `Twitter Bookmarks Zettelkasten/` mirroring the Andrew Torba structure, so the run cannot
 touch existing notes.
+
+### Maintenance and recovery
+`maintenance.py` provides the reusable diagnostics and repair operations discovered during
+the first large run. It replaces hard-coded, note-specific scratch scripts with a stable
+JSON CLI suitable for later orchestration:
+```bash
+# Trace a permanent note back to its staged source IDs.
+python zettel_ralph/maintenance.py provenance \
+  --staging zettel_ralph/staging --note "01 Permanent Notes/A Claim.md"
+
+# Inspect incoming, outgoing, unresolved, and reciprocal links.
+python zettel_ralph/maintenance.py links --vault "$ZK_DIR" --note "A Claim"
+
+# Filter the deterministic squeeze report to topics awaiting a MOC.
+python zettel_ralph/maintenance.py squeeze --report zettel_ralph/staging/squeeze.json
+
+# Preview retiring an obsolete note and its index/provenance records.
+python zettel_ralph/maintenance.py retire-note --vault "$ZK_DIR" \
+  --staging zettel_ralph/staging --note "Obsolete Claim"
+
+# Apply only after reviewing the JSON plan.
+python zettel_ralph/maintenance.py retire-note --vault "$ZK_DIR" \
+  --staging zettel_ralph/staging --note "Obsolete Claim" --apply
+
+# Inspect or deliberately repair one review-queue status.
+python zettel_ralph/maintenance.py review-status \
+  --staging zettel_ralph/staging --note "01 Permanent Notes/A Claim.md"
+python zettel_ralph/maintenance.py review-mark \
+  --staging zettel_ralph/staging --note "01 Permanent Notes/A Claim.md" \
+  --pass linking --apply
+```
+
+Mutating commands are dry-run unless `--apply` is supplied, serialize updates with the
+same staging lock as parallel workers, write JSON atomically, and reject paths outside the
+configured vault. Retired notes are archived below `staging/retired/` with a `.disabled`
+suffix instead of being irreversibly deleted. Synthesis agents are not allowed to invoke
+these repair commands; they are an operator/orchestrator surface for recovery and future
+application integration.
 
 ---
 

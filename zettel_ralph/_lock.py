@@ -4,6 +4,7 @@ All writers to queue.json / concept-index.json / provenance.json acquire this lo
 their read-modify-write so concurrent workers can't corrupt shared state. Heavy work (the
 nested agent reasoning) runs in parallel; only these short critical sections serialize.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -18,9 +19,11 @@ _LOCK = (
 
 
 @contextlib.contextmanager
-def state_lock():
-    _LOCK.parent.mkdir(parents=True, exist_ok=True)
-    f = open(_LOCK, "w")
+def state_lock(staging: Path | None = None):
+    """Lock the configured staging state, or an explicitly supplied staging root."""
+    lock = (staging / ".statelock") if staging is not None else _LOCK
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    f = open(lock, "w")
     try:
         fcntl.flock(f, fcntl.LOCK_EX)
         yield
