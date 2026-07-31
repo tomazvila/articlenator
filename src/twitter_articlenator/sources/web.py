@@ -1,8 +1,9 @@
 """Generic web article source for blogs and articles."""
 
+import io
 import re
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import httpx
 import structlog
@@ -119,6 +120,21 @@ class WebArticleSource(ContentSource):
             except httpx.HTTPError as e:
                 raise ValueError(f"Failed to fetch URL: {e}") from e
 
+        content_type = (response.headers.get("content-type") or "").lower()
+        raw = response.content or b""
+        if "application/pdf" in content_type or raw[:1024].lstrip()[:4] == b"%PDF":
+            return self._extract_pdf_article(url, raw)
+
+        # Reject non-HTML resources (images and other binaries). They cannot
+        # be parsed into an article, and feeding their raw bytes to the PDF
+        # renderer crashes it.
+        if content_type and not any(
+            t in content_type for t in ("text/html", "application/xhtml", "text/plain", "xml")
+        ):
+            raise ValueError(
+                f"Unsupported content type '{content_type.split(';')[0].strip()}' for {url}"
+            )
+
         html = response.text
         soup = BeautifulSoup(html, "lxml")
 
@@ -147,6 +163,66 @@ class WebArticleSource(ContentSource):
             source_url=url,
             source_type="web",
         )
+
+    def _extract_pdf_article(self, url: str, raw: bytes) -> Article:
+        """Extract text from a PDF and return it as an article."""
+        try:
+            from pypdf import PdfReader
+        except ImportError as exc:  # pragma: no cover - dependency is supplied by the app env.
+            raise ValueError("PDF extraction requires pypdf to be installed") from exc
+
+        try:
+            reader = PdfReader(io.BytesIO(raw))
+        except Exception as exc:  # noqa: BLE001 - pypdf raises several parser-specific errors.
+            raise ValueError(f"Could not read PDF from {url}: {exc}") from exc
+
+        pages: list[str] = []
+        for index, page in enumerate(reader.pages, start=1):
+            try:
+                text = page.extract_text() or ""
+            except Exception as exc:  # noqa: BLE001 - keep useful pages if one page fails.
+                log.warning("pdf_page_extract_failed", url=url, page=index, error=str(exc))
+                continue
+            text = self._clean_pdf_text(text)
+            if text:
+                pages.append(text)
+
+        content = "\n\n".join(pages).strip()
+        if not content:
+            raise ValueError(f"Could not extract PDF text from {url}")
+
+        metadata = getattr(reader, "metadata", None)
+        title = (getattr(metadata, "title", None) or "").strip()
+        author = (getattr(metadata, "author", None) or "").strip()
+        if not title:
+            title = self._title_from_url(url)
+
+        log.info("pdf_article_fetched", url=url, title=title, content_length=len(content))
+
+        return Article(
+            title=title,
+            author=author or urlparse(url).netloc,
+            content=content,
+            published_at=None,
+            source_url=url,
+            source_type="pdf",
+        )
+
+    def _title_from_url(self, url: str) -> str:
+        parsed = urlparse(url)
+        filename = unquote(parsed.path.rstrip("/").split("/")[-1])
+        if filename:
+            stem = filename.rsplit(".", 1)[0]
+            title = re.sub(r"[_-]+", " ", stem).strip()
+            if title:
+                return title
+        return parsed.netloc or "PDF"
+
+    def _clean_pdf_text(self, text: str) -> str:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
 
     def _extract_title(self, soup: BeautifulSoup, url: str) -> str:
         """Extract article title from HTML."""

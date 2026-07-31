@@ -12,7 +12,7 @@ from flask import Flask, g
 
 from .config import get_config
 from .logging import configure_logging
-from .routes import api_bp, pages_bp
+from .routes import api_bp, channel_bp, pages_bp, transcription_bp
 from .security import get_csrf_token
 from .version import get_git_commit, get_version_string
 
@@ -182,6 +182,8 @@ def create_app(test_config: dict | None = None) -> Flask:
     # Register blueprints
     app.register_blueprint(pages_bp)
     app.register_blueprint(api_bp)
+    app.register_blueprint(transcription_bp)
+    app.register_blueprint(channel_bp)
 
     # Clean up stale sessions on startup
     if test_config is None:
@@ -191,6 +193,15 @@ def create_app(test_config: dict | None = None) -> Flask:
             _cleanup_stale_sessions()
         except Exception as e:
             log.warning("stale_session_cleanup_failed", error=str(e))
+
+        # Resume any channel jobs interrupted by a crash/restart/sleep so the
+        # pipeline survives the process dying, independent of any client.
+        try:
+            from .routes.channel import resume_inflight_channel_jobs
+
+            resume_inflight_channel_jobs()
+        except Exception as e:
+            log.warning("channel_job_resume_on_startup_failed", error=str(e))
 
     return app
 

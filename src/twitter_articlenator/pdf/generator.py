@@ -84,7 +84,11 @@ def generate_pdf(article: Article, output_dir: Path | None = None) -> Path:
     return generate_combined_pdf([article], output_dir)
 
 
-def generate_combined_pdf(articles: list[Article], output_dir: Path | None = None) -> Path:
+def generate_combined_pdf(
+    articles: list[Article],
+    output_dir: Path | None = None,
+    filename_stem: str | None = None,
+) -> Path:
     """Generate a single PDF from multiple articles.
 
     For large article lists, generates in batches to avoid OOM and merges
@@ -121,14 +125,11 @@ def generate_combined_pdf(articles: list[Article], output_dir: Path | None = Non
     # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate filename based on first article or combined name
-    if len(articles) == 1:
-        slug = _slugify_title(articles[0].title)
-    else:
-        slug = _slugify_title(f"{articles[0].title}-and-{len(articles) - 1}-more")
-
-    date_str = f"_{datetime.now().strftime('%Y%m%d')}"
-    filename = f"{slug}{date_str}.pdf"
+    # Generate filename based on first article or combined name. A caller
+    # generating many PDFs in one run can pass an explicit, unique stem to
+    # avoid same-day filename collisions (which would silently overwrite).
+    stem = filename_stem if filename_stem is not None else _default_stem(articles)
+    filename = f"{stem}.pdf"
     pdf_path = output_dir / filename
 
     log.info(
@@ -138,12 +139,31 @@ def generate_combined_pdf(articles: list[Article], output_dir: Path | None = Non
         output_path=str(pdf_path),
     )
 
-    # Small batches: render directly in one go
+    # Small batches: render directly in one go. On ANY failure (e.g. a single
+    # article with markup that crashes the renderer), fall back to rendering
+    # each article individually so one bad article can't fail the whole PDF.
     if len(articles) <= PDF_BATCH_SIZE:
-        html_content = _render_combined_html(articles)
-        HTML(string=html_content, url_fetcher=_browser_url_fetcher).write_pdf(pdf_path)
-        log.info("pdf_generated", path=str(pdf_path), size=pdf_path.stat().st_size)
-        return pdf_path
+        try:
+            html_content = _render_combined_html(articles)
+            HTML(string=html_content, url_fetcher=_browser_url_fetcher).write_pdf(pdf_path)
+            log.info("pdf_generated", path=str(pdf_path), size=pdf_path.stat().st_size)
+            return pdf_path
+        except Exception as combined_err:
+            log.warning(
+                "pdf_combined_render_failed_retrying_individually",
+                article_count=len(articles),
+                error=str(combined_err),
+            )
+        try:
+            skipped = _render_individually_and_merge(articles, pdf_path)
+            if skipped:
+                log.info("pdf_skipped_articles", count=skipped)
+            log.info("pdf_generated", path=str(pdf_path), size=pdf_path.stat().st_size)
+            return pdf_path
+        except Exception:
+            if pdf_path.exists():
+                pdf_path.unlink()
+            raise
 
     # Large batches: render in chunks to avoid OOM, then merge
     log.info(
@@ -226,6 +246,125 @@ def generate_combined_pdf(articles: list[Article], output_dir: Path | None = Non
 
     log.info("pdf_generated", path=str(pdf_path), size=pdf_path.stat().st_size)
     return pdf_path
+
+
+def _render_individually_and_merge(articles: list[Article], pdf_path: Path) -> int:
+    """Render each article to its own PDF, skipping failures, then merge.
+
+    Used as a fallback when a combined render fails so that a single article
+    with unrenderable markup cannot fail the whole PDF. Every skipped article
+    is logged (no silent loss).
+
+    Returns:
+        The number of articles skipped.
+
+    Raises:
+        RuntimeError: If every article fails to render.
+    """
+    partial_paths: list[Path] = []
+    skipped = 0
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir)
+        for idx, article in enumerate(articles):
+            part = tmp / f"article_{idx:04d}.pdf"
+            try:
+                html_content = _render_combined_html([article])
+                HTML(string=html_content, url_fetcher=_browser_url_fetcher).write_pdf(part)
+                partial_paths.append(part)
+            except Exception as art_err:
+                skipped += 1
+                log.warning(
+                    "pdf_article_skipped",
+                    title=article.title[:80],
+                    source_url=article.source_url,
+                    error=str(art_err),
+                )
+            gc.collect()
+
+        if not partial_paths:
+            raise RuntimeError("All articles failed PDF rendering")
+
+        writer = PdfWriter()
+        for part in partial_paths:
+            writer.append(str(part))
+        writer.write(str(pdf_path))
+        writer.close()
+    return skipped
+
+
+def _default_stem(articles: list[Article]) -> str:
+    """Build the default filename stem (slug + date) for a group of articles."""
+    if len(articles) == 1:
+        slug = _slugify_title(articles[0].title)
+    else:
+        slug = _slugify_title(f"{articles[0].title}-and-{len(articles) - 1}-more")
+    return f"{slug}_{datetime.now().strftime('%Y%m%d')}"
+
+
+# Packaging modes for generate_pdfs
+PACKAGING_COMBINED = "combined"
+PACKAGING_PER_ITEM = "per_item"
+PACKAGING_BATCHED = "batched"
+PACKAGING_MODES = (PACKAGING_COMBINED, PACKAGING_PER_ITEM, PACKAGING_BATCHED)
+
+DEFAULT_BATCH_PACKAGING_SIZE = 100
+
+
+def generate_pdfs(
+    articles: list[Article],
+    output_dir: Path | None = None,
+    *,
+    packaging: str = PACKAGING_COMBINED,
+    batch_size: int = DEFAULT_BATCH_PACKAGING_SIZE,
+) -> list[Path]:
+    """Generate one or more PDFs from articles according to a packaging mode.
+
+    Args:
+        articles: Articles to render.
+        output_dir: Destination directory (defaults to config output dir).
+        packaging: One of ``combined`` (a single PDF with all articles),
+            ``per_item`` (one PDF per article), or ``batched`` (PDFs of up to
+            ``batch_size`` articles each).
+        batch_size: Articles per PDF when ``packaging="batched"``.
+
+    Returns:
+        List of generated PDF paths (one entry for ``combined``).
+
+    Raises:
+        ValueError: If no articles are given, the mode is unknown, or
+            ``batch_size`` < 1.
+    """
+    if not articles:
+        raise ValueError("At least one article is required")
+    if packaging not in PACKAGING_MODES:
+        raise ValueError(f"Unknown packaging mode: {packaging!r} (expected {PACKAGING_MODES})")
+
+    if packaging == PACKAGING_COMBINED:
+        return [generate_combined_pdf(articles, output_dir)]
+
+    if packaging == PACKAGING_PER_ITEM:
+        groups = [[a] for a in articles]
+    else:  # PACKAGING_BATCHED
+        if batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        groups = [articles[i : i + batch_size] for i in range(0, len(articles), batch_size)]
+
+    if output_dir is None:
+        output_dir = get_config().output_dir
+
+    paths: list[Path] = []
+    used_stems: set[str] = set()
+    for group in groups:
+        stem = _default_stem(group)
+        unique = stem
+        counter = 2
+        # Avoid clobbering files written earlier this run or already on disk.
+        while unique in used_stems or (output_dir / f"{unique}.pdf").exists():
+            unique = f"{stem}-{counter}"
+            counter += 1
+        used_stems.add(unique)
+        paths.append(generate_combined_pdf(group, output_dir, filename_stem=unique))
+    return paths
 
 
 def _sanitize_html(content: str) -> str:

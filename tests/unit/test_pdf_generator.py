@@ -371,3 +371,145 @@ class TestContentSizeLimits:
         # Should not raise - content is at/under limit
         pdf_path = generate_pdf(article, output_dir)
         assert pdf_path.exists()
+
+
+def _mk_article(title, n=1):
+    return Article(
+        title=title,
+        author="a",
+        content="<p>content</p>",
+        published_at=datetime(2025, 12, 29),
+        source_url=f"https://x.com/a/status/{n}",
+        source_type="twitter",
+    )
+
+
+class TestGeneratePdfsPackaging:
+    """Tests for generate_pdfs packaging modes."""
+
+    def test_combined_returns_single_pdf(self, tmp_path):
+        from twitter_articlenator.pdf.generator import generate_pdfs
+
+        out = tmp_path / "o"
+        out.mkdir()
+        arts = [_mk_article(f"T{i}", i) for i in range(5)]
+        paths = generate_pdfs(arts, out, packaging="combined")
+        assert len(paths) == 1
+        assert paths[0].exists()
+
+    def test_per_item_returns_one_pdf_each(self, tmp_path):
+        from twitter_articlenator.pdf.generator import generate_pdfs
+
+        out = tmp_path / "o"
+        out.mkdir()
+        arts = [_mk_article(f"Title {i}", i) for i in range(4)]
+        paths = generate_pdfs(arts, out, packaging="per_item")
+        assert len(paths) == 4
+        assert all(p.exists() for p in paths)
+        assert len({p.name for p in paths}) == 4
+
+    def test_batched_groups_by_size(self, tmp_path):
+        from twitter_articlenator.pdf.generator import generate_pdfs
+
+        out = tmp_path / "o"
+        out.mkdir()
+        arts = [_mk_article(f"T{i}", i) for i in range(5)]
+        paths = generate_pdfs(arts, out, packaging="batched", batch_size=2)
+        assert len(paths) == 3  # 2 + 2 + 1
+        assert all(p.exists() for p in paths)
+
+    def test_per_item_same_title_no_overwrite(self, tmp_path):
+        """Duplicate titles must not clobber each other."""
+        from twitter_articlenator.pdf.generator import generate_pdfs
+
+        out = tmp_path / "o"
+        out.mkdir()
+        arts = [_mk_article("Same Title", 1), _mk_article("Same Title", 2)]
+        paths = generate_pdfs(arts, out, packaging="per_item")
+        assert len(paths) == 2
+        assert paths[0] != paths[1]
+        assert all(p.exists() for p in paths)
+        assert len(list(out.glob("*.pdf"))) == 2
+
+    def test_empty_raises(self, tmp_path):
+        from twitter_articlenator.pdf.generator import generate_pdfs
+
+        with pytest.raises(ValueError):
+            generate_pdfs([], tmp_path, packaging="combined")
+
+    def test_unknown_mode_raises(self, tmp_path):
+        from twitter_articlenator.pdf.generator import generate_pdfs
+
+        out = tmp_path / "o"
+        out.mkdir()
+        with pytest.raises(ValueError):
+            generate_pdfs([_mk_article("T", 1)], out, packaging="nope")
+
+    def test_batched_bad_size_raises(self, tmp_path):
+        from twitter_articlenator.pdf.generator import generate_pdfs
+
+        out = tmp_path / "o"
+        out.mkdir()
+        with pytest.raises(ValueError):
+            generate_pdfs([_mk_article("T", 1)], out, packaging="batched", batch_size=0)
+
+
+class TestPdfRenderResilience:
+    """A single unrenderable article must not fail the whole PDF."""
+
+    def test_small_batch_skips_unrenderable_article(self, tmp_path, monkeypatch):
+        from twitter_articlenator.pdf import generator
+
+        real_html = generator.HTML
+
+        class FakeHTML:
+            def __init__(self, string=None, **kw):
+                self.string = string or ""
+
+            def write_pdf(self, target):
+                if "POISONMARKER" in self.string:
+                    raise RuntimeError("simulated render crash")
+                # Delegate to real WeasyPrint so merged parts are valid PDFs.
+                real_html(string="<p>ok</p>").write_pdf(target)
+
+        monkeypatch.setattr(generator, "HTML", FakeHTML)
+
+        out = tmp_path / "o"
+        out.mkdir()
+        arts = [
+            _mk_article("Good One", 1),
+            Article(
+                title="Bad",
+                author="a",
+                content="<p>POISONMARKER</p>",
+                published_at=datetime(2025, 12, 29),
+                source_url="https://x.com/a/status/2",
+                source_type="twitter",
+            ),
+            _mk_article("Good Two", 3),
+        ]
+        path = generator.generate_combined_pdf(arts, out)
+        assert path.exists()
+
+        import pypdf
+
+        # Poison article skipped; the two good articles still rendered + merged.
+        assert len(pypdf.PdfReader(str(path)).pages) == 2
+
+    def test_all_unrenderable_raises(self, tmp_path, monkeypatch):
+        from twitter_articlenator.pdf import generator
+
+        class FakeHTML:
+            def __init__(self, string=None, **kw):
+                pass
+
+            def write_pdf(self, target):
+                raise RuntimeError("everything fails")
+
+        monkeypatch.setattr(generator, "HTML", FakeHTML)
+        out = tmp_path / "o"
+        out.mkdir()
+        with pytest.raises(Exception):
+            generator.generate_combined_pdf([_mk_article("X", 1)], out)
+        # No partial/corrupt file left behind.
+        assert list(out.glob("*.pdf")) == []

@@ -70,6 +70,58 @@ class TestTwitterPlaywrightSourceCanHandle:
         assert source.can_handle("not-a-url") is False
 
 
+class TestAuthorFromUrl:
+    """Tests for resolving the real author handle from a canonical URL."""
+
+    def test_real_handle_from_status_url(self):
+        from twitter_articlenator.sources.twitter_playwright import TwitterPlaywrightSource
+
+        assert (
+            TwitterPlaywrightSource._author_from_url(
+                "https://x.com/SahilBloom/status/2068672726546485547"
+            )
+            == "SahilBloom"
+        )
+
+    def test_real_handle_from_article_url(self):
+        from twitter_articlenator.sources.twitter_playwright import TwitterPlaywrightSource
+
+        assert (
+            TwitterPlaywrightSource._author_from_url(
+                "https://x.com/nikitabier/article/2068318370915823616"
+            )
+            == "nikitabier"
+        )
+
+    def test_placeholder_i_returns_none(self):
+        """The /i/ placeholder is not a real author handle."""
+        from twitter_articlenator.sources.twitter_playwright import TwitterPlaywrightSource
+
+        assert (
+            TwitterPlaywrightSource._author_from_url("https://x.com/i/status/123") is None
+        )
+        assert (
+            TwitterPlaywrightSource._author_from_url("https://x.com/i/article/123") is None
+        )
+
+    def test_non_status_url_returns_none(self):
+        from twitter_articlenator.sources.twitter_playwright import TwitterPlaywrightSource
+
+        assert TwitterPlaywrightSource._author_from_url("https://x.com/home") is None
+        assert TwitterPlaywrightSource._author_from_url("") is None
+        assert TwitterPlaywrightSource._author_from_url("https://example.com/x") is None
+
+    def test_ignores_query_and_fragment(self):
+        from twitter_articlenator.sources.twitter_playwright import TwitterPlaywrightSource
+
+        assert (
+            TwitterPlaywrightSource._author_from_url(
+                "https://x.com/jack/status/123?s=20&t=abc"
+            )
+            == "jack"
+        )
+
+
 class TestTwitterPlaywrightSourceInit:
     """Tests for TwitterPlaywrightSource initialization."""
 
@@ -155,6 +207,26 @@ class TestTruncateTitle:
         result = source._truncate_title(text)
         assert "\n" not in result
         assert result == "Line 1 Line 2 Line 3"
+
+    def test_strips_html_tags(self):
+        """HTML tags are stripped so titles/filenames are clean text."""
+        from twitter_articlenator.sources.twitter_playwright import TwitterPlaywrightSource
+
+        source = TwitterPlaywrightSource()
+        result = source._truncate_title("<p>I listened to 500+ episodes.</p>")
+        assert "<" not in result and ">" not in result
+        assert result.startswith("I listened to 500+ episodes")
+
+    def test_strips_nested_html_and_collapses_space(self):
+        """Nested markup is removed and whitespace collapsed."""
+        from twitter_articlenator.sources.twitter_playwright import TwitterPlaywrightSource
+
+        source = TwitterPlaywrightSource()
+        result = source._truncate_title(
+            '<div class="article-image"><img src="x.jpg"></div><h2>Archetype</h2>'
+        )
+        assert "<" not in result
+        assert result == "Archetype"
 
 
 class TestCreateArticle:

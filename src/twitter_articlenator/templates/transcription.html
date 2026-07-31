@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block title %}Transcribe · Twitter Article to PDF{% endblock %}
+{% block content %}
+<style>
+  .tx-wrap { max-width: 800px; margin: 0 auto; }
+  .tx-card {
+    background: rgba(26, 27, 38, 0.86);
+    border: 1px solid #2a2e42;
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+    backdrop-filter: blur(4px);
+    color: #c0caf5;
+  }
+  .tx-card h1 { margin: 0 0 0.35rem; font-size: 1.4rem; color: #c0caf5; }
+  .tx-card h2 { margin: 0 0 0.75rem; font-size: 1rem; color: #7aa2f7; }
+  .tx-sub { color: #565f89; margin: 0 0 1rem; font-size: 0.9rem; }
+  .tx-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .tx-input {
+    flex: 1 1 320px; min-width: 0; padding: 0.6rem 0.75rem;
+    background: #16161e; border: 1px solid #2a2e42; border-radius: 6px;
+    color: #c0caf5; font-size: 0.95rem;
+  }
+  .tx-input:focus { outline: 2px solid #7aa2f7; border-color: #7aa2f7; }
+  .tx-btn {
+    padding: 0.6rem 1.1rem; border: none; border-radius: 6px; cursor: pointer;
+    background: #7aa2f7; color: #16161e; font-weight: 600; font-size: 0.95rem;
+  }
+  .tx-btn:hover { background: #9eb8fb; }
+  .tx-btn:disabled { background: #414868; color: #787c99; cursor: not-allowed; }
+  .tx-btn.secondary { background: transparent; color: #7aa2f7; border: 1px solid #7aa2f7; }
+  .tx-btn.secondary:hover { background: rgba(122, 162, 247, 0.12); }
+  .tx-progress { height: 10px; background: #16161e; border-radius: 6px; overflow: hidden; margin: 0.75rem 0 0.4rem; }
+  .tx-progress > div { height: 100%; width: 0; background: #9ece6a; transition: width 0.4s ease; }
+  .tx-meta { font-size: 0.85rem; color: #a9b1d6; display: flex; gap: 1rem; flex-wrap: wrap; }
+  .tx-status { font-weight: 600; }
+  .tx-status[data-state="complete"] { color: #9ece6a; }
+  .tx-status[data-state="error"] { color: #f7768e; }
+  .tx-status[data-state="transcribing"], .tx-status[data-state="downloading"] { color: #e0af68; }
+  .tx-transcript {
+    white-space: pre-wrap; word-break: break-word; max-height: 420px; overflow-y: auto;
+    background: #16161e; border: 1px solid #2a2e42; border-radius: 6px; padding: 0.9rem;
+    font-size: 0.9rem; line-height: 1.5; color: #c0caf5; margin-top: 0.75rem;
+  }
+  .tx-downloads a { color: #7dcfff; margin-right: 1rem; font-size: 0.9rem; }
+  .tx-hidden { display: none; }
+  .tx-jobs { list-style: none; padding: 0; margin: 0; }
+  .tx-jobs li { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center;
+    padding: 0.5rem 0; border-bottom: 1px solid #2a2e42; font-size: 0.88rem; }
+  .tx-jobs li:last-child { border-bottom: none; }
+  .tx-jobs .label { color: #a9b1d6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tx-error { color: #f7768e; font-size: 0.85rem; margin-top: 0.5rem; }
+</style>
+
+<div class="tx-wrap">
+  <div class="tx-card">
+    <h1>YouTube Transcription</h1>
+    <p class="tx-sub">Paste a YouTube URL — audio is transcribed locally with whisper.cpp (large-v3). Long videos are chunked and checkpointed, so a job survives network drops and restarts and can be resumed.</p>
+    <div class="tx-row">
+      <input id="tx-url" class="tx-input" type="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" />
+      <button id="tx-start" class="tx-btn">Transcribe</button>
+    </div>
+    <p id="tx-form-error" class="tx-error tx-hidden"></p>
+  </div>
+
+  <div id="tx-job" class="tx-card tx-hidden">
+    <h2 id="tx-title">Job</h2>
+    <div class="tx-meta">
+      <span>Status: <span id="tx-state" class="tx-status">pending</span></span>
+      <span id="tx-chunks"></span>
+    </div>
+    <div class="tx-progress"><div id="tx-bar"></div></div>
+    <div class="tx-row" style="margin-top:0.5rem;">
+      <button id="tx-resume" class="tx-btn secondary tx-hidden">Resume job</button>
+    </div>
+    <p id="tx-job-error" class="tx-error tx-hidden"></p>
+    <div id="tx-result" class="tx-hidden">
+      <div class="tx-downloads">
+        <a id="tx-dl-txt" href="#">Download .txt</a>
+        <a id="tx-dl-vtt" href="#">Download .vtt</a>
+        <a id="tx-dl-json" href="#">Download .json</a>
+      </div>
+      <div id="tx-transcript" class="tx-transcript"></div>
+    </div>
+  </div>
+
+  <div id="tx-history-card" class="tx-card tx-hidden">
+    <h2>Previous jobs</h2>
+    <ul id="tx-jobs" class="tx-jobs"></ul>
+  </div>
+</div>
+
+<script nonce="{{ csp_nonce }}">
+(function () {
+  const csrf = document.querySelector('meta[name="csrf-token"]').content;
+  const JOB_KEY = 'articlenator_transcription_job';
+  const POLL_MS = 2000;
+
+  const $ = (id) => document.getElementById(id);
+  const urlInput = $('tx-url');
+  const startBtn = $('tx-start');
+  const formError = $('tx-form-error');
+  const jobCard = $('tx-job');
+  const titleEl = $('tx-title');
+  const stateEl = $('tx-state');
+  const chunksEl = $('tx-chunks');
+  const barEl = $('tx-bar');
+  const resumeBtn = $('tx-resume');
+  const jobError = $('tx-job-error');
+  const resultEl = $('tx-result');
+  const transcriptEl = $('tx-transcript');
+  const historyCard = $('tx-history-card');
+  const jobsList = $('tx-jobs');
+
+  let pollTimer = null;
+  let currentJob = null;
+
+  function show(el) { el.classList.remove('tx-hidden'); }
+  function hide(el) { el.classList.add('tx-hidden'); }
+
+  function setDownloadLinks(jobId) {
+    $('tx-dl-txt').href = `/api/transcription/${jobId}/transcript.txt`;
+    $('tx-dl-vtt').href = `/api/transcription/${jobId}/transcript.vtt`;
+    $('tx-dl-json').href = `/api/transcription/${jobId}/transcript.json`;
+  }
+
+  async function loadTranscript(jobId) {
+    try {
+      const res = await fetch(`/api/transcription/${jobId}/transcript.txt`);
+      if (res.ok) { transcriptEl.textContent = await res.text(); }
+    } catch (e) { /* ignore */ }
+  }
+
+  function render(data) {
+    show(jobCard);
+    titleEl.textContent = data.title || data.video_id || 'Transcription job';
+    stateEl.textContent = data.status;
+    stateEl.dataset.state = data.status;
+    chunksEl.textContent = data.total_chunks
+      ? `Chunks ${data.done_chunks}/${data.total_chunks}` : '';
+    barEl.style.width = Math.round((data.progress || 0) * 100) + '%';
+
+    if (data.status === 'error') {
+      show(jobError);
+      jobError.textContent = data.error || 'Job failed.';
+    } else { hide(jobError); }
+
+    const canResume = data.status !== 'complete' && !data.running;
+    resumeBtn.classList.toggle('tx-hidden', !canResume);
+
+    if (data.status === 'complete') {
+      setDownloadLinks(data.job_id);
+      show(resultEl);
+      loadTranscript(data.job_id);
+    } else { hide(resultEl); }
+  }
+
+  async function pollOnce(jobId) {
+    const res = await fetch(`/api/transcription/${jobId}`);
+    if (res.status === 404) { stopPolling(); return; }
+    const data = await res.json();
+    data.job_id = jobId;
+    render(data);
+    if (data.status === 'complete' || (data.status === 'error' && !data.running)) {
+      stopPolling();
+      loadJobs();
+    }
+  }
+
+  function startPolling(jobId) {
+    currentJob = jobId;
+    stopPolling();
+    const tick = async () => {
+      try { await pollOnce(jobId); } catch (e) { /* keep polling */ }
+      if (currentJob === jobId) { pollTimer = setTimeout(tick, POLL_MS); }
+    };
+    tick();
+  }
+
+  function stopPolling() {
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  }
+
+  async function startJob() {
+    const url = urlInput.value.trim();
+    hide(formError);
+    if (!url) { show(formError); formError.textContent = 'Enter a YouTube URL.'; return; }
+    startBtn.disabled = true;
+    try {
+      const res = await fetch('/api/transcription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (!res.ok) { show(formError); formError.textContent = data.error || 'Failed to start.'; return; }
+      localStorage.setItem(JOB_KEY, data.job_id);
+      startPolling(data.job_id);
+    } catch (e) {
+      show(formError); formError.textContent = 'Network error starting job.';
+    } finally {
+      startBtn.disabled = false;
+    }
+  }
+
+  async function resumeJob(jobId) {
+    resumeBtn.disabled = true;
+    try {
+      await fetch(`/api/transcription/${jobId}/resume`, {
+        method: 'POST', headers: { 'X-CSRF-Token': csrf },
+      });
+      startPolling(jobId);
+    } finally { resumeBtn.disabled = false; }
+  }
+
+  async function loadJobs() {
+    try {
+      const res = await fetch('/api/transcriptions');
+      const data = await res.json();
+      const jobs = (data.jobs || []).filter(Boolean).reverse();
+      jobsList.innerHTML = '';
+      if (!jobs.length) { hide(historyCard); return; }
+      show(historyCard);
+      for (const job of jobs) {
+        const li = document.createElement('li');
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = `${job.title || job.video_id || job.job_id} — ${job.status} (${job.done_chunks}/${job.total_chunks})`;
+        const btn = document.createElement('button');
+        btn.className = 'tx-btn secondary';
+        btn.textContent = job.status === 'complete' ? 'View' : 'Open';
+        btn.addEventListener('click', () => {
+          localStorage.setItem(JOB_KEY, job.job_id);
+          startPolling(job.job_id);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+        li.appendChild(label);
+        li.appendChild(btn);
+        jobsList.appendChild(li);
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  startBtn.addEventListener('click', startJob);
+  urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') startJob(); });
+  resumeBtn.addEventListener('click', () => { if (currentJob) resumeJob(currentJob); });
+
+  const saved = localStorage.getItem(JOB_KEY);
+  if (saved) { startPolling(saved); }
+  loadJobs();
+})();
+</script>
+{% endblock %}

@@ -101,6 +101,79 @@ document.getElementById('clear-btn').addEventListener('click', () => {
     document.getElementById('progress-bar').style.width = '0%';
 });
 
+// --- Save to Photos (iOS) -------------------------------------------------
+// A normal download link drops a video into the Files app. iOS only lets media
+// reach the Photos library through the native share sheet, which the Web Share
+// API exposes to the page (the user taps "Save Video" there). navigator.share
+// and canShare exist only in a secure context (HTTPS), so we feature-detect and
+// otherwise leave the user with the plain download link.
+function canShareVideoFiles() {
+    if (!navigator.canShare || !navigator.share) return false;
+    try {
+        const probe = new File([new Uint8Array(1)], 'probe.mp4', { type: 'video/mp4' });
+        return navigator.canShare({ files: [probe] });
+    } catch (err) {
+        return false;
+    }
+}
+
+// Render one downloaded-video row: a download link plus, where supported, the
+// "Save to Photos" share button. Extracted so it is exercised directly by tests.
+function appendVideoResult(listEl, video, canSaveToPhotos) {
+    const li = document.createElement('li');
+    li.className = 'video-result';
+
+    const url = `/download/video/${video.filename}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.className = 'video-result-link';
+    a.textContent = `${video.filename} (${formatFileSize(video.size_bytes)})`;
+    li.appendChild(a);
+
+    // On iOS (HTTPS) offer a one-tap route into Photos via the share sheet;
+    // elsewhere the link above is the only control.
+    if (canSaveToPhotos) {
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'save-photos-btn';
+        saveBtn.textContent = 'Save to Photos';
+        saveBtn.addEventListener('click', () => saveVideoToPhotos(url, video.filename, saveBtn));
+        li.appendChild(saveBtn);
+    }
+
+    listEl.appendChild(li);
+    return li;
+}
+
+async function saveVideoToPhotos(url, filename, btn) {
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Preparing…';
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        const file = new File([blob], filename, { type: blob.type || 'video/mp4' });
+        if (!(navigator.canShare && navigator.canShare({ files: [file] }))) {
+            // Support vanished or the file is too large to share: fall back to download.
+            window.location.href = url;
+            return;
+        }
+        await navigator.share({ files: [file] });
+        btn.textContent = 'Shared ✓';
+    } catch (err) {
+        if (err && err.name === 'AbortError') {
+            // User dismissed the share sheet — nothing went wrong.
+            btn.textContent = original;
+        } else {
+            console.error('Save to Photos failed:', err);
+            btn.textContent = 'Save failed';
+        }
+    } finally {
+        btn.disabled = false;
+    }
+}
+
 document.getElementById('download-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     requestNotificationPermission();
@@ -229,13 +302,9 @@ document.getElementById('download-form').addEventListener('submit', async (e) =>
 
                         if (data.videos && data.videos.length > 0) {
                             resultsDiv.style.display = 'block';
+                            const canSaveToPhotos = canShareVideoFiles();
                             for (const video of data.videos) {
-                                const li = document.createElement('li');
-                                const a = document.createElement('a');
-                                a.href = `/download/video/${video.filename}`;
-                                a.textContent = `${video.filename} (${formatFileSize(video.size_bytes)})`;
-                                li.appendChild(a);
-                                downloadList.appendChild(li);
+                                appendVideoResult(downloadList, video, canSaveToPhotos);
                             }
                         }
 

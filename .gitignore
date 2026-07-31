@@ -38,3 +38,20 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Transcription: generated WER measurements + any local cookie exports
+tests/data/wer_measured.json
+*youtube-cookies*.txt
+*youtube-cookies*.json
+
+# Local credentials and developer-tool state
+deepseek.txt
+.playwright-mcp/
+.serena/
+
+# Generated transcription and zettelkasten runtime data
+transcription-complete.png
+zettel_ralph/channel_jobs_*/
+zettel_ralph/staging_*/
+zettel_ralph/zettel_ralph/
+zettel_ralph/data/thdxr_*.json

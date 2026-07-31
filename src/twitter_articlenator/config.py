@@ -86,6 +86,32 @@ class Config:
             os.environ.get("TWITTER_ARTICLENATOR_YOUTUBE_LIKED_MAX_RESULTS", "5000")
         )
 
+        # Transcription (whisper.cpp) settings
+        self._whisper_bin = os.environ.get("TWITTER_ARTICLENATOR_WHISPER_BIN", "whisper-cli")
+        self._whisper_model_path = Path(
+            os.environ.get(
+                "TWITTER_ARTICLENATOR_WHISPER_MODEL",
+                self._config_dir / "models" / "ggml-large-v3.bin",
+            )
+        )
+        whisper_threads_env = os.environ.get("TWITTER_ARTICLENATOR_WHISPER_THREADS")
+        self._whisper_threads = int(whisper_threads_env) if whisper_threads_env else None
+        self._transcription_dir = Path(
+            os.environ.get(
+                "TWITTER_ARTICLENATOR_TRANSCRIPTION_DIR",
+                self._output_dir / "transcriptions",
+            )
+        )
+        self._transcription_chunk_seconds = int(
+            os.environ.get("TWITTER_ARTICLENATOR_TRANSCRIPTION_CHUNK_SECONDS", "600")
+        )
+        self._channel_dir = Path(
+            os.environ.get(
+                "TWITTER_ARTICLENATOR_CHANNEL_DIR",
+                self._output_dir / "channels",
+            )
+        )
+
     @property
     def output_dir(self) -> Path:
         """Directory for generated PDFs."""
@@ -170,6 +196,36 @@ class Config:
     def youtube_liked_max_results(self) -> int:
         """Maximum liked YouTube videos to fetch through OAuth."""
         return self._youtube_liked_max_results
+
+    @property
+    def whisper_bin(self) -> str:
+        """Executable used for whisper.cpp transcription."""
+        return self._whisper_bin
+
+    @property
+    def whisper_model_path(self) -> Path:
+        """Path to the whisper.cpp GGML model file."""
+        return self._whisper_model_path
+
+    @property
+    def whisper_threads(self) -> int | None:
+        """Thread count for whisper.cpp, or None for its default."""
+        return self._whisper_threads
+
+    @property
+    def transcription_dir(self) -> Path:
+        """Directory holding resumable transcription jobs."""
+        return self._transcription_dir
+
+    @property
+    def transcription_chunk_seconds(self) -> int:
+        """Audio chunk length (seconds) for checkpointed transcription."""
+        return self._transcription_chunk_seconds
+
+    @property
+    def channel_dir(self) -> Path:
+        """Directory holding resumable channel transcription → PDF jobs."""
+        return self._channel_dir
 
 
 def get_config() -> Config:

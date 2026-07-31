@@ -369,6 +369,8 @@ class TestFetch:
         </body>
         </html>
         """
+        mock_response.headers = {"content-type": "text/html; charset=utf-8"}
+        mock_response.content = mock_response.text.encode()
         mock_response.raise_for_status = MagicMock()
 
         with patch("httpx.AsyncClient") as mock_client:
@@ -413,6 +415,8 @@ class TestFetch:
         mock_response = MagicMock()
         # Even with minimal HTML, the body fallback provides some content
         mock_response.text = "<html><body></body></html>"
+        mock_response.headers = {"content-type": "text/html"}
+        mock_response.content = mock_response.text.encode()
         mock_response.raise_for_status = MagicMock()
 
         with patch("httpx.AsyncClient") as mock_client:
@@ -425,6 +429,92 @@ class TestFetch:
             article = await source.fetch("https://example.com/empty")
             assert isinstance(article, Article)
             assert article.source_type == "web"
+
+
+class TestFetchRejectsNonHtml:
+    """fetch handles PDFs but still rejects other non-HTML resources."""
+
+    def _mock_client(self, mock_response):
+        from unittest.mock import AsyncMock, patch
+
+        cm = patch("httpx.AsyncClient")
+        mock_client = cm.start()
+        mock_instance = AsyncMock()
+        mock_instance.get = AsyncMock(return_value=mock_response)
+        mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_instance)
+        mock_client.return_value.__aexit__ = AsyncMock(return_value=None)
+        return cm
+
+    @pytest.mark.asyncio
+    async def test_extracts_pdf_content_type(self):
+        from twitter_articlenator.sources.web import WebArticleSource
+
+        resp = MagicMock()
+        resp.headers = {"content-type": "application/pdf"}
+        resp.content = b"%PDF-1.7 ...."
+        resp.text = "%PDF-1.7 ...."
+        resp.raise_for_status = MagicMock()
+        cm = self._mock_client(resp)
+
+        page = MagicMock()
+        page.extract_text.return_value = "PDF page text\nwith useful content"
+        reader = MagicMock()
+        reader.pages = [page]
+        reader.metadata.title = "Useful PDF"
+        reader.metadata.author = "PDF Author"
+        try:
+            with patch("pypdf.PdfReader", return_value=reader):
+                article = await WebArticleSource().fetch("https://arxiv.org/pdf/2605.23904")
+            assert article.title == "Useful PDF"
+            assert article.author == "PDF Author"
+            assert article.content == "PDF page text\nwith useful content"
+            assert article.source_type == "pdf"
+        finally:
+            cm.stop()
+
+    @pytest.mark.asyncio
+    async def test_extracts_pdf_magic_bytes_when_mislabeled(self):
+        """A PDF served with a wrong/empty content-type is caught by magic bytes."""
+        from twitter_articlenator.sources.web import WebArticleSource
+
+        resp = MagicMock()
+        resp.headers = {}  # no content-type
+        resp.content = b"%PDF-1.7\n%binary garbage"
+        resp.text = "%PDF-1.7\n%binary garbage"
+        resp.raise_for_status = MagicMock()
+        cm = self._mock_client(resp)
+
+        page = MagicMock()
+        page.extract_text.return_value = "Mislabeled PDF text"
+        reader = MagicMock()
+        reader.pages = [page]
+        reader.metadata.title = ""
+        reader.metadata.author = ""
+        try:
+            with patch("pypdf.PdfReader", return_value=reader):
+                article = await WebArticleSource().fetch("https://example.com/file.pdf")
+            assert article.title == "file"
+            assert article.author == "example.com"
+            assert article.content == "Mislabeled PDF text"
+            assert article.source_type == "pdf"
+        finally:
+            cm.stop()
+
+    @pytest.mark.asyncio
+    async def test_rejects_image_content_type(self):
+        from twitter_articlenator.sources.web import WebArticleSource
+
+        resp = MagicMock()
+        resp.headers = {"content-type": "image/png"}
+        resp.content = b"\x89PNG\r\n"
+        resp.text = ""
+        resp.raise_for_status = MagicMock()
+        cm = self._mock_client(resp)
+        try:
+            with pytest.raises(ValueError, match="[Uu]nsupported content type"):
+                await WebArticleSource().fetch("https://example.com/x.png")
+        finally:
+            cm.stop()
 
 
 class TestContentSelectors:

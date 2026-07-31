@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+{% block title %}Channels · Twitter Article to PDF{% endblock %}
+{% block content %}
+<style>
+  .ch-wrap { max-width: 800px; margin: 0 auto; }
+  .ch-card {
+    background: rgba(26, 27, 38, 0.86);
+    border: 1px solid #2a2e42;
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+    backdrop-filter: blur(4px);
+    color: #c0caf5;
+  }
+  .ch-card h1 { margin: 0 0 0.35rem; font-size: 1.4rem; color: #c0caf5; }
+  .ch-card h2 { margin: 0 0 0.75rem; font-size: 1rem; color: #7aa2f7; }
+  .ch-sub { color: #565f89; margin: 0 0 1rem; font-size: 0.9rem; }
+  .ch-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+  .ch-input {
+    flex: 1 1 320px; min-width: 0; padding: 0.6rem 0.75rem;
+    background: #16161e; border: 1px solid #2a2e42; border-radius: 6px;
+    color: #c0caf5; font-size: 0.95rem;
+  }
+  .ch-input:focus { outline: 2px solid #7aa2f7; border-color: #7aa2f7; }
+  .ch-btn {
+    padding: 0.6rem 1.1rem; border: none; border-radius: 6px; cursor: pointer;
+    background: #7aa2f7; color: #16161e; font-weight: 600; font-size: 0.95rem;
+  }
+  .ch-btn:hover { background: #9eb8fb; }
+  .ch-btn:disabled { background: #414868; color: #787c99; cursor: not-allowed; }
+  .ch-btn.secondary { background: transparent; color: #7aa2f7; border: 1px solid #7aa2f7; }
+  .ch-btn.secondary:hover { background: rgba(122, 162, 247, 0.12); }
+  .ch-pkg { display: flex; gap: 1.25rem; margin: 0.85rem 0 0; font-size: 0.9rem; color: #a9b1d6; }
+  .ch-pkg label { display: flex; gap: 0.4rem; align-items: center; cursor: pointer; }
+  .ch-months { width: 4.5rem; padding: 0.3rem 0.4rem; background: #16161e; border: 1px solid #2a2e42;
+    border-radius: 6px; color: #c0caf5; font-size: 0.9rem; }
+  .ch-months:focus { outline: 2px solid #7aa2f7; border-color: #7aa2f7; }
+  .ch-title-filter { flex: 0 1 220px; padding: 0.3rem 0.5rem; background: #16161e; border: 1px solid #2a2e42;
+    border-radius: 6px; color: #c0caf5; font-size: 0.9rem; }
+  .ch-title-filter:focus { outline: 2px solid #7aa2f7; border-color: #7aa2f7; }
+  .ch-hint { color: #565f89; font-size: 0.82rem; }
+  .ch-progress { height: 10px; background: #16161e; border-radius: 6px; overflow: hidden; margin: 0.75rem 0 0.4rem; }
+  .ch-progress > div { height: 100%; width: 0; background: #9ece6a; transition: width 0.4s ease; }
+  .ch-meta { font-size: 0.85rem; color: #a9b1d6; display: flex; gap: 1rem; flex-wrap: wrap; }
+  .ch-status { font-weight: 600; }
+  .ch-status[data-state="complete"] { color: #9ece6a; }
+  .ch-status[data-state="error"] { color: #f7768e; }
+  .ch-status[data-state="transcribing"], .ch-status[data-state="enumerating"],
+  .ch-status[data-state="rendering"] { color: #e0af68; }
+  .ch-videos { list-style: none; padding: 0; margin: 0.75rem 0 0; max-height: 320px; overflow-y: auto; }
+  .ch-videos li { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center;
+    padding: 0.4rem 0; border-bottom: 1px solid #2a2e42; font-size: 0.85rem; }
+  .ch-videos li:last-child { border-bottom: none; }
+  .ch-videos .vtitle { color: #a9b1d6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch-vstate { flex: 0 0 auto; font-weight: 600; font-size: 0.78rem; }
+  .ch-vstate[data-state="complete"] { color: #9ece6a; }
+  .ch-vstate[data-state="error"] { color: #f7768e; }
+  .ch-vstate[data-state="transcribing"] { color: #e0af68; }
+  .ch-vstate[data-state="pending"] { color: #565f89; }
+  .ch-downloads a { color: #7dcfff; margin-right: 1rem; font-size: 0.9rem; display: inline-block; margin-top: 0.35rem; }
+  .ch-hidden { display: none; }
+  .ch-jobs { list-style: none; padding: 0; margin: 0; }
+  .ch-jobs li { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center;
+    padding: 0.5rem 0; border-bottom: 1px solid #2a2e42; font-size: 0.88rem; }
+  .ch-jobs li:last-child { border-bottom: none; }
+  .ch-jobs .label { color: #a9b1d6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch-error { color: #f7768e; font-size: 0.85rem; margin-top: 0.5rem; }
+</style>
+
+<div class="ch-wrap">
+  <div class="ch-card">
+    <h1>Channel → PDF</h1>
+    <p class="ch-sub">Paste a YouTube channel URL (e.g. <code>https://www.youtube.com/@handle</code>). Every regular upload is enumerated and transcribed locally with whisper.cpp, then bundled into PDF(s). The batch checkpoints after each video, so it survives network drops and restarts and can be resumed.</p>
+    <div class="ch-row">
+      <input id="ch-url" class="ch-input" type="url" placeholder="https://www.youtube.com/@handle" autocomplete="off" />
+      <button id="ch-start" class="ch-btn">Transcribe channel</button>
+    </div>
+    <div class="ch-pkg">
+      <label><input type="radio" name="ch-packaging" value="combined" checked /> One combined PDF</label>
+      <label><input type="radio" name="ch-packaging" value="per_item" /> One PDF per video</label>
+    </div>
+    <div class="ch-pkg">
+      <label>Only last
+        <input id="ch-months" class="ch-months" type="number" min="1" max="600" placeholder="all" />
+        months <span class="ch-hint">(optional — leave blank for the whole channel)</span>
+      </label>
+    </div>
+    <div class="ch-pkg">
+      <label>Title contains
+        <input id="ch-title-filter" class="ch-title-filter" type="text" placeholder="any" />
+        <span class="ch-hint">(optional — only videos whose title contains this)</span>
+      </label>
+    </div>
+    <p id="ch-form-error" class="ch-error ch-hidden"></p>
+  </div>
+
+  <div id="ch-job" class="ch-card ch-hidden">
+    <h2 id="ch-title">Channel job</h2>
+    <div class="ch-meta">
+      <span>Status: <span id="ch-state" class="ch-status">pending</span></span>
+      <span id="ch-counts"></span>
+    </div>
+    <div class="ch-progress"><div id="ch-bar"></div></div>
+    <div class="ch-row" style="margin-top:0.5rem;">
+      <button id="ch-resume" class="ch-btn secondary ch-hidden">Resume job</button>
+    </div>
+    <p id="ch-job-error" class="ch-error ch-hidden"></p>
+    <div id="ch-downloads" class="ch-downloads ch-hidden"></div>
+    <ul id="ch-videos" class="ch-videos"></ul>
+  </div>
+
+  <div id="ch-history-card" class="ch-card ch-hidden">
+    <h2>Previous channel jobs</h2>
+    <ul id="ch-jobs" class="ch-jobs"></ul>
+  </div>
+</div>
+
+<script nonce="{{ csp_nonce }}">
+(function () {
+  const csrf = document.querySelector('meta[name="csrf-token"]').content;
+  const JOB_KEY = 'articlenator_channel_job';
+  const POLL_MS = 2500;
+
+  const $ = (id) => document.getElementById(id);
+  const urlInput = $('ch-url');
+  const startBtn = $('ch-start');
+  const formError = $('ch-form-error');
+  const jobCard = $('ch-job');
+  const titleEl = $('ch-title');
+  const stateEl = $('ch-state');
+  const countsEl = $('ch-counts');
+  const barEl = $('ch-bar');
+  const resumeBtn = $('ch-resume');
+  const jobError = $('ch-job-error');
+  const downloadsEl = $('ch-downloads');
+  const videosList = $('ch-videos');
+  const historyCard = $('ch-history-card');
+  const jobsList = $('ch-jobs');
+
+  let pollTimer = null;
+  let currentJob = null;
+
+  function show(el) { el.classList.remove('ch-hidden'); }
+  function hide(el) { el.classList.add('ch-hidden'); }
+
+  function selectedPackaging() {
+    const checked = document.querySelector('input[name="ch-packaging"]:checked');
+    return checked ? checked.value : 'combined';
+  }
+
+  function selectedSinceMonths() {
+    const n = parseInt($('ch-months').value.trim(), 10);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+
+  function renderDownloads(data) {
+    const files = data.pdf_files || [];
+    downloadsEl.innerHTML = '';
+    if (data.status !== 'complete' || !files.length) { hide(downloadsEl); return; }
+    show(downloadsEl);
+    if (files.length === 1) {
+      const a = document.createElement('a');
+      a.href = `/api/channel/${data.job_id}/pdf/0`;
+      a.textContent = 'Download combined PDF';
+      downloadsEl.appendChild(a);
+      return;
+    }
+    const zip = document.createElement('a');
+    zip.href = `/api/channel/${data.job_id}/pdfs.zip`;
+    zip.textContent = `Download all (${files.length}) as .zip`;
+    downloadsEl.appendChild(zip);
+    files.forEach((name, i) => {
+      const a = document.createElement('a');
+      a.href = `/api/channel/${data.job_id}/pdf/${i}`;
+      a.textContent = name;
+      downloadsEl.appendChild(a);
+    });
+  }
+
+  function renderVideos(data) {
+    const videos = data.videos || [];
+    videosList.innerHTML = '';
+    for (const v of videos) {
+      const li = document.createElement('li');
+      const title = document.createElement('span');
+      title.className = 'vtitle';
+      title.textContent = v.title || v.video_id;
+      const state = document.createElement('span');
+      state.className = 'ch-vstate';
+      state.dataset.state = v.status;
+      state.textContent = v.status;
+      if (v.status === 'error' && v.error) { state.title = v.error; }
+      li.appendChild(title);
+      li.appendChild(state);
+      videosList.appendChild(li);
+    }
+  }
+
+  function render(data) {
+    show(jobCard);
+    titleEl.textContent = data.channel_title || data.url || 'Channel job';
+    stateEl.textContent = data.status;
+    stateEl.dataset.state = data.status;
+    const failed = data.failed_videos ? `, ${data.failed_videos} failed` : '';
+    countsEl.textContent = data.total_videos
+      ? `Videos ${data.done_videos}/${data.total_videos}${failed}` : '';
+    barEl.style.width = Math.round((data.progress || 0) * 100) + '%';
+
+    if (data.status === 'error') {
+      show(jobError);
+      jobError.textContent = data.error || 'Job failed.';
+    } else { hide(jobError); }
+
+    const canResume = data.status !== 'complete' && !data.running;
+    resumeBtn.classList.toggle('ch-hidden', !canResume);
+
+    renderVideos(data);
+    renderDownloads(data);
+  }
+
+  async function pollOnce(jobId) {
+    const res = await fetch(`/api/channel/${jobId}`);
+    if (res.status === 404) { stopPolling(); return; }
+    const data = await res.json();
+    data.job_id = jobId;
+    render(data);
+    if (data.status === 'complete' || (data.status === 'error' && !data.running)) {
+      stopPolling();
+      loadJobs();
+    }
+  }
+
+  function startPolling(jobId) {
+    currentJob = jobId;
+    stopPolling();
+    const tick = async () => {
+      try { await pollOnce(jobId); } catch (e) { /* keep polling */ }
+      if (currentJob === jobId) { pollTimer = setTimeout(tick, POLL_MS); }
+    };
+    tick();
+  }
+
+  function stopPolling() {
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  }
+
+  async function startJob() {
+    const url = urlInput.value.trim();
+    hide(formError);
+    if (!url) { show(formError); formError.textContent = 'Enter a YouTube channel URL.'; return; }
+    startBtn.disabled = true;
+    try {
+      const payload = { url, packaging: selectedPackaging() };
+      const months = selectedSinceMonths();
+      if (months) { payload.since_months = months; }
+      const titleFilter = $('ch-title-filter').value.trim();
+      if (titleFilter) { payload.title_contains = titleFilter; }
+      const res = await fetch('/api/channel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) { show(formError); formError.textContent = data.error || 'Failed to start.'; return; }
+      localStorage.setItem(JOB_KEY, data.job_id);
+      startPolling(data.job_id);
+    } catch (e) {
+      show(formError); formError.textContent = 'Network error starting job.';
+    } finally {
+      startBtn.disabled = false;
+    }
+  }
+
+  async function resumeJob(jobId) {
+    resumeBtn.disabled = true;
+    try {
+      await fetch(`/api/channel/${jobId}/resume`, {
+        method: 'POST', headers: { 'X-CSRF-Token': csrf },
+      });
+      startPolling(jobId);
+    } finally { resumeBtn.disabled = false; }
+  }
+
+  async function loadJobs() {
+    try {
+      const res = await fetch('/api/channels');
+      const data = await res.json();
+      const jobs = (data.jobs || []).filter(Boolean).reverse();
+      jobsList.innerHTML = '';
+      if (!jobs.length) { hide(historyCard); return; }
+      show(historyCard);
+      for (const job of jobs) {
+        const li = document.createElement('li');
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = `${job.channel_title || job.job_id} — ${job.status} (${job.done_videos}/${job.total_videos})`;
+        const btn = document.createElement('button');
+        btn.className = 'ch-btn secondary';
+        btn.textContent = job.status === 'complete' ? 'View' : 'Open';
+        btn.addEventListener('click', () => {
+          localStorage.setItem(JOB_KEY, job.job_id);
+          startPolling(job.job_id);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+        li.appendChild(label);
+        li.appendChild(btn);
+        jobsList.appendChild(li);
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  startBtn.addEventListener('click', startJob);
+  urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') startJob(); });
+  resumeBtn.addEventListener('click', () => { if (currentJob) resumeJob(currentJob); });
+
+  const saved = localStorage.getItem(JOB_KEY);
+  if (saved) { startPolling(saved); }
+  loadJobs();
+})();
+</script>
+{% endblock %}

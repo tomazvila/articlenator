@@ -71,6 +71,7 @@ header {
 
 nav {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 20px;
 }
@@ -170,7 +171,8 @@ textarea {
     border: 1px solid var(--border);
     border-radius: 4px;
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 14px;
+    /* >= 16px so iOS Safari does not auto-zoom the page on focus */
+    font-size: 16px;
     resize: vertical;
     background-color: var(--bg-dark);
     color: var(--fg);
@@ -185,6 +187,13 @@ textarea:focus {
     outline: none;
     border-color: var(--blue);
     box-shadow: 0 0 0 2px rgba(122, 162, 247, 0.25);
+}
+
+/* Any future free-text input/select must stay >= 16px for the same
+   iOS no-zoom reason. Non-text controls (checkbox/radio/file) are excluded. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+select {
+    font-size: 16px;
 }
 
 button {
@@ -261,6 +270,27 @@ button.secondary:hover {
     color: var(--cyan);
 }
 
+/* Video result row: download link + iOS "Save to Photos" share button.
+   The link grows and may wrap (long filenames); the button never shrinks. */
+.video-result {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.video-result-link {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.save-photos-btn {
+    flex: 0 0 auto;
+    padding: 8px 16px;
+    background-color: var(--green);
+}
+
 /* Messages */
 .success-message {
     padding: 15px;
@@ -323,10 +353,20 @@ button.secondary:hover {
     gap: 10px;
 }
 
+/* Let a long "link + name" status string shrink and wrap inside the flex
+   row instead of overflowing the panel and squashing the spinner. */
+#status-text,
+.status-message > span:last-child {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
 /* Spinner animation */
 .spinner {
     width: 20px;
     height: 20px;
+    flex-shrink: 0;
     border: 2px solid var(--blue);
     border-top-color: transparent;
     border-radius: 50%;
@@ -382,7 +422,7 @@ button.secondary:hover {
     margin-bottom: 5px;
     border-radius: 4px;
     font-size: 13px;
-    overflow-wrap: break-word;
+    overflow-wrap: anywhere;
 }
 
 .progress-item .status-icon {
@@ -656,7 +696,8 @@ footer .version {
 
 .cookie-form-inner textarea {
     min-height: 80px;
-    font-size: 12px;
+    /* keep >= 16px to avoid iOS focus zoom; monospace stays legible */
+    font-size: 16px;
 }
 
 .cookie-form-inner .save-btn {
@@ -1276,6 +1317,8 @@ button.danger:hover {
     }
 
     .youtube-head {
+        /* stack heading above the status pill so neither overflows narrow phones */
+        flex-direction: column;
         align-items: stretch;
     }
 

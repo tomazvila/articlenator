@@ -1,7 +1,7 @@
 # Package metadata only - dependencies managed by Nix (see flake.nix)
 [project]
 name = "twitter-articlenator"
-version = "0.2.16"
+version = "0.5.0"
 description = "Convert X/Twitter articles to e-reader PDFs"
 requires-python = ">=3.12"
 
@@ -19,6 +19,9 @@ packages = ["src/twitter_articlenator"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = [
+    "transcription: slow end-to-end whisper.cpp WER suite (opt-in via RUN_TRANSCRIPTION_WER=1)",
+]
 
 [tool.ruff]
 src = ["src"]

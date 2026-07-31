@@ -37,6 +37,7 @@ class BookmarkEntry:
     author: str
     display_name: str
     text_preview: str
+    full_text: str = ""
     article_urls: list[str] = field(default_factory=list)
     is_article: bool = False
     has_video: bool = False
@@ -50,6 +51,7 @@ class BookmarkEntry:
             "author": self.author,
             "display_name": self.display_name,
             "text_preview": self.text_preview,
+            "full_text": self.full_text,
             "article_urls": self.article_urls,
             "is_article": self.is_article,
             "has_video": self.has_video,
@@ -367,12 +369,14 @@ class BookmarkScraper:
             if not tweet_id:
                 return None
 
-            # User info
-            user_legacy = (
-                tweet.get("core", {}).get("user_results", {}).get("result", {}).get("legacy", {})
-            )
-            author = user_legacy.get("screen_name", "")
-            display_name = user_legacy.get("name", "")
+            # User info. X moved screen_name/name out of the user "legacy"
+            # object into a new "core" object; read core first, fall back to
+            # legacy for older/cached responses.
+            user_result = tweet.get("core", {}).get("user_results", {}).get("result", {})
+            user_core = user_result.get("core", {})
+            user_legacy = user_result.get("legacy", {})
+            author = user_core.get("screen_name") or user_legacy.get("screen_name", "")
+            display_name = user_core.get("name") or user_legacy.get("name", "")
 
             # Tweet content
             legacy = tweet.get("legacy", {})
@@ -439,6 +443,7 @@ class BookmarkScraper:
                 author=author,
                 display_name=display_name,
                 text_preview=text_preview,
+                full_text=full_text,
                 article_urls=article_urls,
                 is_article=is_article,
                 has_video=has_video,

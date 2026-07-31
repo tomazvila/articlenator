@@ -36,6 +36,7 @@
             python-slugify
             httpx
             cryptography
+            jiwer
           ];
 
           python = pkgs.python3.withPackages pythonDeps;
@@ -52,6 +53,11 @@
               install -Dm755 "$src" "$out/bin/yt-dlp"
               patchShebangs "$out/bin/yt-dlp"
             '';
+          };
+
+          whisperModel = pkgs.fetchurl {
+            url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin";
+            hash = "sha256-ZNGCtEC5jVIDxPm9VBVE2ExgUZbE97hF36EfsjWU0eI=";
           };
 
           # Build the application package
@@ -117,6 +123,8 @@
                 ytDlp
                 pkgs.ffmpeg
                 pkgs.nodejs_22
+                # Transcription engine (whisper.cpp)
+                pkgs.whisper-cpp
               ];
 
               fontsConf = pkgs.makeFontsConf {
@@ -131,6 +139,7 @@
                 ytDlp
                 pkgs.ffmpeg
                 pkgs.nodejs_22
+                pkgs.whisper-cpp
                 pkgs.coreutils
                 pkgs.bash
               ];
@@ -147,6 +156,7 @@
                 export HOME="/tmp"
                 export TWITTER_ARTICLENATOR_OUTPUT_DIR="/data/output"
                 export TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER="''${TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER:-yt-dlp}"
+                export TWITTER_ARTICLENATOR_WHISPER_MODEL="''${TWITTER_ARTICLENATOR_WHISPER_MODEL:-${whisperModel}}"
 
                 exec ${app}/bin/twitter-articlenator "$@"
               '';
@@ -218,6 +228,11 @@
             '';
           };
 
+          whisperModel = pkgs.fetchurl {
+            url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin";
+            hash = "sha256-ZNGCtEC5jVIDxPm9VBVE2ExgUZbE97hF36EfsjWU0eI=";
+          };
+
           # Dev dependencies
           pythonWithDeps = pkgs.python3.withPackages (ps: with ps; [
             # Runtime deps
@@ -232,6 +247,7 @@
             python-slugify
             httpx
             cryptography
+            jiwer
             # Dev/test deps
             pytest
             pytest-cov
@@ -284,6 +300,8 @@
               ytDlp
               pkgs.ffmpeg
               pkgs.nodejs_22
+              # Transcription engine (whisper.cpp; Metal-accelerated on darwin)
+              pkgs.whisper-cpp
             ];
 
             shellHook = ''
@@ -298,6 +316,7 @@
               export FONTCONFIG_FILE="${fontsConf}"
               export PLAYWRIGHT_BROWSERS_PATH="${pkgs.playwright-driver.browsers}"
               export PYTHONPATH="$PWD/src:$PYTHONPATH"
+              export TWITTER_ARTICLENATOR_WHISPER_MODEL="${whisperModel}"
 
               echo "Python: $(python --version)"
               echo ""

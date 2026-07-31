@@ -271,3 +271,38 @@ class TestProgressPolling:
             data = json.loads(response.data)
             assert "status" in data  # pending, processing, complete, failed
             assert "progress" in data  # { current: 1, total: 5, current_url: "..." }
+
+
+class TestBookmarksConvertPackagingValidation:
+    """Validation of the packaging option on /api/bookmarks/convert."""
+
+    def test_invalid_packaging_rejected(self, client):
+        resp = client.post(
+            "/api/bookmarks/convert",
+            json={
+                "urls": ["https://x.com/a/status/1"],
+                "cookies": VALID_COOKIES,
+                "packaging": "bogus",
+            },
+        )
+        assert resp.status_code == 400
+        assert "packaging" in resp.get_json()["error"].lower()
+
+    def test_missing_urls_rejected(self, client):
+        resp = client.post(
+            "/api/bookmarks/convert",
+            json={"urls": [], "cookies": VALID_COOKIES, "packaging": "batched"},
+        )
+        assert resp.status_code == 400
+
+    def test_valid_packaging_accepted(self, client):
+        """A valid packaging mode passes validation (streams, not a 400)."""
+        resp = client.post(
+            "/api/bookmarks/convert",
+            json={
+                "urls": ["https://x.com/a/status/1"],
+                "cookies": VALID_COOKIES,
+                "packaging": "per_item",
+            },
+        )
+        assert resp.status_code == 200

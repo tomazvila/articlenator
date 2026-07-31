@@ -51,6 +51,23 @@ class TwitterPlaywrightSource(ContentSource):
             return False
         return bool(self.TWITTER_URL_PATTERN.match(url))
 
+    @staticmethod
+    def _author_from_url(url: str) -> str | None:
+        """Resolve the real author handle from a canonical tweet/article URL.
+
+        X redirects placeholder URLs (e.g. /i/status/<id> or /i/article/<id>)
+        to the canonical /<handle>/status|article/<id>, so after navigation the
+        real handle can be read back off ``page.url``. Returns None when the
+        path segment is a non-author placeholder (e.g. ``i``).
+        """
+        match = re.search(r"(?:twitter\.com|x\.com)/([^/?#]+)/(?:status|article)/\d+", url or "")
+        if not match:
+            return None
+        handle = match.group(1)
+        if handle in ("i", "home", "search", "explore"):
+            return None
+        return handle
+
     def _parse_cookies(self) -> list[SetCookieParam]:
         """Parse cookie string into Playwright cookie format.
 
@@ -233,6 +250,12 @@ class TwitterPlaywrightSource(ContentSource):
         Returns:
             Dict with tweet data.
         """
+        # Resolve the real author handle. The URL we navigated to may carry a
+        # placeholder ("/i/status/<id>" or "/i/article/<id>"); after load X
+        # redirects to the canonical "/<handle>/...", so read it back off the
+        # page URL and fall back to the expected username only if needed.
+        author = self._author_from_url(page.url) or expected_username
+
         # Check if this is an article (long-form content)
         article_element = await page.query_selector('[data-testid="longformRichTextComponent"]')
         is_article = article_element is not None
@@ -282,7 +305,7 @@ class TwitterPlaywrightSource(ContentSource):
                 images = await self._extract_images(main_tweet)
 
         # Get author display name
-        display_name = expected_username
+        display_name = author
         try:
             name_element = await page.query_selector('[data-testid="User-Name"] span')
             if name_element:
@@ -304,12 +327,12 @@ class TwitterPlaywrightSource(ContentSource):
         # Extract replies/conversation thread (only if authenticated)
         replies = []
         if not is_article and is_authenticated:
-            replies = await self._extract_replies(page, expected_username)
+            replies = await self._extract_replies(page, author)
         elif not is_article and not is_authenticated:
             log.info("skipping_replies", reason="not authenticated")
 
         return {
-            "author": expected_username,
+            "author": author,
             "display_name": display_name,
             "content": content,
             "images": images,
@@ -696,9 +719,10 @@ class TwitterPlaywrightSource(ContentSource):
         is_article = tweet_data.get("is_article", False)
         article_title = tweet_data.get("title")
 
-        # Create title - use article title if available, otherwise truncate content
+        # Create title - use article title if available, otherwise truncate
+        # content. Both paths are cleaned of HTML / bounded in length.
         if article_title:
-            title = article_title
+            title = self._truncate_title(article_title)
         elif content:
             title = self._truncate_title(content)
         else:
@@ -807,8 +831,10 @@ class TwitterPlaywrightSource(ContentSource):
         Returns:
             Truncated text with ellipsis if needed.
         """
-        # Remove newlines for title
-        text = text.replace("\n", " ").strip()
+        # Strip any HTML tags and collapse whitespace so titles derived from
+        # HTML content (e.g. article bodies) are clean plain text.
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
         if len(text) <= self.MAX_TITLE_LENGTH:
             return text
         return text[: self.MAX_TITLE_LENGTH - 3] + "..."

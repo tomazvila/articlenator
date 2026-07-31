@@ -13,7 +13,13 @@ from contextlib import nullcontext
 import structlog
 from flask import Blueprint, Response, current_app, jsonify, redirect, request, session, url_for
 from ..config import get_config, parse_cookie_input, validate_cookies
-from ..pdf.generator import generate_combined_pdf
+from ..pdf.generator import (
+    DEFAULT_BATCH_PACKAGING_SIZE,
+    PACKAGING_COMBINED,
+    PACKAGING_MODES,
+    generate_combined_pdf,
+    generate_pdfs,
+)
 from ..security import is_valid_csrf_request
 from ..sources import get_source_for_url
 from ..sources.base import Article
@@ -1291,12 +1297,24 @@ def bookmarks_convert():
     if request.is_json:
         data = request.get_json() or {}
         urls = data.get("urls", [])
+        packaging = str(data.get("packaging", PACKAGING_COMBINED))
+        batch_size = data.get("batch_size", DEFAULT_BATCH_PACKAGING_SIZE)
     else:
         urls_text = request.form.get("urls", "")
         urls = [line.strip() for line in urls_text.split("\n") if line.strip()]
+        packaging = request.form.get("packaging", PACKAGING_COMBINED)
+        batch_size = request.form.get("batch_size", DEFAULT_BATCH_PACKAGING_SIZE)
 
     if not urls:
         return jsonify({"error": "No URLs provided"}), 400
+
+    # Validate packaging options up front
+    if packaging not in PACKAGING_MODES:
+        return jsonify({"error": f"Invalid packaging mode: {packaging}"}), 400
+    try:
+        batch_size = max(1, int(batch_size))
+    except (TypeError, ValueError):
+        batch_size = DEFAULT_BATCH_PACKAGING_SIZE
 
     cookies = _get_cookies_from_request()
 
@@ -1450,8 +1468,12 @@ def bookmarks_convert():
                     try:
                         saved_articles = _load_session_articles(session_dir)
                         article_objects = list(saved_articles.values())
-                        pdf_path = generate_combined_pdf(article_objects)
-                        pdf_result_queue.put(("success", pdf_path))
+                        pdf_paths = generate_pdfs(
+                            article_objects,
+                            packaging=packaging,
+                            batch_size=batch_size,
+                        )
+                        pdf_result_queue.put(("success", pdf_paths))
                     except Exception as exc:
                         pdf_result_queue.put(("error", str(exc)))
 
@@ -1466,7 +1488,8 @@ def bookmarks_convert():
                         yield ": keepalive\n\n"
 
                 if pdf_result[0] == "success":
-                    pdf_path = pdf_result[1]
+                    pdf_paths = pdf_result[1]
+                    filenames = [p.name for p in pdf_paths]
 
                     results = [
                         {
@@ -1480,7 +1503,9 @@ def bookmarks_convert():
                     final_result = {
                         "type": "complete",
                         "success": True,
-                        "filename": pdf_path.name,
+                        "filename": filenames[0] if filenames else None,
+                        "filenames": filenames,
+                        "packaging": packaging,
                         "articles": results,
                         "errors": errors if errors else None,
                         "summary": {

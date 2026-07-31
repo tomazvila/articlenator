@@ -11,6 +11,18 @@
         <button type="button" id="convert-btn" class="secondary" disabled>Convert Selected to PDF</button>
         <button type="button" id="download-videos-btn" class="secondary" disabled style="display: none;">Download Videos</button>
     </div>
+    <div class="pdf-options">
+        <label for="packaging-select">PDF packaging:</label>
+        <select id="packaging-select">
+            <option value="batched" selected>Batched (group per file)</option>
+            <option value="per_item">One PDF per bookmark</option>
+            <option value="combined">Single combined PDF</option>
+        </select>
+        <span id="batch-size-wrap">
+            <label for="batch-size-input">per file:</label>
+            <input type="number" id="batch-size-input" min="1" max="500" value="100" style="width: 5em;">
+        </span>
+    </div>
 </section>
 
 <div id="fetch-status" class="status-message" style="display: none;" aria-live="polite">
@@ -575,16 +587,19 @@ async function startBkmkStream(url, body, sessionId) {
                             convertStatus.style.display = 'none';
                             resultsDiv.style.display = 'block';
 
-                            const li = document.createElement('li');
-                            const a = document.createElement('a');
-                            a.href = `/download/${data.filename}`;
-                            if (data.summary) {
-                                a.textContent = `Download PDF (${data.summary.succeeded} article${data.summary.succeeded !== 1 ? 's' : ''})`;
-                            } else {
-                                a.textContent = 'Download PDF';
-                            }
-                            li.appendChild(a);
-                            downloadList.appendChild(li);
+                            const files = (data.filenames && data.filenames.length) ? data.filenames : (data.filename ? [data.filename] : []);
+                            files.forEach((fname, idx) => {
+                                const li = document.createElement('li');
+                                const a = document.createElement('a');
+                                a.href = `/download/${fname}`;
+                                if (files.length === 1 && data.summary) {
+                                    a.textContent = `Download PDF (${data.summary.succeeded} article${data.summary.succeeded !== 1 ? 's' : ''})`;
+                                } else {
+                                    a.textContent = fname;
+                                }
+                                li.appendChild(a);
+                                downloadList.appendChild(li);
+                            });
 
                             if (data.summary) {
                                 const summaryLi = document.createElement('li');
@@ -680,8 +695,20 @@ document.getElementById('convert-btn').addEventListener('click', async () => {
     const sessionId = crypto.randomUUID();
     saveBkmkSession(sessionId, selectedUrls);
 
-    startBkmkStream('/api/bookmarks/convert', {urls: selectedUrls, cookies, session_id: sessionId}, sessionId);
+    const packaging = document.getElementById('packaging-select').value;
+    const batchSize = parseInt(document.getElementById('batch-size-input').value) || 100;
+
+    startBkmkStream('/api/bookmarks/convert', {urls: selectedUrls, cookies, session_id: sessionId, packaging, batch_size: batchSize}, sessionId);
 });
+
+// Only show the batch-size field when "batched" packaging is selected
+(function () {
+    const sel = document.getElementById('packaging-select');
+    const wrap = document.getElementById('batch-size-wrap');
+    const sync = () => { wrap.style.display = sel.value === 'batched' ? '' : 'none'; };
+    sel.addEventListener('change', sync);
+    sync();
+})();
 
 // Download selected videos
 document.getElementById('download-videos-btn').addEventListener('click', async () => {

@@ -792,14 +792,9 @@ function renderYouTubeDownloadEvent(data, context) {
                 downloadActions.style.display = 'flex';
             }
 
+            const canSaveToPhotos = canShareVideoFiles();
             for (const item of data.downloads) {
-                const li = document.createElement('li');
-                const a = document.createElement('a');
-                const folder = item.mode === 'mp3' ? 'audio' : 'video';
-                a.href = `/download/youtube/${folder}/${item.filename}`;
-                a.textContent = `${item.filename} (${formatFileSize(item.size_bytes)})`;
-                li.appendChild(a);
-                downloadList.appendChild(li);
+                appendYouTubeDownload(downloadList, item, canSaveToPhotos);
             }
         }
 
@@ -981,6 +976,83 @@ function formatFileSize(bytes) {
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+// --- Save to Photos (iOS) -------------------------------------------------
+// A normal download link drops a file into the Files app. iOS only routes media
+// into Photos through the native share sheet, exposed via the Web Share API.
+// Only real video (.mp4) downloads can go to Photos -- not mp3 audio or the ZIP
+// archive -- and because the whole blob is held in memory while sharing, very
+// large videos fall back to the plain download link instead.
+const MAX_PHOTOS_SHARE_BYTES = 500 * 1024 * 1024; // 500 MB
+
+function canShareVideoFiles() {
+    if (!navigator.canShare || !navigator.share) return false;
+    try {
+        const probe = new File([new Uint8Array(1)], 'probe.mp4', { type: 'video/mp4' });
+        return navigator.canShare({ files: [probe] });
+    } catch (err) {
+        return false;
+    }
+}
+
+async function saveVideoToPhotos(url, filename, btn) {
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Preparing…';
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        const file = new File([blob], filename, { type: blob.type || 'video/mp4' });
+        if (!(navigator.canShare && navigator.canShare({ files: [file] }))) {
+            // Support vanished or the file is too large to share: fall back to download.
+            window.location.href = url;
+            return;
+        }
+        await navigator.share({ files: [file] });
+        btn.textContent = 'Shared ✓';
+    } catch (err) {
+        if (err && err.name === 'AbortError') {
+            // User dismissed the share sheet — nothing went wrong.
+            btn.textContent = original;
+        } else {
+            console.error('Save to Photos failed:', err);
+            btn.textContent = 'Save failed';
+        }
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// Render one finished download: link plus, for shareable video files, the
+// "Save to Photos" button. Extracted so it is exercised directly by tests.
+function appendYouTubeDownload(listEl, item, canSaveToPhotos) {
+    const li = document.createElement('li');
+    li.className = 'video-result';
+
+    const folder = item.mode === 'mp3' ? 'audio' : 'video';
+    const url = `/download/youtube/${folder}/${item.filename}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.className = 'video-result-link';
+    a.textContent = `${item.filename} (${formatFileSize(item.size_bytes)})`;
+    li.appendChild(a);
+
+    // Photos only accepts video files; skip mp3 audio, the ZIP, and oversized blobs.
+    const isVideoFile = folder === 'video' && /\.mp4$/i.test(item.filename);
+    const withinShareSize = !item.size_bytes || item.size_bytes <= MAX_PHOTOS_SHARE_BYTES;
+    if (canSaveToPhotos && isVideoFile && withinShareSize) {
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'save-photos-btn';
+        saveBtn.textContent = 'Save to Photos';
+        saveBtn.addEventListener('click', () => saveVideoToPhotos(url, item.filename, saveBtn));
+        li.appendChild(saveBtn);
+    }
+
+    listEl.appendChild(li);
+    return li;
 }
 
 restoreState();
