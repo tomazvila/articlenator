@@ -616,14 +616,23 @@ class TestYouTubeFakeDownloadWorkflow:
         youtube.click_download()
 
         expect(youtube.status_div).to_be_visible(timeout=10000)
-        page.wait_for_function("localStorage.getItem('articlenator_youtube_active_job')")
-        job_id = page.evaluate("localStorage.getItem('articlenator_youtube_active_job')")
+        page.wait_for_function(
+            "() => localStorage.getItem(userStorageKey('articlenator_youtube_active_job'))"
+        )
+        job_id = page.evaluate(
+            "localStorage.getItem(userStorageKey('articlenator_youtube_active_job'))"
+        )
 
         page.reload()
 
         expect(youtube.results_section).to_be_visible(timeout=60000)
         expect(youtube.download_all_link).to_have_text("Download all 2 files as ZIP")
-        assert page.evaluate("localStorage.getItem('articlenator_youtube_active_job')") is None
+        assert (
+            page.evaluate(
+                "localStorage.getItem(userStorageKey('articlenator_youtube_active_job'))"
+            )
+            is None
+        )
 
         archive_href = youtube.get_download_all_href()
         assert archive_href is not None

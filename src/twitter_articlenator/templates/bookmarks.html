@@ -96,8 +96,7 @@
 </div>
 
 <script nonce="{{ csp_nonce }}">
-// COOKIES_KEY is defined in base.html
-const BOOKMARKS_KEY = 'articlenator_bookmarks';
+const BOOKMARKS_KEY = userStorageKey('articlenator_bookmarks');
 
 let bookmarksData = [];
 let currentFilter = 'articles'; // 'articles', 'videos', 'all', 'tweets'
@@ -338,13 +337,6 @@ document.getElementById('bookmarks-list').addEventListener('change', (e) => {
 
 // Fetch bookmarks
 document.getElementById('fetch-btn').addEventListener('click', async () => {
-    const cookies = localStorage.getItem(COOKIES_KEY);
-    if (!cookies) {
-        document.getElementById('error').style.display = 'block';
-        document.getElementById('error-text').textContent = 'No cookies configured. Go to Setup first.';
-        return;
-    }
-
     requestNotificationPermission();
 
     const fetchBtn = document.getElementById('fetch-btn');
@@ -364,7 +356,7 @@ document.getElementById('fetch-btn').addEventListener('click', async () => {
         const response = await fetch('/api/bookmarks/fetch', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({cookies: cookies})
+            body: JSON.stringify({})
         });
 
         const contentType = response.headers.get('content-type');
@@ -437,7 +429,7 @@ document.getElementById('fetch-btn').addEventListener('click', async () => {
 });
 
 // Session persistence for bookmarks convert
-const BKMK_SESSION_KEY = 'articlenator_bkmk_session';
+const BKMK_SESSION_KEY = userStorageKey('articlenator_bkmk_session');
 
 function saveBkmkSession(sessionId, urls) {
     localStorage.setItem(BKMK_SESSION_KEY, JSON.stringify({sessionId, urls, timestamp: Date.now()}));
@@ -471,8 +463,7 @@ async function checkBkmkResume() {
             return;
         }
         if (confirm(`Previous bookmark conversion: ${data.saved}/${data.total} articles saved. Resume or generate PDF from saved?`)) {
-            const cookies = localStorage.getItem(COOKIES_KEY) || '';
-            startBkmkStream(`/api/sessions/${session.sessionId}/resume`, {cookies}, session.sessionId);
+            startBkmkStream(`/api/sessions/${session.sessionId}/resume`, {}, session.sessionId);
         }
     } catch { clearBkmkSession(); }
 }
@@ -665,13 +656,6 @@ async function startBkmkStream(url, body, sessionId) {
 
 // Convert selected bookmarks to PDF
 document.getElementById('convert-btn').addEventListener('click', async () => {
-    const cookies = localStorage.getItem(COOKIES_KEY);
-    if (!cookies) {
-        document.getElementById('error').style.display = 'block';
-        document.getElementById('error-text').textContent = 'No cookies configured. Go to Setup first.';
-        return;
-    }
-
     // Collect selected URLs
     const selectedUrls = [];
     document.querySelectorAll('.bookmark-check:checked').forEach(c => {
@@ -698,7 +682,7 @@ document.getElementById('convert-btn').addEventListener('click', async () => {
     const packaging = document.getElementById('packaging-select').value;
     const batchSize = parseInt(document.getElementById('batch-size-input').value) || 100;
 
-    startBkmkStream('/api/bookmarks/convert', {urls: selectedUrls, cookies, session_id: sessionId, packaging, batch_size: batchSize}, sessionId);
+    startBkmkStream('/api/bookmarks/convert', {urls: selectedUrls, session_id: sessionId, packaging, batch_size: batchSize}, sessionId);
 });
 
 // Only show the batch-size field when "batched" packaging is selected
@@ -712,8 +696,6 @@ document.getElementById('convert-btn').addEventListener('click', async () => {
 
 // Download selected videos
 document.getElementById('download-videos-btn').addEventListener('click', async () => {
-    const cookies = localStorage.getItem(COOKIES_KEY);
-
     requestNotificationPermission();
 
     // Collect selected tweet URLs for video download
@@ -760,7 +742,6 @@ document.getElementById('download-videos-btn').addEventListener('click', async (
 
     try {
         const payload = {links: selectedUrls};
-        if (cookies) payload.cookies = cookies;
 
         const response = await fetch('/api/videos/download', {
             method: 'POST',

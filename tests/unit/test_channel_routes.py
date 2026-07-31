@@ -9,6 +9,7 @@ import zipfile
 import pytest
 
 import twitter_articlenator.routes.channel as ch
+from twitter_articlenator.resource_limits import ResourceLimiter
 from twitter_articlenator.sources.channel_transcription import ChannelManifest, VideoEntry
 
 VALID_URL = "https://www.youtube.com/@testchannel"
@@ -266,3 +267,27 @@ def test_resume_inflight_channel_jobs_on_startup(client, ch_config, monkeypatch)
     # Only the non-terminal (in-flight) jobs are resumed; complete/error are left alone.
     assert set(resumed) == {"c" * 32, "d" * 32}
     assert set(started) == {"c" * 32, "d" * 32}
+
+
+def test_startup_resume_obeys_global_transcription_limit(tmp_path, monkeypatch):
+    alice_dir = tmp_path / "alice"
+    bob_dir = tmp_path / "bob"
+    _write_manifest(alice_dir, "a" * 32, status="transcribing", total=1, done=0)
+    _write_manifest(bob_dir, "b" * 32, status="transcribing", total=1, done=0)
+    started = []
+
+    def capture_start(job_id, *args, **kwargs):
+        started.append((job_id, kwargs["lease"]))
+
+    monkeypatch.setattr(ch, "_start_thread", capture_start)
+    limiter = ResourceLimiter({"transcription": (1, 1)})
+
+    resumed = ch.resume_inflight_channel_jobs(
+        [(alice_dir, None, "alice"), (bob_dir, None, "bob")],
+        limiter=limiter,
+    )
+
+    assert resumed == ["a" * 32]
+    assert [job_id for job_id, _lease in started] == ["a" * 32]
+    assert limiter.active("transcription") == {"global": 1, "users": {"alice": 1}}
+    started[0][1].release()

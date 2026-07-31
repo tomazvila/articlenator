@@ -12,7 +12,9 @@ from contextlib import nullcontext
 
 import structlog
 from flask import Blueprint, Response, current_app, jsonify, redirect, request, session, url_for
+from ..auth import current_user
 from ..config import get_config, parse_cookie_input, validate_cookies
+from ..credentials import TwitterCookieStore
 from ..pdf.generator import (
     DEFAULT_BATCH_PACKAGING_SIZE,
     PACKAGING_COMBINED,
@@ -21,6 +23,7 @@ from ..pdf.generator import (
     generate_pdfs,
 )
 from ..security import is_valid_csrf_request
+from ..resource_limits import limit_resource
 from ..sources import get_source_for_url
 from ..sources.base import Article
 from ..sources.twitter_playwright import TwitterPlaywrightSource
@@ -38,6 +41,7 @@ from ..sources.youtube_oauth import (
     exchange_authorization_code,
     fetch_liked_videos,
 )
+from ..user_data import current_user_paths
 
 # Delay between processing URLs to avoid rate limiting (seconds)
 URL_PROCESSING_DELAY = 2.0
@@ -55,6 +59,7 @@ SESSION_TTL_DAYS = 7
 
 # Pattern for valid Twitter/X video URLs
 TWITTER_URL_PATTERN = re.compile(r"https?://(?:www\.)?(?:twitter\.com|x\.com)/(\w+)/status/(\d+)")
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 YOUTUBE_DOWNLOAD_MODES = {"video": "videos", "mp3": "audio"}
 YOUTUBE_DOWNLOAD_JOB_TTL_SECONDS = 24 * 60 * 60
@@ -68,10 +73,21 @@ api_bp = Blueprint("api", __name__, url_prefix="/api")
 class YouTubeDownloadJob:
     """In-process YouTube download job with replayable SSE events."""
 
-    def __init__(self, *, links: list[str], mode: str) -> None:
+    def __init__(
+        self,
+        *,
+        links: list[str],
+        mode: str,
+        user_id: str,
+        output_root,
+        cookie_store: YouTubeCookieStore,
+    ) -> None:
         self.job_id = uuid.uuid4().hex
         self.links = links
         self.mode = mode
+        self.user_id = user_id
+        self.output_root = output_root
+        self.cookie_store = cookie_store
         self.created_at = time.time()
         self.updated_at = self.created_at
         self.state = "queued"
@@ -165,20 +181,29 @@ def _csrf_error_response():
 
 def _get_youtube_cookie_store() -> YouTubeCookieStore:
     config = get_config()
+    paths = current_user_paths()
     return YouTubeCookieStore(
-        cookie_path=config.youtube_cookie_path,
-        encryption_key=config.youtube_cookie_encryption_key,
-        require_encryption=config.require_youtube_cookie_encryption,
+        cookie_path=paths.youtube_cookie_path,
+        encryption_key=current_app.config.get("COOKIE_ENCRYPTION_KEY"),
+        require_encryption=current_app.config.get("REQUIRE_COOKIE_ENCRYPTION", True),
         max_bytes=config.youtube_cookie_max_bytes,
     )
 
 
 def _get_youtube_oauth_store() -> YouTubeOAuthTokenStore:
-    config = get_config()
+    paths = current_user_paths()
     return YouTubeOAuthTokenStore(
-        token_path=config.youtube_oauth_token_path,
-        encryption_key=config.youtube_cookie_encryption_key,
-        require_encryption=config.require_youtube_cookie_encryption,
+        token_path=paths.youtube_oauth_token_path,
+        encryption_key=current_app.config.get("COOKIE_ENCRYPTION_KEY"),
+        require_encryption=current_app.config.get("REQUIRE_COOKIE_ENCRYPTION", True),
+    )
+
+
+def _get_twitter_cookie_store() -> TwitterCookieStore:
+    return TwitterCookieStore(
+        path=current_user_paths().twitter_cookie_path,
+        encryption_key=current_app.config.get("COOKIE_ENCRYPTION_KEY"),
+        require_encryption=current_app.config.get("REQUIRE_COOKIE_ENCRYPTION", True),
     )
 
 
@@ -268,7 +293,12 @@ def _cleanup_youtube_download_jobs() -> None:
 def _get_youtube_download_job(job_id: str) -> YouTubeDownloadJob | None:
     _cleanup_youtube_download_jobs()
     with _youtube_download_jobs_lock:
-        return _youtube_download_jobs.get(job_id)
+        job = _youtube_download_jobs.get(job_id)
+    if job is None:
+        return None
+    user = current_user()
+    expected_user_id = user.id if user is not None else current_user_paths().user_id
+    return job if job.user_id == expected_user_id else None
 
 
 def _parse_youtube_download_payload() -> tuple[list[str], str, bool]:
@@ -290,7 +320,15 @@ def _parse_youtube_download_payload() -> tuple[list[str], str, bool]:
 
 def _start_youtube_download_job(*, links: list[str], mode: str) -> YouTubeDownloadJob:
     """Create and start a background YouTube download job."""
-    job = YouTubeDownloadJob(links=links, mode=mode)
+    paths = current_user_paths()
+    user = current_user()
+    job = YouTubeDownloadJob(
+        links=links,
+        mode=mode,
+        user_id=user.id if user is not None else paths.user_id,
+        output_root=paths.youtube_dir,
+        cookie_store=_get_youtube_cookie_store(),
+    )
     with _youtube_download_jobs_lock:
         _youtube_download_jobs[job.job_id] = job
 
@@ -314,8 +352,8 @@ def _run_youtube_download_job(job: YouTubeDownloadJob) -> None:
     )
 
     config = get_config()
-    cookie_store = _get_youtube_cookie_store()
-    output_dir = config.output_dir / "youtube" / YOUTUBE_DOWNLOAD_MODES[job.mode]
+    cookie_store = job.cookie_store
+    output_dir = job.output_root / YOUTUBE_DOWNLOAD_MODES[job.mode]
     downloads: list[dict] = []
     errors: list[dict] = []
     total = len(job.links)
@@ -526,13 +564,15 @@ def _get_run_async():
 
 
 def _get_cookies_from_request() -> str | None:
-    """Extract cookies from the request body.
+    """Read the current account's cookies, with a request-body test fallback."""
+    if current_user() is not None:
+        store = _get_twitter_cookie_store()
+        return store.read() if store.is_configured() else None
+    return _get_raw_cookies_from_request()
 
-    Clients send cookies from their localStorage with each request.
 
-    Returns:
-        Normalized cookie string, or None if not provided.
-    """
+def _get_raw_cookies_from_request() -> str | None:
+    """Extract and normalize cookies supplied for setup or legacy test mode."""
     if request.is_json:
         data = request.get_json() or {}
         raw = data.get("cookies", "")
@@ -557,8 +597,9 @@ def _sleep_with_keepalive(seconds):
 
 def _get_session_dir(session_id):
     """Get or create session directory for accumulating articles across reconnections."""
-    config = get_config()
-    session_dir = config.output_dir / "sessions" / session_id
+    if not SESSION_ID_PATTERN.fullmatch(str(session_id)):
+        raise ValueError("Invalid session id")
+    session_dir = current_user_paths().sessions_dir / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
     return session_dir
 
@@ -660,37 +701,37 @@ def _update_session_status(session_dir, status, **extra):
     )
 
 
-def _cleanup_stale_sessions():
+def _cleanup_stale_sessions(sessions_roots=None):
     """Remove session directories older than SESSION_TTL_DAYS."""
     from datetime import datetime as dt, timedelta, timezone
 
-    config = get_config()
-    sessions_dir = config.output_dir / "sessions"
-    if not sessions_dir.exists():
-        return
-
     cutoff = dt.now(timezone.utc) - timedelta(days=SESSION_TTL_DAYS)
-    for session_dir in sessions_dir.iterdir():
-        if not session_dir.is_dir():
+    if sessions_roots is None:
+        sessions_roots = [get_config().output_dir / "sessions"]
+    for sessions_dir in sessions_roots:
+        if not sessions_dir.exists():
             continue
-        meta = _load_session_meta(session_dir)
-        if meta and meta.get("updated_at"):
-            try:
-                updated = dt.fromisoformat(meta["updated_at"])
-                if updated < cutoff:
-                    shutil.rmtree(session_dir)
-                    log.info("stale_session_cleaned", session_id=session_dir.name)
-            except (ValueError, TypeError):
-                pass
-        else:
-            # No meta — check directory mtime
-            try:
-                mtime = dt.fromtimestamp(session_dir.stat().st_mtime, tz=timezone.utc)
-                if mtime < cutoff:
-                    shutil.rmtree(session_dir)
-                    log.info("stale_session_cleaned_no_meta", session_id=session_dir.name)
-            except OSError:
-                pass
+        for session_dir in sessions_dir.iterdir():
+            if not session_dir.is_dir():
+                continue
+            meta = _load_session_meta(session_dir)
+            if meta and meta.get("updated_at"):
+                try:
+                    updated = dt.fromisoformat(meta["updated_at"])
+                    if updated < cutoff:
+                        shutil.rmtree(session_dir)
+                        log.info("stale_session_cleaned", session_id=session_dir.name)
+                except (ValueError, TypeError):
+                    pass
+            else:
+                # No meta — check directory mtime
+                try:
+                    mtime = dt.fromtimestamp(session_dir.stat().st_mtime, tz=timezone.utc)
+                    if mtime < cutoff:
+                        shutil.rmtree(session_dir)
+                        log.info("stale_session_cleaned_no_meta", session_id=session_dir.name)
+                except OSError:
+                    pass
 
 
 def _count_session_articles(session_dir):
@@ -705,10 +746,11 @@ def health():
 
 
 @api_bp.route("/convert", methods=["POST"])
+@limit_resource("playwright")
 def convert():
     """POST /api/convert - Process links and return PDF paths.
 
-    Expects cookies and links in request body.
+    Expects links in the request body and uses the account's stored cookies.
     """
     run_async = _get_run_async()
 
@@ -791,7 +833,7 @@ def convert():
     # Generate single combined PDF from all articles
     try:
         article_objects = [a["article"] for a in articles]
-        pdf_path = generate_combined_pdf(article_objects)
+        pdf_path = generate_combined_pdf(article_objects, current_user_paths().output_dir)
 
         results = [
             {
@@ -828,10 +870,16 @@ def convert():
 def validate_cookies_endpoint():
     """POST /api/cookies/validate - Validate cookie format and optionally test live.
 
-    Client sends cookies from localStorage for server-side validation.
+    The setup form sends cookies once for encrypted account storage.
     Pass ?live=true to also test cookies against Twitter's API.
     """
-    cookies = _get_cookies_from_request()
+    if current_user() is not None and not is_valid_csrf_request():
+        return _csrf_error_response()
+    raw_cookies = _get_raw_cookies_from_request()
+    cookies = raw_cookies
+    if not cookies and current_user() is not None:
+        store = _get_twitter_cookie_store()
+        cookies = store.read() if store.is_configured() else None
     result = validate_cookies(cookies)
 
     if not result["valid"]:
@@ -894,15 +942,37 @@ def validate_cookies_endpoint():
             result["live"] = None
             result["message"] += " (Could not verify live — network error)"
 
+    if result["valid"] and raw_cookies and current_user() is not None:
+        try:
+            result.update(_get_twitter_cookie_store().save(cookies or ""))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 500
+
     log.info("cookies_validated", status=result["status"])
     return jsonify(result)
 
 
+@api_bp.route("/cookies/status", methods=["GET"])
+def twitter_cookies_status():
+    """Return safe metadata for the current user's stored Twitter cookies."""
+    return jsonify(_get_twitter_cookie_store().status())
+
+
+@api_bp.route("/cookies", methods=["DELETE"])
+def twitter_cookies_delete():
+    """Delete the current user's stored Twitter cookies."""
+    if not is_valid_csrf_request():
+        return _csrf_error_response()
+    _get_twitter_cookie_store().delete()
+    return jsonify(_get_twitter_cookie_store().status())
+
+
 @api_bp.route("/convert/stream", methods=["POST"])
+@limit_resource("playwright")
 def convert_stream():
     """POST /api/convert/stream - Process links with streaming progress updates.
 
-    Expects cookies and links in request body.
+    Expects links in the request body and uses the account's stored cookies.
     Uses resilient retry/backoff pattern for reliable batch processing of large link lists.
     """
     import queue as queue_module
@@ -910,6 +980,7 @@ def convert_stream():
     import threading
 
     run_async = _get_run_async()
+    output_dir = current_user_paths().output_dir
 
     # Handle both JSON and form data
     if request.is_json:
@@ -929,7 +1000,10 @@ def convert_stream():
         session_id = (request.get_json() or {}).get("session_id") or str(uuid.uuid4())
     else:
         session_id = str(uuid.uuid4())
-    session_dir = _get_session_dir(session_id)
+    try:
+        session_dir = _get_session_dir(session_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     # Build sources for all URLs (lenient — unsupported URLs get source=None and are
     # skipped during processing instead of blocking the entire batch)
@@ -1116,7 +1190,7 @@ def convert_stream():
                     try:
                         saved_articles = _load_session_articles(session_dir)
                         article_objects = list(saved_articles.values())
-                        pdf_path = generate_combined_pdf(article_objects)
+                        pdf_path = generate_combined_pdf(article_objects, output_dir)
                         pdf_result_queue.put(("success", pdf_path))
                     except Exception as exc:
                         pdf_result_queue.put(("error", str(exc)))
@@ -1185,10 +1259,11 @@ def convert_stream():
 
 
 @api_bp.route("/bookmarks/fetch", methods=["POST"])
+@limit_resource("playwright")
 def bookmarks_fetch():
     """POST /api/bookmarks/fetch - Scrape bookmarks with streaming progress.
 
-    Expects cookies in request body. Returns SSE stream of bookmark entries.
+    Uses the account's stored cookies and returns an SSE stream of bookmark entries.
 
     Uses a thread-safe queue so bookmark entries are streamed to the client
     as they are discovered (instead of waiting for the full scrape to finish,
@@ -1282,10 +1357,11 @@ def bookmarks_fetch():
 
 
 @api_bp.route("/bookmarks/convert", methods=["POST"])
+@limit_resource("playwright")
 def bookmarks_convert():
     """POST /api/bookmarks/convert - Convert selected bookmark URLs to PDF.
 
-    Expects cookies and urls list in request body. Returns SSE stream.
+    Expects a URL list and uses the account's stored cookies. Returns an SSE stream.
     Uses resilient retry/backoff pattern for reliable batch processing.
     """
     import queue as queue_module
@@ -1293,6 +1369,7 @@ def bookmarks_convert():
     import threading
 
     run_async = _get_run_async()
+    output_dir = current_user_paths().output_dir
 
     if request.is_json:
         data = request.get_json() or {}
@@ -1323,7 +1400,10 @@ def bookmarks_convert():
         session_id = (request.get_json() or {}).get("session_id") or str(uuid.uuid4())
     else:
         session_id = str(uuid.uuid4())
-    session_dir = _get_session_dir(session_id)
+    try:
+        session_dir = _get_session_dir(session_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     # Build sources for all URLs
     sources_for_urls = []
@@ -1470,6 +1550,7 @@ def bookmarks_convert():
                         article_objects = list(saved_articles.values())
                         pdf_paths = generate_pdfs(
                             article_objects,
+                            output_dir=output_dir,
                             packaging=packaging,
                             batch_size=batch_size,
                         )
@@ -1543,7 +1624,7 @@ def bookmarks_convert():
 def videos_download():
     """POST /api/videos/download - Download videos from Twitter/X links.
 
-    Expects links in request body. Cookies are optional (help with private tweets).
+    Expects links in the request body and uses any cookies stored for the account.
     Returns SSE stream with progress.
     """
     if request.is_json:
@@ -1571,8 +1652,7 @@ def videos_download():
             400,
         )
 
-    config = get_config()
-    video_dir = config.output_dir / "videos"
+    video_dir = current_user_paths().videos_dir
 
     # Resilient download settings — prioritize completion over speed
     VIDEO_BASE_DELAY = 3  # seconds between successful downloads
@@ -1915,8 +1995,7 @@ def youtube_download_job_stream(job_id: str):
 @api_bp.route("/sessions", methods=["GET"])
 def list_sessions():
     """GET /api/sessions - List all sessions with progress info."""
-    config = get_config()
-    sessions_dir = config.output_dir / "sessions"
+    sessions_dir = current_user_paths().sessions_dir
 
     if not sessions_dir.exists():
         return jsonify({"sessions": []})
@@ -1944,8 +2023,9 @@ def list_sessions():
 @api_bp.route("/sessions/<session_id>", methods=["GET"])
 def get_session(session_id):
     """GET /api/sessions/<id> - Get session details including saved/remaining URLs."""
-    config = get_config()
-    session_dir = config.output_dir / "sessions" / session_id
+    if not SESSION_ID_PATTERN.fullmatch(session_id):
+        return jsonify({"error": "Invalid session id"}), 400
+    session_dir = current_user_paths().sessions_dir / session_id
 
     if not session_dir.exists() or not session_dir.is_dir():
         return jsonify({"error": "Session not found"}), 404
@@ -1974,8 +2054,10 @@ def get_session(session_id):
 @api_bp.route("/sessions/<session_id>/pdf", methods=["POST"])
 def session_pdf(session_id):
     """POST /api/sessions/<id>/pdf - Generate PDF from existing session articles."""
-    config = get_config()
-    session_dir = config.output_dir / "sessions" / session_id
+    if not SESSION_ID_PATTERN.fullmatch(session_id):
+        return jsonify({"error": "Invalid session id"}), 400
+    paths = current_user_paths()
+    session_dir = paths.sessions_dir / session_id
 
     if not session_dir.exists() or not session_dir.is_dir():
         return jsonify({"error": "Session not found"}), 404
@@ -1986,7 +2068,7 @@ def session_pdf(session_id):
 
     try:
         article_objects = list(saved_articles.values())
-        pdf_path = generate_combined_pdf(article_objects)
+        pdf_path = generate_combined_pdf(article_objects, paths.output_dir)
 
         _update_session_status(session_dir, "completed")
 
@@ -2008,14 +2090,16 @@ def resume_session(session_id):
 
     Loads the original URL list from session metadata, skips already-fetched
     articles, and continues processing the remaining URLs as an SSE stream.
-    Requires cookies in request body.
+    Uses any Twitter cookies stored for the account.
     """
+    if not SESSION_ID_PATTERN.fullmatch(session_id):
+        return jsonify({"error": "Invalid session id"}), 400
     import queue as queue_module
     import random
     import threading
 
-    config = get_config()
-    session_dir = config.output_dir / "sessions" / session_id
+    output_dir = current_user_paths().output_dir
+    session_dir = current_user_paths().sessions_dir / session_id
 
     if not session_dir.exists() or not session_dir.is_dir():
         return jsonify({"error": "Session not found"}), 404
@@ -2147,7 +2231,7 @@ def resume_session(session_id):
                     try:
                         saved_articles = _load_session_articles(session_dir)
                         article_objects = list(saved_articles.values())
-                        pdf_path = generate_combined_pdf(article_objects)
+                        pdf_path = generate_combined_pdf(article_objects, output_dir)
                         pdf_result_queue.put(("success", pdf_path))
                     except Exception as exc:
                         pdf_result_queue.put(("error", str(exc)))

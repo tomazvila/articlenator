@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Users · Articlenator{% endblock %}
+{% block content %}
+<section class="panel">
+    <h1>Users</h1>
+    <p>Create accounts for people who may access this server.</p>
+    {% if error %}<p class="error-message" role="alert">{{ error }}</p>{% endif %}
+    {% with messages = get_flashed_messages() %}
+    {% if messages %}<p class="success-message" role="status">{{ messages[0] }}</p>{% endif %}
+    {% endwith %}
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-group">
+            <label for="username">Username</label>
+            <input id="username" name="username" type="text" minlength="3" maxlength="32" required>
+        </div>
+        <div class="form-group">
+            <label for="password">Initial password</label>
+            <input id="password" name="password" type="password" minlength="12" autocomplete="new-password" required>
+        </div>
+        <div class="form-group checkbox-row">
+            <input id="is_admin" name="is_admin" type="checkbox">
+            <label for="is_admin">Administrator</label>
+        </div>
+        <button type="submit">Create account</button>
+    </form>
+</section>
+<section class="panel">
+    <h2>Existing accounts</h2>
+    <table class="account-table">
+        <thead><tr><th>Username</th><th>Role</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for account in users %}
+        <tr>
+            <td>{{ account.username }}</td>
+            <td>{{ "Admin" if account.is_admin else "User" }}</td>
+            <td>{{ "Active" if account.is_active else "Disabled" }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

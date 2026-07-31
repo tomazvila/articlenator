@@ -4,9 +4,7 @@ import os
 
 from playwright.sync_api import Page, expect
 
-from .pages import VideosPage
-
-COOKIES_KEY = "articlenator_cookies"
+from .pages import CookieGuidePage, VideosPage
 
 # Real cookies for testing - loaded from env or hardcoded for CI
 TEST_COOKIES = os.environ.get(
@@ -52,8 +50,6 @@ class TestVideosPage:
     def test_download_without_cookies_starts_processing(self, page: Page, base_url):
         """Test downloading without cookies still starts processing (yt-dlp handles it)."""
         page.goto(f"{base_url}/videos")
-        page.evaluate(f"localStorage.removeItem('{COOKIES_KEY}')")
-        page.reload()
 
         videos = VideosPage(page)
         videos.enter_links([TEST_VIDEO_URL])
@@ -65,11 +61,6 @@ class TestVideosPage:
     def test_download_with_empty_links_shows_error(self, page: Page, base_url):
         """Test downloading with empty links shows error."""
         page.goto(f"{base_url}/videos")
-        page.evaluate(
-            f"localStorage.setItem('{COOKIES_KEY}', "
-            f"'auth_token=test12345678901234567890; ct0=test12345678901234567890')"
-        )
-        page.reload()
 
         videos = VideosPage(page)
         videos.click_download()
@@ -94,12 +85,14 @@ class TestVideoDownloadWorkflow:
 
     def test_download_single_video(self, page: Page, base_url, output_dir):
         """Test downloading a single video from Twitter/X end-to-end."""
-        # Set up cookies
-        page.goto(f"{base_url}/videos")
-        page.evaluate(f"localStorage.setItem('{COOKIES_KEY}', `{TEST_COOKIES}`)")
-        page.reload()
+        guide = CookieGuidePage(page)
+        guide.navigate(base_url)
+        guide.enter_cookies(TEST_COOKIES)
+        guide.click_save()
+        expect(guide.success_message).to_be_visible(timeout=5000)
 
         videos = VideosPage(page)
+        videos.navigate(base_url)
 
         # Enter the video link
         videos.enter_links([TEST_VIDEO_URL])

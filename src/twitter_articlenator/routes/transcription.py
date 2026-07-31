@@ -14,13 +14,17 @@ import threading
 import uuid
 
 import structlog
-from flask import Blueprint, jsonify, render_template, request, send_from_directory
+from flask import Blueprint, current_app, jsonify, render_template, request, send_from_directory
 
 from ..config import get_config
+from ..auth import current_user
 from ..security import is_valid_csrf_request
+from ..resource_limits import ResourceLease, acquire_for_current_user
 from ..sources.transcription import STATUS_COMPLETE, load_manifest
 from ..sources.transcription_service import build_job
 from ..sources.youtube_downloader import is_supported_youtube_url
+from ..sources.youtube_cookies import YouTubeCookieStore
+from ..user_data import current_user_paths
 
 log = structlog.get_logger()
 
@@ -42,31 +46,53 @@ def _csrf_error():
 
 
 def _job_dir(job_id: str):
-    return get_config().transcription_dir / job_id
+    if current_user() is None and not current_app.config.get("AUTH_REQUIRED", True):
+        return get_config().transcription_dir / job_id
+    return current_user_paths().transcription_dir / job_id
 
 
 def _is_running(job_id: str) -> bool:
     with _threads_lock:
-        thread = _threads.get(job_id)
+        thread = _threads.get(str(_job_dir(job_id)))
         return thread is not None and thread.is_alive()
 
 
-def _start_thread(job_id: str, url: str | None) -> None:
+def _start_thread(
+    job_id: str,
+    url: str | None,
+    *,
+    job_dir=None,
+    cookie_store: YouTubeCookieStore | None = None,
+    lease: ResourceLease | None = None,
+) -> None:
     """Spawn (or restart) the background worker for a job."""
+    job_dir = job_dir or _job_dir(job_id)
 
     def worker() -> None:
         try:
-            build_job(_job_dir(job_id)).run(url)
+            build_job(job_dir, cookie_store=cookie_store).run(url)
         except Exception as exc:  # noqa: BLE001 - failure is persisted in the manifest
             log.warning("transcription_job_thread_failed", job_id=job_id, error=str(exc))
+        finally:
+            if lease is not None:
+                lease.release()
 
     with _threads_lock:
-        existing = _threads.get(job_id)
+        thread_key = str(job_dir)
+        existing = _threads.get(thread_key)
         if existing is not None and existing.is_alive():
+            if lease is not None:
+                lease.release()
             return
         thread = threading.Thread(target=worker, name=f"transcribe-{job_id}", daemon=True)
-        _threads[job_id] = thread
-        thread.start()
+        _threads[thread_key] = thread
+        try:
+            thread.start()
+        except Exception:
+            _threads.pop(thread_key, None)
+            if lease is not None:
+                lease.release()
+            raise
 
 
 def _manifest_payload(job_id: str) -> dict | None:
@@ -102,14 +128,38 @@ def start():
 
     job_id = uuid.uuid4().hex
     log.info("transcription_job_starting", job_id=job_id, url=url)
-    _start_thread(job_id, url)
+    if current_user() is None:
+        _start_thread(job_id, url)
+    else:
+        lease = acquire_for_current_user("transcription")
+        if lease is None:
+            return jsonify({"error": "Transcription job limit reached"}), 429
+        config = get_config()
+        paths = current_user_paths()
+        cookie_store = YouTubeCookieStore(
+            cookie_path=paths.youtube_cookie_path,
+            encryption_key=current_app.config.get("COOKIE_ENCRYPTION_KEY"),
+            require_encryption=current_app.config.get("REQUIRE_COOKIE_ENCRYPTION", True),
+            max_bytes=getattr(config, "youtube_cookie_max_bytes", 262144),
+        )
+        _start_thread(
+            job_id,
+            url,
+            job_dir=_job_dir(job_id),
+            cookie_store=cookie_store,
+            lease=lease,
+        )
     return jsonify({"job_id": job_id, "status": "started"}), 202
 
 
 @transcription_bp.route("/api/transcriptions", methods=["GET"])
 def list_jobs():
     """GET /api/transcriptions - list known transcription jobs (most recent state)."""
-    base = get_config().transcription_dir
+    base = (
+        get_config().transcription_dir
+        if current_user() is None and not current_app.config.get("AUTH_REQUIRED", True)
+        else current_user_paths().transcription_dir
+    )
     jobs = []
     if base.exists():
         for entry in sorted(base.iterdir()):
@@ -149,7 +199,27 @@ def resume(job_id: str):
         return jsonify({"job_id": job_id, "status": "running"})
 
     log.info("transcription_job_resuming", job_id=job_id)
-    _start_thread(job_id, None)
+    if current_user() is None:
+        _start_thread(job_id, None)
+    else:
+        lease = acquire_for_current_user("transcription")
+        if lease is None:
+            return jsonify({"error": "Transcription job limit reached"}), 429
+        config = get_config()
+        paths = current_user_paths()
+        cookie_store = YouTubeCookieStore(
+            cookie_path=paths.youtube_cookie_path,
+            encryption_key=current_app.config.get("COOKIE_ENCRYPTION_KEY"),
+            require_encryption=current_app.config.get("REQUIRE_COOKIE_ENCRYPTION", True),
+            max_bytes=getattr(config, "youtube_cookie_max_bytes", 262144),
+        )
+        _start_thread(
+            job_id,
+            None,
+            job_dir=_job_dir(job_id),
+            cookie_store=cookie_store,
+            lease=lease,
+        )
     return jsonify({"job_id": job_id, "status": "resumed"}), 202
 
 

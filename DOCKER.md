@@ -43,6 +43,10 @@ docker run -d \
 # View logs
 docker logs -f twitter-articlenator
 
+# Create the first administrator
+docker exec -it twitter-articlenator \
+  twitter-articlenator users create --username admin --admin
+
 # Access the web UI
 open http://localhost:5001
 ```
@@ -86,13 +90,16 @@ Edit `k8s/twitter-app.yaml` to customize:
 | `TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY` | required when encryption is enforced | Fernet key for encrypted YouTube cookie storage |
 | `TWITTER_ARTICLENATOR_REQUIRE_COOKIE_ENCRYPTION` | `false` | Set to `true` in deployment so persistent YouTube cookies cannot be saved as plaintext |
 | `TWITTER_ARTICLENATOR_SESSION_COOKIE_SECURE` | `false` | Set to `true` behind HTTPS ingress/tunnel |
+| `TWITTER_ARTICLENATOR_TRUST_PROXY_HEADERS` | `false` | Trust exactly one reverse-proxy hop for client IP and scheme |
+| `TWITTER_ARTICLENATOR_TRUSTED_HOSTS` | unset | Comma-separated accepted public hostnames |
+| `TWITTER_ARTICLENATOR_PLAYWRIGHT_PER_USER_LIMIT` | `1` | Concurrent Playwright work per account |
+| `TWITTER_ARTICLENATOR_PLAYWRIGHT_GLOBAL_LIMIT` | `2` | Concurrent Playwright work in this process |
+| `TWITTER_ARTICLENATOR_TRANSCRIPTION_PER_USER_LIMIT` | `1` | Concurrent transcription/channel work per account |
+| `TWITTER_ARTICLENATOR_TRANSCRIPTION_GLOBAL_LIMIT` | `1` | Concurrent transcription/channel work in this process |
 
 ### Persistent Data
 
-The `/data` volume contains:
-- `/data/config/youtube-cookies.txt` - encrypted YouTube cookie blob when uploaded through the UI/API
-- `/data/config/youtube-cookies.json` - metadata only; no raw cookie values
-- `/data/output/*.pdf` - Generated PDF files
+The `/data` volume contains the user database plus UUID-namespaced credentials, jobs, and output. See [MULTI_USER.md](MULTI_USER.md) for the exact layout and first-admin command. Legacy global files are not inherited by an account.
 
 YouTube cookie rotation is done through the YouTube page: upload a new `cookies.txt`,
 verify it, and the previous encrypted blob is overwritten. Do not put YouTube cookies

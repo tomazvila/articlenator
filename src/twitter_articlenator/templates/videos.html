@@ -54,8 +54,7 @@ https://x.com/anotheruser/status/987654321"
 </div>
 
 <script nonce="{{ csp_nonce }}">
-// COOKIES_KEY is defined in base.html
-const VIDEO_LINKS_KEY = 'articlenator_video_links';
+const VIDEO_LINKS_KEY = userStorageKey('articlenator_video_links');
 
 // Persist textarea content
 const linksInput = document.getElementById('video-links-input');
@@ -203,9 +202,8 @@ document.getElementById('download-form').addEventListener('submit', async (e) =>
     statusDiv.style.display = 'flex';
     statusText.textContent = 'Starting...';
 
-    // Get links and cookies
+    // Get links; credentials are resolved from the signed-in account.
     const links = linksInput.value.trim().split('\n').filter(l => l.trim());
-    const cookies = localStorage.getItem(COOKIES_KEY) || '';
 
     if (links.length === 0) {
         errorDiv.style.display = 'block';
@@ -217,7 +215,6 @@ document.getElementById('download-form').addEventListener('submit', async (e) =>
 
     try {
         const payload = {links: links};
-        if (cookies) payload.cookies = cookies;
 
         const response = await fetch('/api/videos/download', {
             method: 'POST',

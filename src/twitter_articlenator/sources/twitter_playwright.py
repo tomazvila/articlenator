@@ -177,8 +177,6 @@ class TwitterPlaywrightSource(ContentSource):
                         )
                         await asyncio.sleep(3)
 
-                    # Take screenshot for debugging
-                    await page.screenshot(path="/tmp/twitter_nav_test.png")
                     log.info(
                         "navigation_complete",
                         url=page.url,
@@ -210,16 +208,10 @@ class TwitterPlaywrightSource(ContentSource):
                         await page.reload(wait_until="domcontentloaded", timeout=30000)
                         await asyncio.sleep(3)
                     else:
-                        # Final attempt failed - save debug info and raise
-                        screenshot_path = "/tmp/twitter_debug.png"
-                        await page.screenshot(path=screenshot_path, full_page=True)
-                        html_path = "/tmp/twitter_debug.html"
-                        with open(html_path, "w") as f:
-                            f.write(await page.content())
+                        # Do not persist authenticated screenshots or HTML to a
+                        # shared filesystem location on failure.
                         log.error(
                             "tweet_not_found_after_retries",
-                            screenshot=screenshot_path,
-                            html_path=html_path,
                             page_url=page.url,
                             page_title=await page.title(),
                             attempts=self.MAX_LOAD_RETRIES,
@@ -631,9 +623,6 @@ class TwitterPlaywrightSource(ContentSource):
 
             # Wait for any lazy-loaded content
             await asyncio.sleep(2)
-
-            # Save debug screenshot
-            await page.screenshot(path="/tmp/twitter_replies_debug.png", full_page=True)
 
             # Get all tweet articles - these contain the actual tweet content
             tweet_elements = await page.query_selector_all('article[data-testid="tweet"]')

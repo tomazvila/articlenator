@@ -3,7 +3,7 @@
 from flask import Blueprint, jsonify, render_template, send_from_directory
 from werkzeug.utils import secure_filename
 
-from ..config import get_config
+from ..user_data import current_user_paths
 
 pages_bp = Blueprint("pages", __name__)
 
@@ -52,8 +52,7 @@ def download(filename: str):
     if not safe_filename or safe_filename != filename:
         return jsonify({"error": "Invalid filename"}), 400
 
-    config = get_config()
-    output_dir = config.output_dir
+    output_dir = current_user_paths().output_dir
 
     pdf_path = output_dir / safe_filename
     if not pdf_path.exists():
@@ -76,8 +75,7 @@ def download_video(filename: str):
     if not safe_filename or safe_filename != filename:
         return jsonify({"error": "Invalid filename"}), 400
 
-    config = get_config()
-    video_dir = config.output_dir / "videos"
+    video_dir = current_user_paths().videos_dir
 
     video_path = video_dir / safe_filename
     if not video_path.exists():
@@ -102,8 +100,7 @@ def download_youtube_archive_file(mode: str, filename: str):
     if not safe_filename.endswith(".zip") or not safe_filename.startswith(allowed[mode]):
         return jsonify({"error": "Invalid archive filename"}), 400
 
-    config = get_config()
-    archive_dir = config.output_dir / "youtube" / "archives"
+    archive_dir = current_user_paths().youtube_dir / "archives"
     archive_path = archive_dir / safe_filename
     if not archive_path.is_file():
         return jsonify({"error": "File not found"}), 404
@@ -142,8 +139,7 @@ def download_youtube(mode: str, filename: str):
     if not filename or "/" in filename or "\\" in filename or filename in {".", ".."}:
         return jsonify({"error": "Invalid filename"}), 400
 
-    config = get_config()
-    youtube_dir = config.output_dir / "youtube" / allowed[mode]["directory"]
+    youtube_dir = current_user_paths().youtube_dir / allowed[mode]["directory"]
 
     youtube_path = youtube_dir / filename
     if not youtube_path.is_file():

@@ -102,6 +102,7 @@ auth_token    xyz789...    .x.com    /    2026-01-01    50 B    ✓    ✓"
 
     <div class="button-group">
         <button type="button" id="test-cookies-btn" class="secondary">Test Cookies</button>
+        <button type="button" id="delete-cookies-btn" class="danger">Delete Cookies</button>
     </div>
 
     <div id="save-success" class="success-message" style="display: none;" aria-live="polite">
@@ -118,8 +119,6 @@ auth_token    xyz789...    .x.com    /    2026-01-01    50 B    ✓    ✓"
 </section>
 
 <script nonce="{{ csp_nonce }}">
-// COOKIES_KEY is defined in base.html
-
 // Helper to hide all result divs
 function hideAllResults() {
     document.getElementById('save-success').style.display = 'none';
@@ -129,8 +128,8 @@ function hideAllResults() {
     document.getElementById('test-error').style.display = 'none';
 }
 
-// Save cookies to localStorage
-function handleCookieSubmit(e) {
+// Validate and save cookies to this account's encrypted server-side store.
+async function handleCookieSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const successDiv = document.getElementById('save-success');
@@ -145,14 +144,24 @@ function handleCookieSubmit(e) {
         return;
     }
 
-    // Save to localStorage
-    localStorage.setItem(COOKIES_KEY, cookieValue);
-    successDiv.style.display = 'block';
-    form.reset();
-
-    // Refresh displays
-    displayCurrentCookies();
-    updateNavCookieStatus();
+    try {
+        const response = await fetch('/api/cookies/validate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+            body: JSON.stringify({cookies: cookieValue})
+        });
+        const data = await response.json();
+        if (!response.ok || !data.valid) {
+            throw new Error(data.error || data.message || 'Cookie validation failed');
+        }
+        successDiv.style.display = 'block';
+        form.reset();
+        await displayCurrentCookies();
+        await updateNavCookieStatus();
+    } catch (error) {
+        errorDiv.textContent = error.message || 'Failed to save cookies';
+        errorDiv.style.display = 'block';
+    }
 }
 
 // Attach handler to both forms
@@ -168,21 +177,14 @@ document.getElementById('test-cookies-btn').addEventListener('click', async () =
 
     hideAllResults();
 
-    const cookies = localStorage.getItem(COOKIES_KEY);
-    if (!cookies) {
-        errorDiv.textContent = 'No cookies saved. Please enter your cookies first.';
-        errorDiv.style.display = 'block';
-        return;
-    }
-
     statusDiv.style.display = 'flex';
     testBtn.disabled = true;
 
     try {
-        const response = await fetch('/api/cookies/validate', {
+        const response = await fetch('/api/cookies/validate?live=true', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({cookies: cookies})
+            headers: {'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken},
+            body: JSON.stringify({})
         });
         const data = await response.json();
 
@@ -206,73 +208,42 @@ document.getElementById('test-cookies-btn').addEventListener('click', async () =
     }
 });
 
-// Display current cookies from localStorage
-function displayCurrentCookies() {
-    const display = document.getElementById('cookies-display');
-    const cookies = localStorage.getItem(COOKIES_KEY);
+document.getElementById('delete-cookies-btn').addEventListener('click', async () => {
+    hideAllResults();
+    const errorDiv = document.getElementById('save-error');
+    try {
+        const response = await fetch('/api/cookies', {
+            method: 'DELETE',
+            headers: {'X-CSRF-Token': csrfToken}
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to delete cookies');
+        await displayCurrentCookies();
+        await updateNavCookieStatus();
+    } catch (error) {
+        errorDiv.textContent = error.message || 'Failed to delete cookies';
+        errorDiv.style.display = 'block';
+    }
+});
 
-    if (!cookies) {
+// Display safe metadata only; secret values never return to the browser.
+async function displayCurrentCookies() {
+    const display = document.getElementById('cookies-display');
+    let status;
+    try {
+        const response = await fetch('/api/cookies/status');
+        status = await response.json();
+    } catch (error) {
+        display.innerHTML = '<p class="cookie-warning">Could not load cookie status.</p>';
+        return;
+    }
+    if (!status.configured) {
         display.innerHTML = '<p class="no-cookies">No cookies saved yet.</p>';
         return;
     }
-
-    // Parse and display masked cookies
-    const parts = cookies.split(';').map(p => p.trim()).filter(p => p.includes('='));
-    if (parts.length === 0) {
-        display.innerHTML = '<p class="no-cookies">No valid cookies found.</p>';
-        return;
-    }
-
-    const requiredNames = ['auth_token', 'ct0'];
-    let html = '<table><thead><tr><th>Name</th><th>Value</th><th>Length</th><th>Status</th></tr></thead><tbody>';
-
-    const cookieNames = [];
-    for (const part of parts) {
-        const eqIdx = part.indexOf('=');
-        if (eqIdx === -1) continue;
-        const name = part.substring(0, eqIdx).trim();
-        const value = part.substring(eqIdx + 1).trim();
-        cookieNames.push(name);
-
-        // Mask value
-        let masked;
-        if (value.length > 12) {
-            masked = value.substring(0, 4) + '...' + value.substring(value.length - 4);
-        } else if (value.length > 4) {
-            masked = value.substring(0, 2) + '...' + value.substring(value.length - 2);
-        } else {
-            masked = '****';
-        }
-
-        const isRequired = requiredNames.includes(name);
-        const statusClass = isRequired ? 'status-ok' : 'status-extra';
-        const statusText = isRequired ? 'Required' : 'Extra';
-
-        html += `
-            <tr>
-                <td><code>${name}</code></td>
-                <td><code class="masked-value">${masked}</code></td>
-                <td>${value.length} chars</td>
-                <td><span class="${statusClass}">${statusText}</span></td>
-            </tr>
-        `;
-    }
-
-    html += '</tbody></table>';
-
-    const hasAuthToken = cookieNames.includes('auth_token');
-    const hasCt0 = cookieNames.includes('ct0');
-
-    if (!hasAuthToken || !hasCt0) {
-        const missing = [];
-        if (!hasAuthToken) missing.push('auth_token');
-        if (!hasCt0) missing.push('ct0');
-        html += `<p class="cookie-warning">Missing required cookies: <code>${missing.join('</code>, <code>')}</code></p>`;
-    } else {
-        html += '<p class="cookie-complete">All required cookies are set.</p>';
-    }
-
-    display.innerHTML = html;
+    const names = (status.cookie_names || []).map(name => `<code>${name}</code>`).join(', ');
+    const encryption = status.encrypted ? 'encrypted' : 'stored';
+    display.innerHTML = `<p class="cookie-complete">Cookies are ${encryption} for this account: ${names}</p>`;
 }
 
 // Display on page load

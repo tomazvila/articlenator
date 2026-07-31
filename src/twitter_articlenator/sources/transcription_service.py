@@ -13,6 +13,7 @@ from pathlib import Path
 from ..config import Config, get_config
 from .transcription import TranscriptionJob
 from .whisper_transcriber import WhisperCppTranscriber, extract_audio, ffmpeg_chunk
+from .youtube_cookies import YouTubeCookieStore
 
 
 def resolve_cookie_file(config: Config) -> Path | None:
@@ -27,10 +28,11 @@ def build_job(
     config: Config | None = None,
     chunk_seconds: int | None = None,
     language: str | None = None,
+    cookie_store: YouTubeCookieStore | None = None,
 ) -> TranscriptionJob:
     """Construct a TranscriptionJob backed by whisper.cpp + yt-dlp + ffmpeg."""
     config = config or get_config()
-    cookie_file = resolve_cookie_file(config)
+    legacy_cookie_file = resolve_cookie_file(config) if cookie_store is None else None
     downloader_bin = config.youtube_downloader_bin
     timeout = config.youtube_download_timeout
 
@@ -42,10 +44,19 @@ def build_job(
     )
 
     def audio_provider(url: str, dest_dir: Path):
+        if cookie_store is not None and cookie_store.is_configured():
+            with cookie_store.temporary_cookie_file() as cookie_file:
+                return extract_audio(
+                    url,
+                    dest_dir,
+                    cookie_file=cookie_file,
+                    downloader_bin=downloader_bin,
+                    timeout_seconds=timeout,
+                )
         return extract_audio(
             url,
             dest_dir,
-            cookie_file=cookie_file,
+            cookie_file=legacy_cookie_file,
             downloader_bin=downloader_bin,
             timeout_seconds=timeout,
         )

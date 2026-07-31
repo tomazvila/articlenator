@@ -1,6 +1,7 @@
 """Playwright fixtures for E2E tests."""
 
 import os
+import sqlite3
 import socket
 import subprocess
 import sys
@@ -8,6 +9,9 @@ import time
 from contextlib import closing
 
 import pytest
+
+E2E_USERNAME = "e2e-admin"
+E2E_PASSWORD = "correct horse battery staple for e2e"
 
 
 def find_free_port():
@@ -166,6 +170,7 @@ def flask_server(tmp_path_factory):
     tmp_dir = tmp_path_factory.mktemp("e2e")
     output_dir = tmp_dir / "output"
     output_dir.mkdir()
+    config_dir = tmp_dir / "config"
     fake_ytdlp = tmp_dir / "fake-youtube-ytdlp"
     fake_ytdlp_log = tmp_dir / "fake-youtube-ytdlp.jsonl"
     if os.environ.get("RUN_REAL_YOUTUBE_E2E") != "1":
@@ -173,7 +178,11 @@ def flask_server(tmp_path_factory):
 
     env = os.environ.copy()
     env["TWITTER_ARTICLENATOR_OUTPUT_DIR"] = str(output_dir)
+    env["TWITTER_ARTICLENATOR_CONFIG_DIR"] = str(config_dir)
     env["TWITTER_ARTICLENATOR_JSON_LOGGING"] = "false"
+    env["TWITTER_ARTICLENATOR_SECRET_KEY"] = (
+        "e2e-only-session-secret-with-more-than-32-characters"
+    )
     env["FLASK_APP"] = "twitter_articlenator.app:create_app"
     env["FLASK_RUN_PORT"] = str(port)
     env["TWITTER_ARTICLENATOR_YOUTUBE_TIMEOUT"] = "30"
@@ -205,6 +214,12 @@ os.environ['TWITTER_ARTICLENATOR_JSON_LOGGING'] = 'false'
 
 from twitter_articlenator.app import create_app
 app = create_app()
+if app.extensions['user_store'].get_by_username('{E2E_USERNAME}') is None:
+    app.extensions['user_store'].create_user(
+        '{E2E_USERNAME}',
+        '{E2E_PASSWORD}',
+        is_admin=True,
+    )
 app.run(host='127.0.0.1', port={port}, debug=False, use_reloader=False)
 """,
         ],
@@ -219,10 +234,16 @@ app.run(host='127.0.0.1', port={port}, debug=False, use_reloader=False)
         stdout, stderr = proc.communicate(timeout=5)
         pytest.fail(f"Server failed to start. stdout: {stdout.decode()}, stderr: {stderr.decode()}")
 
+    with sqlite3.connect(config_dir / "articlenator.sqlite3") as connection:
+        user_id = connection.execute(
+            "SELECT id FROM users WHERE username_normalized = ?",
+            (E2E_USERNAME.casefold(),),
+        ).fetchone()[0]
+
     yield {
         "port": port,
         "process": proc,
-        "output_dir": output_dir,
+        "output_dir": output_dir / "users" / user_id,
         "youtube_fake_log": fake_ytdlp_log,
     }
 
@@ -244,3 +265,20 @@ def base_url(flask_server):
 def output_dir(flask_server):
     """Output directory for the test session."""
     return flask_server["output_dir"]
+
+
+@pytest.fixture(autouse=True)
+def authenticated_page(page, base_url):
+    """Log each browser test into a fresh account session and clear credentials."""
+    page.goto(f"{base_url}/login")
+    page.locator("#username").fill(E2E_USERNAME)
+    page.locator("#password").fill(E2E_PASSWORD)
+    page.locator("button[type='submit']").click()
+    page.wait_for_url(f"{base_url}/")
+    page.evaluate(
+        """async () => {
+            await fetch('/api/cookies', {method: 'DELETE'});
+            await fetch('/api/youtube/cookies', {method: 'DELETE'});
+        }"""
+    )
+    yield

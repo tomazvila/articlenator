@@ -7,6 +7,7 @@ Convert Twitter/X content (tweets, threads, and articles) and web articles to e-
 - **Twitter/X Support**: Convert tweets, threads, and long-form articles to PDF using Playwright with stealth mode
 - **Web Articles**: Supports any HTTP(S) web article with smart content extraction
 - **E-Reader Optimized**: Clean, readable PDFs designed for Kindle, Kobo, and other e-readers
+- **Private Accounts**: Administrator-created logins with isolated credentials, jobs, bookmarks, and output
 
 ## Quick Start
 
@@ -16,16 +17,22 @@ Convert Twitter/X content (tweets, threads, and articles) and web articles to e-
 - Twitter/X account (for Twitter content)
 
 ### Run the Application
-
 ```bash
 # Enter development shell (auto-installs dependencies)
 nix develop
 
-# Start the server
-uv run twitter-articlenator
+# Configure stable secrets
+export TWITTER_ARTICLENATOR_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+
+# Create the first administrator, then start the server
+python -m twitter_articlenator.app users create --username admin --admin
+python -m twitter_articlenator.app
 ```
 
 Open http://localhost:5001 in your browser.
+
+See [MULTI_USER.md](MULTI_USER.md) for account administration, storage isolation, limits, migration behavior, and production deployment requirements.
 
 ### Set Up Twitter Cookies
 
@@ -133,7 +140,10 @@ Environment variables:
 | `TWITTER_ARTICLENATOR_LOG_LEVEL` | `INFO` | Logging level |
 | `TWITTER_ARTICLENATOR_JSON_LOGGING` | `true` | Enable JSON log format |
 | `PORT` | `5001` | Server port |
-| `SECRET_KEY` | `dev-secret-key` | Flask secret key |
+| `TWITTER_ARTICLENATOR_SECRET_KEY` | required | Flask session-signing secret, at least 32 characters |
+| `TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY` | required | Fernet key for all stored user credentials |
+| `TWITTER_ARTICLENATOR_SESSION_COOKIE_SECURE` | `false` | Require HTTPS for login cookies |
+| `TWITTER_ARTICLENATOR_TRUSTED_HOSTS` | unset | Comma-separated accepted hostnames |
 
 ## API Endpoints
 

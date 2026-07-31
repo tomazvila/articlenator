@@ -197,14 +197,13 @@ https://www.youtube.com/playlist?list=PL..."
 </div>
 
 <script nonce="{{ csp_nonce }}">
-const YOUTUBE_LINKS_KEY = 'articlenator_youtube_links';
+const YOUTUBE_LINKS_KEY = userStorageKey('articlenator_youtube_links');
 const YOUTUBE_LEGACY_COOKIES_KEY = 'articlenator_youtube_cookies';
-const YOUTUBE_MODE_KEY = 'articlenator_youtube_mode';
-const YOUTUBE_LIKED_AUTOSTART_KEY = 'articlenator_youtube_liked_autostart';
-const YOUTUBE_ACTIVE_JOB_KEY = 'articlenator_youtube_active_job';
-const YOUTUBE_ACTIVE_JOB_FROM_LIKES_KEY = 'articlenator_youtube_active_job_from_likes';
+const YOUTUBE_MODE_KEY = userStorageKey('articlenator_youtube_mode');
+const YOUTUBE_LIKED_AUTOSTART_KEY = userStorageKey('articlenator_youtube_liked_autostart');
+const YOUTUBE_ACTIVE_JOB_KEY = userStorageKey('articlenator_youtube_active_job');
+const YOUTUBE_ACTIVE_JOB_FROM_LIKES_KEY = userStorageKey('articlenator_youtube_active_job_from_likes');
 
-const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 const linksInput = document.getElementById('youtube-links-input');
 const cookiesInput = document.getElementById('youtube-cookies-input');
 const cookiesFile = document.getElementById('youtube-cookies-file');

@@ -4,8 +4,6 @@ from playwright.sync_api import Page, expect
 
 from .pages import CookieGuidePage, IndexPage
 
-COOKIES_KEY = "articlenator_cookies"
-
 
 class TestIndexPage:
     """Tests for the index page."""
@@ -85,7 +83,7 @@ class TestNavigationFlow:
 
 
 class TestCookieSaving:
-    """Tests for saving cookies to localStorage."""
+    """Tests for saving cookies to encrypted account storage."""
 
     def test_user_can_save_cookies(self, page: Page, base_url):
         """Test user can save cookies via setup page."""
@@ -100,10 +98,11 @@ class TestCookieSaving:
         # Wait for success message
         expect(guide.success_message).to_be_visible(timeout=5000)
 
-        # Verify cookies were saved to localStorage
-        stored = page.evaluate(f"localStorage.getItem('{COOKIES_KEY}')")
-        assert stored is not None
-        assert "auth_token" in stored
+        # Raw credentials must not be retained by browser storage.
+        assert page.evaluate("localStorage.getItem('articlenator_cookies')") is None
+        status = page.request.get(f"{base_url}/api/cookies/status")
+        assert status.status == 200
+        assert status.json()["configured"] is True
 
     def test_empty_cookies_shows_error(self, page: Page, base_url):
         """Test empty cookies shows error message."""
@@ -122,10 +121,7 @@ class TestConversionFlow:
 
     def test_convert_without_cookies_shows_error(self, page: Page, base_url):
         """Test converting without cookies shows setup prompt."""
-        # Ensure no cookies in localStorage
         page.goto(base_url)
-        page.evaluate(f"localStorage.removeItem('{COOKIES_KEY}')")
-        page.reload()
 
         index = IndexPage(page)
 
@@ -140,12 +136,7 @@ class TestConversionFlow:
 
     def test_convert_with_invalid_url_shows_error(self, page: Page, base_url):
         """Test converting invalid URL shows error."""
-        # Set cookies in localStorage
         page.goto(base_url)
-        page.evaluate(
-            f"localStorage.setItem('{COOKIES_KEY}', 'auth_token=test12345678901234567890; ct0=test12345678901234567890')"
-        )
-        page.reload()
 
         index = IndexPage(page)
 

@@ -88,6 +88,71 @@ nav a:hover {
     text-decoration: underline;
 }
 
+.nav-brand,
+.nav-user {
+    color: var(--fg-bright);
+}
+
+.nav-user {
+    margin-left: auto;
+}
+
+.logout-form {
+    margin: 0;
+}
+
+.link-button {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--blue);
+    font: inherit;
+}
+
+.link-button:hover {
+    background: transparent;
+    color: var(--cyan);
+    text-decoration: underline;
+}
+
+.auth-panel {
+    width: min(100%, 460px);
+    margin: 8vh auto 0;
+}
+
+.auth-panel input,
+.panel input[type="text"],
+.panel input[type="password"] {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-dark);
+    color: var(--fg-bright);
+}
+
+.checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.checkbox-row label {
+    margin: 0;
+}
+
+.account-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.account-table th,
+.account-table td {
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+}
+
 /* Panel - frosted glass container */
 .panel {
     background: var(--panel-bg);

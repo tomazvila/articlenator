@@ -4,9 +4,7 @@ import os
 
 from playwright.sync_api import Page, expect
 
-from .pages import IndexPage
-
-COOKIES_KEY = "articlenator_cookies"
+from .pages import CookieGuidePage, IndexPage
 
 # Real cookies for testing
 TEST_COOKIES = os.environ.get(
@@ -30,12 +28,14 @@ class TestArticleWithImages:
         Uses a real Twitter article URL that contains inline images.
         Verifies the resulting PDF is large enough to contain image data.
         """
-        # Set up cookies in localStorage
-        page.goto(base_url)
-        page.evaluate(f"localStorage.setItem('{COOKIES_KEY}', `{TEST_COOKIES}`)")
-        page.reload()
+        guide = CookieGuidePage(page)
+        guide.navigate(base_url)
+        guide.enter_cookies(TEST_COOKIES)
+        guide.click_save()
+        expect(guide.success_message).to_be_visible(timeout=5000)
 
         index = IndexPage(page)
+        index.navigate(base_url)
 
         # Enter the article URL
         index.enter_links([TEST_ARTICLE_URL])

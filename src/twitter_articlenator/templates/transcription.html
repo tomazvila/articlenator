@@ -93,7 +93,7 @@
 <script nonce="{{ csp_nonce }}">
 (function () {
   const csrf = document.querySelector('meta[name="csrf-token"]').content;
-  const JOB_KEY = 'articlenator_transcription_job';
+  const JOB_KEY = userStorageKey('articlenator_transcription_job');
   const POLL_MS = 2000;
 
   const $ = (id) => document.getElementById(id);

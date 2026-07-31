@@ -214,18 +214,31 @@ class TestConvertRoute:
         response = client.post("/api/convert", json={"links": ["https://x.com/user/status/123"]})
         assert response.content_type == "application/json"
 
-    def test_convert_with_cookies_in_body(self, client):
+    def test_convert_with_cookies_in_body(self, client, monkeypatch):
         """Test /api/convert reads cookies from request body."""
+        import twitter_articlenator.routes.api as api_module
+
+        captured = {}
+
+        def capture_source(url, cookies=None):
+            captured.update(url=url, cookies=cookies)
+            return None
+
+        monkeypatch.setattr(api_module, "get_source_for_url", capture_source)
+        cookies = "auth_token=" + "a" * 30 + "; ct0=" + "b" * 30
         response = client.post(
             "/api/convert",
             json={
                 "links": ["https://x.com/user/status/123"],
-                "cookies": "auth_token=abc123; ct0=xyz789",
+                "cookies": cookies,
             },
         )
-        # Should not complain about missing cookies
-        data = json.loads(response.data)
-        assert "cookie" not in str(data.get("error", "")).lower() or response.status_code == 500
+
+        assert response.status_code == 400
+        assert captured == {
+            "url": "https://x.com/user/status/123",
+            "cookies": cookies,
+        }
 
 
 class TestCookiesValidateRoute:
@@ -595,13 +608,14 @@ class TestYouTubeOAuthApi:
 
         from twitter_articlenator.routes.api import _get_youtube_oauth_store
 
-        _get_youtube_oauth_store().save_authorized_token(
-            {
-                "access_token": "secret-access-token",
-                "refresh_token": "secret-refresh-token",
-                "expires_in": 3600,
-            }
-        )
+        with client.application.test_request_context():
+            _get_youtube_oauth_store().save_authorized_token(
+                {
+                    "access_token": "secret-access-token",
+                    "refresh_token": "secret-refresh-token",
+                    "expires_in": 3600,
+                }
+            )
 
         response = client.delete("/api/youtube/oauth", headers=csrf_headers(client))
 
@@ -726,11 +740,42 @@ class TestAppFactory:
     def test_create_app_production_mode(self, tmp_path, monkeypatch):
         """Test create_app works in production mode."""
         monkeypatch.setenv("TWITTER_ARTICLENATOR_JSON_LOGGING", "false")
+        monkeypatch.setenv(
+            "TWITTER_ARTICLENATOR_SECRET_KEY",
+            "a-production-test-secret-with-more-than-32-characters",
+        )
+        monkeypatch.setenv(
+            "TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY",
+            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+        )
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_CONFIG_DIR", str(tmp_path / "config"))
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_OUTPUT_DIR", str(tmp_path / "output"))
+        reset_config_singleton()
 
         from twitter_articlenator.app import create_app
 
         app = create_app()
         assert app is not None
+        assert app.config["REQUIRE_COOKIE_ENCRYPTION"] is True
+
+    def test_create_app_rejects_unsafe_production_secrets(self, tmp_path, monkeypatch):
+        """Production authentication fails closed without strong secrets."""
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_JSON_LOGGING", "false")
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_CONFIG_DIR", str(tmp_path / "config"))
+        monkeypatch.setenv("TWITTER_ARTICLENATOR_OUTPUT_DIR", str(tmp_path / "output"))
+        reset_config_singleton()
+
+        from twitter_articlenator.app import create_app
+
+        with pytest.raises(RuntimeError, match="SECRET_KEY"):
+            create_app(
+                test_config={
+                    "TESTING": False,
+                    "AUTH_REQUIRED": True,
+                    "SECRET_KEY": "dev-secret-key",
+                    "COOKIE_ENCRYPTION_KEY": None,
+                }
+            )
 
     def test_create_app_registers_blueprints(self, tmp_path, monkeypatch):
         """Test create_app registers API and pages blueprints."""

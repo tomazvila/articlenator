@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Articlenator{% endblock %}
+{% block content %}
+<section class="panel auth-panel">
+    <h1>Sign in</h1>
+    <p>Use the account created by your Articlenator administrator.</p>
+    {% if error %}<p class="error-message" role="alert">{{ error }}</p>{% endif %}
+    <form method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-group">
+            <label for="username">Username</label>
+            <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+        </div>
+        <div class="form-group">
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button type="submit">Sign in</button>
+    </form>
+</section>
+{% endblock %}

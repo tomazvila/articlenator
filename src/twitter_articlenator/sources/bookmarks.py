@@ -196,15 +196,11 @@ class BookmarkScraper:
                     log.info("bookmark_scrape_empty")
                     return []
 
-                try:
-                    await page.screenshot(path="/tmp/bookmark_debug.png")
-                    log.error(
-                        "bookmark_page_load_failed",
-                        page_url=page.url,
-                        page_title=await page.title(),
-                    )
-                except Exception:
-                    pass
+                log.error(
+                    "bookmark_page_load_failed",
+                    page_url=page.url,
+                    page_title=await page.title(),
+                )
 
                 raise ValueError(
                     f"Bookmarks page failed to load (url={page.url}). "

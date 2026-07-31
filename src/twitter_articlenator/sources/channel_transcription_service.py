@@ -18,6 +18,7 @@ from .base import Article
 from .channel_transcription import ChannelJob
 from .transcription_service import build_job, resolve_cookie_file
 from .youtube_channel import ChannelInfo, list_channel_videos
+from .youtube_cookies import YouTubeCookieStore
 
 # yt-dlp flat enumeration of a channel is metadata-only; cap it well under the
 # (much larger) media-download timeout.
@@ -31,6 +32,7 @@ def build_channel_job(
     packaging: str = PACKAGING_COMBINED,
     published_after: str | None = None,
     title_contains: str | None = None,
+    cookie_store: YouTubeCookieStore | None = None,
 ) -> ChannelJob:
     """Construct a ChannelJob backed by yt-dlp + the per-video whisper pipeline.
 
@@ -39,21 +41,31 @@ def build_channel_job(
     string (case-insensitive). Both are optional and combinable.
     """
     config = config or get_config()
-    cookie_file = resolve_cookie_file(config)
+    legacy_cookie_file = resolve_cookie_file(config) if cookie_store is None else None
     job_dir = Path(job_dir)
 
     def enumerator(url: str) -> ChannelInfo:
+        if cookie_store is not None and cookie_store.is_configured():
+            with cookie_store.temporary_cookie_file() as cookie_file:
+                return list_channel_videos(
+                    url,
+                    after_date=published_after,
+                    title_contains=title_contains,
+                    cookie_file=cookie_file,
+                    downloader_bin=config.youtube_downloader_bin,
+                    timeout_seconds=CHANNEL_ENUMERATION_TIMEOUT,
+                )
         return list_channel_videos(
             url,
             after_date=published_after,
             title_contains=title_contains,
-            cookie_file=cookie_file,
+            cookie_file=legacy_cookie_file,
             downloader_bin=config.youtube_downloader_bin,
             timeout_seconds=CHANNEL_ENUMERATION_TIMEOUT,
         )
 
     def transcriber_factory(video_dir: Path):
-        return build_job(video_dir, config=config)
+        return build_job(video_dir, config=config, cookie_store=cookie_store)
 
     def pdf_builder(articles: list[Article], pkg: str) -> list[Path]:
         return generate_pdfs(articles, output_dir=job_dir, packaging=pkg)

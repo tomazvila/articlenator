@@ -13,6 +13,7 @@
 <body>
     <header>
         <nav>
+            {% if current_user %}
             <a href="/">Home</a>
             <a href="/bookmarks">Bookmarks</a>
             <a href="/videos">Videos</a>
@@ -24,42 +25,63 @@
                 <span class="status-dot"></span>
                 <span class="status-text">Checking...</span>
             </span>
+            {% if current_user.is_admin %}<a href="/admin/users">Users</a>{% endif %}
+            <span class="nav-user">{{ current_user.username }}</span>
+            <form class="logout-form" method="post" action="/logout">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="link-button" type="submit">Sign out</button>
+            </form>
+            {% else %}
+            <span class="nav-brand">Articlenator</span>
+            {% endif %}
         </nav>
     </header>
     <script nonce="{{ csp_nonce }}">
-    // Shared cookie status key
-    const COOKIES_KEY = 'articlenator_cookies';
-
-    // Update nav cookie status from localStorage
-    function updateNavCookieStatus() {
+    const CURRENT_USER_ID = {{ (current_user.id if current_user else "anonymous") | tojson }};
+    function userStorageKey(name) {
+        return `${name}:${CURRENT_USER_ID}`;
+    }
+    const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = function(input, options = {}) {
+        const target = new URL(typeof input === 'string' ? input : input.url, window.location.href);
+        const method = (options.method || (typeof input !== 'string' && input.method) || 'GET').toUpperCase();
+        if (target.origin === window.location.origin && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+            const headers = new Headers(options.headers || (typeof input !== 'string' ? input.headers : undefined));
+            headers.set('X-CSRF-Token', csrfToken);
+            options = {...options, headers};
+        }
+        return nativeFetch(input, options);
+    };
+    // Update nav cookie status from safe server-side metadata.
+    async function updateNavCookieStatus() {
         const statusEl = document.getElementById('cookie-status');
+        if (!statusEl) return;
         const dotEl = statusEl.querySelector('.status-dot');
         const textEl = statusEl.querySelector('.status-text');
 
         // Remove all status classes
         statusEl.classList.remove('loading', 'not-configured', 'configured', 'working', 'invalid', 'error');
 
-        const cookies = localStorage.getItem(COOKIES_KEY);
-
-        if (!cookies || !cookies.trim()) {
-            statusEl.classList.add('not-configured');
-            statusEl.title = 'Twitter cookies not configured';
-            textEl.textContent = 'No cookies';
-            return;
-        }
-
-        // Quick client-side validation: check for auth_token and ct0
-        const hasAuthToken = cookies.includes('auth_token') && cookies.match(/auth_token[=\s]\S{20,}/);
-        const hasCt0 = cookies.includes('ct0') && cookies.match(/ct0[=\s]\S{20,}/);
-
-        if (hasAuthToken && hasCt0) {
+        try {
+            const response = await fetch('/api/cookies/status');
+            if (!response.ok) throw new Error('status request failed');
+            const status = await response.json();
+            if (!status.configured) {
+                statusEl.classList.add('not-configured');
+                statusEl.title = 'Twitter cookies not configured';
+                textEl.textContent = 'No cookies';
+                return;
+            }
             statusEl.classList.add('configured');
-            statusEl.title = 'Cookies configured (go to Setup to test)';
+            statusEl.title = status.encrypted
+                ? 'Twitter cookies stored securely for this account'
+                : 'Twitter cookies stored for this account';
             textEl.textContent = 'Cookies set';
-        } else {
-            statusEl.classList.add('invalid');
-            statusEl.title = 'Cookies incomplete - missing required values';
-            textEl.textContent = 'Invalid';
+        } catch (error) {
+            statusEl.classList.add('error');
+            statusEl.title = 'Could not check Twitter cookie status';
+            textEl.textContent = 'Status error';
         }
     }
 

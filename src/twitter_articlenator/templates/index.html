@@ -65,9 +65,8 @@ https://substack.com/@author/post-title"
 </div>
 
 <script nonce="{{ csp_nonce }}">
-// COOKIES_KEY is defined in base.html
-const LINKS_KEY = 'articlenator_links';
-const SESSION_KEY = 'articlenator_session';
+const LINKS_KEY = userStorageKey('articlenator_links');
+const SESSION_KEY = userStorageKey('articlenator_session');
 
 // Persist textarea content to localStorage
 const linksInput = document.getElementById('links-input');
@@ -149,8 +148,7 @@ document.getElementById('resume-btn').addEventListener('click', async () => {
     const session = loadSession();
     if (!session) return;
     document.getElementById('resume-banner').style.display = 'none';
-    const cookies = localStorage.getItem(COOKIES_KEY) || '';
-    startStream(`/api/sessions/${session.sessionId}/resume`, {cookies}, session.sessionId);
+    startStream(`/api/sessions/${session.sessionId}/resume`, {}, session.sessionId);
 });
 
 document.getElementById('resume-pdf-btn').addEventListener('click', async () => {
@@ -403,8 +401,6 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
     e.preventDefault();
 
     const links = linksInput.value.trim().split('\n').filter(l => l.trim());
-    const cookies = localStorage.getItem(COOKIES_KEY) || '';
-
     if (links.length === 0) {
         document.getElementById('error').style.display = 'block';
         document.getElementById('error-text').textContent = 'Please enter at least one link';
@@ -414,7 +410,7 @@ document.getElementById('convert-form').addEventListener('submit', async (e) => 
     const sessionId = crypto.randomUUID();
     saveSession(sessionId, links);
 
-    startStream('/api/convert/stream', {links, cookies, session_id: sessionId}, sessionId);
+    startStream('/api/convert/stream', {links, session_id: sessionId}, sessionId);
 });
 
 // Check for resumable sessions on page load
