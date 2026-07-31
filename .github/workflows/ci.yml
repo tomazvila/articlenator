@@ -1,0 +1,102 @@
+name: Articlenator CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: unit
+            path: tests/unit
+          - suite: integration
+            path: tests/integration
+          - suite: browser
+            path: tests/e2e
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v17
+        with:
+          name: nix-community
+      - name: Run ${{ matrix.suite }} tests
+        run: nix develop --command pytest "${{ matrix.path }}" -q
+
+  quality:
+    name: Lint, manifests, and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v17
+        with:
+          name: nix-community
+      - name: Lint and format
+        run: nix develop --command bash -euo pipefail -c 'ruff check src && ruff format --check src'
+      - name: Validate Kubernetes manifests
+        run: nix develop --command kubeconform -strict -summary k8s/deployment.yaml k8s/twitter-app.yaml
+      - name: Check Nix flake
+        run: nix flake check
+      - name: Build application package
+        run: nix build .#default
+
+  container:
+    name: Container build and smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v17
+        with:
+          name: nix-community
+      - name: Evaluate ARM container
+        run: nix eval --raw .#packages.aarch64-linux.docker.drvPath
+      - name: Build native container
+        run: nix build .#docker
+      - name: Load and smoke container
+        run: |
+          set -euo pipefail
+          docker load < result
+          test "$(docker image inspect twitter-articlenator:latest --format '{{.Config.User}}')" = "10001:10001"
+
+          container_name="articlenator-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          trap 'docker stop "$container_name" >/dev/null 2>&1 || true' EXIT
+          docker run --detach --rm \
+            --name "$container_name" \
+            --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
+            --tmpfs /data:rw,nosuid,nodev,mode=0770,uid=10001,gid=10001 \
+            --publish 127.0.0.1:5001:5001 \
+            --env TWITTER_ARTICLENATOR_SECRET_KEY=ci-container-session-secret-with-more-than-32-characters \
+            --env TWITTER_ARTICLENATOR_COOKIE_ENCRYPTION_KEY=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8= \
+            --env TWITTER_ARTICLENATOR_REQUIRE_COOKIE_ENCRYPTION=true \
+            twitter-articlenator:latest
+
+          for _ in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:5001/api/health >/dev/null; then
+              test "$(docker exec "$container_name" id -u)" = "10001"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs "$container_name"
+          exit 1

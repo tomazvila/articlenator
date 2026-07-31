@@ -285,6 +285,7 @@
             packages = [
               pythonWithDeps
               pkgs.ruff
+              pkgs.kubeconform
               # WeasyPrint native dependencies
               pkgs.pango
               pkgs.cairo
