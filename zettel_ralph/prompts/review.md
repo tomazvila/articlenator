@@ -29,7 +29,7 @@ whose path is in your invocation prompt** — not the whole vault. Fix that note
   in `staging/provenance.json`.)
 
 ## pass: clustering (vault-level, deterministic trigger)
-- Your authoritative input is `staging/squeeze.json` (topic → count, has_moc, at_squeeze),
+- Your authoritative input is `$STAGING/squeeze.json` (topic → count, has_moc, at_squeeze),
   computed from disk. For every topic where `at_squeeze` is true, create/refresh
   `00 Maps/MOC <Topic>.md`: group its notes under sub-themes with one-line context, link
   related MOCs. Do not create MOCs below squeeze.
@@ -43,5 +43,6 @@ whose path is in your invocation prompt** — not the whole vault. Fix that note
 - Append a short `03 Reviews/<Pass> Summary.md` (type: review) noting what changed.
 
 ## Clock out (every pass)
-Rewrite `staging/STATE.md` with what changed and what remains. The driver marks the note
-done for this pass and commits; if nothing needed fixing, say so and stop.
+Unless the invocation prompt forbids it, rewrite `$STAGING/STATE.md` with what changed and
+what remains. The driver marks the note done for this pass and commits; if nothing needed
+fixing, say so and stop.

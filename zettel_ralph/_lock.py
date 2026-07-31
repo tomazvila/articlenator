@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import os
 from pathlib import Path
 
-_LOCK = Path(__file__).resolve().parent / "staging" / ".statelock"
+_LOCK = (
+    Path(os.environ.get("ZR_STAGING") or (Path(__file__).resolve().parent / "staging"))
+    / ".statelock"
+)
 
 
 @contextlib.contextmanager

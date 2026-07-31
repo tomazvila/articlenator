@@ -14,13 +14,18 @@ Dependency-free greedy cosine over token counts. Run after ingest.py:
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import Counter
 from math import sqrt
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-QUEUE = HERE / "staging" / "queue.json"
+_staging_env = os.environ.get("ZR_STAGING")
+STAGING = Path(_staging_env) if _staging_env else HERE / "staging"
+if not STAGING.is_absolute():
+    STAGING = (Path.cwd() / STAGING).resolve()
+QUEUE = STAGING / "queue.json"
 STOP = set(
     "a an the of to and or in on for is are be it its as with that this by from at into i "
     "you we they he she but if not no so this that have has had will can just like get".split()

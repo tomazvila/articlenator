@@ -10,12 +10,17 @@ prior index where titles still match. Provenance (provenance.json) is left untou
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-INDEX = HERE / "staging" / "concept-index.json"
-VAULT = Path.home() / "Documents" / "Themis 2.0" / "Twitter Bookmarks Zettelkasten"
+STAGING = Path(os.environ.get("ZR_STAGING") or (HERE / "staging"))
+INDEX = STAGING / "concept-index.json"
+VAULT = Path(
+    os.environ.get("ZK_DIR")
+    or (Path.home() / "Documents" / "Themis 2.0" / "Twitter Bookmarks Zettelkasten")
+)
 
 
 def fm_and_body(t: str):
@@ -68,6 +73,8 @@ def main() -> None:
     concepts, mocs = [], []
 
     for f in sorted((VAULT / "01 Permanent Notes").glob("*.md")):
+        if f.name.startswith("_"):
+            continue
         fm, body = fm_and_body(f.read_text(errors="replace"))
         title = h1(body) or f.stem
         tags = fm.get("tags", [])

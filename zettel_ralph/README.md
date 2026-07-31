@@ -5,7 +5,7 @@ corpus into atomic, densely-linked Obsidian permanent notes in the **Themis 2.0*
 following the conventions already proven by the existing
 `Andrew Torba AI Programming Zettelkasten`.
 
-> Status: **engineered, not run.** Phase B requires the `claude` CLI; Phase A requires
+> Status: **engineered, not run.** Phase B requires a DeepSeek API key; Phase A requires
 > live X session cookies. Nothing here fetches or writes until you invoke the drivers.
 
 ---
@@ -168,7 +168,7 @@ python zettel_ralph/ingest.py --bookmarks zettel_ralph/data/bookmarks.json
 # Phase A2 — precompute themed tweet clusters (deterministic; no network/LLM)
 python zettel_ralph/cluster.py
 
-# Phase B — synthesis Ralph loop (needs `claude` CLI on PATH)
+# Phase B — synthesis Ralph loop (needs `deepseek.txt` or DEEPSEEK_API_KEY)
 bash zettel_ralph/loop.sh
 
 # Phase C — review Ralph loop
@@ -179,7 +179,9 @@ python zettel_ralph/validate.py --vault "$HOME/Documents/Themis 2.0/Twitter Book
 ```
 
 Config is via env vars at the top of each script (vault path, output folder name, batch
-size, MAX_ITERS, model). Defaults target a **new** vault folder
+size, MAX_ITERS, model). The DeepSeek model defaults to `deepseek-v4-flash`; override it
+with `DEEPSEEK_MODEL`. The API key is read from `DEEPSEEK_API_KEY` or `deepseek.txt`.
+Defaults target a **new** vault folder
 `Twitter Bookmarks Zettelkasten/` mirroring the Andrew Torba structure, so the run cannot
 touch existing notes.
 

@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-INDEX = HERE / "staging" / "concept-index.json"
+STAGING = Path(os.environ.get("ZR_STAGING") or (HERE / "staging"))
+INDEX = STAGING / "concept-index.json"
 STOP = set(
     "a an the of to and or in on for is are be it its as with that this by from at into "
     "not no do does can will should would could than then so such these those their our".split()

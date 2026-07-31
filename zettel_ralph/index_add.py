@@ -16,13 +16,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from _lock import state_lock
 
 HERE = Path(__file__).resolve().parent
-INDEX = HERE / "staging" / "concept-index.json"
-PROV = HERE / "staging" / "provenance.json"
+STAGING = Path(os.environ.get("ZR_STAGING") or (HERE / "staging"))
+INDEX = STAGING / "concept-index.json"
+PROV = STAGING / "provenance.json"
 
 
 def _load(p: Path, default: dict) -> dict:

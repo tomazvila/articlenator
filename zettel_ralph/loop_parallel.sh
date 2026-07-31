@@ -4,12 +4,17 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STAGING="$HERE/staging"
+STAGING="${ZR_STAGING:-$HERE/staging}"
+case "$STAGING" in
+  /*) ;;
+  *) STAGING="$(pwd)/$STAGING" ;;
+esac
 VAULT="${VAULT:-$HOME/Documents/Themis 2.0}"
 ZK_FOLDER="${ZK_FOLDER:-Twitter Bookmarks Zettelkasten}"
 ZK_DIR="$VAULT/$ZK_FOLDER"
 NWORKERS="${NWORKERS:-4}"
 export VAULT ZK_FOLDER ZK_DIR HERE STAGING
+export ZR_STAGING="$STAGING"
 
 [ -f "$STAGING/queue.json" ] || { echo "no queue.json - run ingest first"; exit 1; }
 mkdir -p "$ZK_DIR/00 Maps" "$ZK_DIR/01 Permanent Notes" "$ZK_DIR/02 Examples" "$ZK_DIR/03 Reviews"

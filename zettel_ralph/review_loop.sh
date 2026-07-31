@@ -12,12 +12,18 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VAULT="${VAULT:-$HOME/Documents/Themis 2.0}"
 ZK_FOLDER="${ZK_FOLDER:-Twitter Bookmarks Zettelkasten}"
 ZK_DIR="$VAULT/$ZK_FOLDER"
-MODEL="${MODEL:-}"
+STAGING="${ZR_STAGING:-$HERE/staging}"
+case "$STAGING" in
+  /*) ;;
+  *) STAGING="$(pwd)/$STAGING" ;;
+esac
+# MODEL remains supported as a compatibility alias, but DeepSeek is now the runner.
+export DEEPSEEK_MODEL="${DEEPSEEK_MODEL:-${MODEL:-deepseek-v4-flash}}"
 REVIEW_MAX_ITERS="${REVIEW_MAX_ITERS:-3000}"
-# Sandboxed agent: only file edits + python3 helpers (no bash/sh/claude -> no recursion).
-AGENT=(claude -p --add-dir "$VAULT" --allowedTools Read Edit Write "Bash(python3:*)" "Bash(python:*)")
-[ -n "$MODEL" ] && AGENT+=(--model "$MODEL")
-export VAULT ZK_FOLDER ZK_DIR HERE
+# Sandboxed by deepseek_agent.py: only allowed roots and Ralph Python helpers.
+AGENT=(python3 "$HERE/deepseek_agent.py")
+export VAULT ZK_FOLDER ZK_DIR HERE STAGING
+export ZR_STAGING="$STAGING"
 
 PER_NOTE_PASSES=("atomicity" "linking" "source-free")
 GIT=0; git -C "$ZK_DIR" rev-parse >/dev/null 2>&1 && GIT=1
@@ -36,13 +42,13 @@ for pass in "${PER_NOTE_PASSES[@]}"; do
     RPROMPT="Read $HERE/prompts/review.md. Run ONLY review pass '$pass' on this SINGLE note: \
 \"$ZK_DIR/$note\". Use $HERE/index_query.py for any dedup check. Apply fixes for this pass \
 only, then stop."
-    ( cd "$HERE" && printf '%s' "$RPROMPT" | "${AGENT[@]}" )
+    ( cd "$HERE" && printf '%s' "$RPROMPT" | timeout "${AGENT_TIMEOUT:-1800}" "${AGENT[@]}" )
 
     if ! python3 "$HERE/validate.py" --vault "$ZK_DIR"; then
       echo "VALIDATE FAILED at $pass / $note - stopping for human review."
       exit 4
     fi
-    python3 "$HERE/review_queue.py" done --pass "$pass" --file "$note"
+    python3 "$HERE/review_queue.py" "done" --pass "$pass" --file "$note"
     if [ "$GIT" -eq 1 ]; then
       git -C "$ZK_DIR" add -A
       git -C "$ZK_DIR" commit -q -m "review $pass: $note" || true
@@ -51,11 +57,11 @@ only, then stop."
 done
 
 echo "=== clustering pass (squeeze-driven, deterministic trigger) ==="
-python3 "$HERE/validate.py" --vault "$ZK_DIR" --squeeze >"$HERE/staging/squeeze.json"
+python3 "$HERE/validate.py" --vault "$ZK_DIR" --squeeze >"$STAGING/squeeze.json"
 CPROMPT="Read $HERE/prompts/review.md and run the 'clustering' pass. Authoritative topic \
-counts (from disk) are in $HERE/staging/squeeze.json: build or refresh an MOC for every topic \
+counts (from disk) are in $STAGING/squeeze.json: build or refresh an MOC for every topic \
 where at_squeeze is true, link its notes with context, and link the MOC from Home.md. Then stop."
-( cd "$HERE" && printf '%s' "$CPROMPT" | "${AGENT[@]}" )
+( cd "$HERE" && printf '%s' "$CPROMPT" | timeout "${AGENT_TIMEOUT:-1800}" "${AGENT[@]}" )
 [ "$GIT" -eq 1 ] && { git -C "$ZK_DIR" add -A; git -C "$ZK_DIR" commit -q -m "review clustering: MOCs" || true; }
 
 echo "=== final strict validation ==="

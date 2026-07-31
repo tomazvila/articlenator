@@ -7,7 +7,8 @@ survives. **What is not in these files does not exist.**
 
 ## Startup (clock in) — do this before anything else
 1. `pwd`; confirm you are in the `zettel_ralph/` harness.
-2. Read `staging/STATE.md` (compact running state) and `staging/DECISIONS.md` (durable
+2. Resolve the staging directory from `$STAGING` (or `$ZR_STAGING`). Read
+   `$STAGING/STATE.md` (compact running state) and `$STAGING/DECISIONS.md` (durable
    conventions: canonical titles for recurring concepts, fold-vs-split rulings, the
    tension-note pattern). DECISIONS.md is how you stay consistent with iterations you can
    never see — read it every time.
@@ -21,8 +22,9 @@ survives. **What is not in these files does not exist.**
 
 ## Your work unit is GIVEN to you
 The invocation prompt contains your pre-selected unit as JSON: `{cluster, kind, ids,
-lit_notes}` (WIP = 1). **Do not open `staging/queue.json`** — it has 1,500+ items. Read only
-the `lit_notes` paths listed for your unit, from `staging/lit/`.
+lit_notes}` (WIP = 1). **Do not open `$STAGING/queue.json`** — it has 1,500+ items. Read only
+the exact `lit_notes` paths listed for your unit. Do not substitute `staging/lit/` when the
+listed path points at an isolated staging folder.
 
 ## Do the work
 Follow `prompts/synthesis.md`: decompose into atomic claims → for each, `index_query.py`
@@ -40,8 +42,9 @@ claim) make a TENSION note → add contextual wikilinks → if `--squeeze` flags
    --notes "Title A;Title B"` (or `--stage skipped --reason "no reusable idea: <claim>"`).
    Never open `staging/queue.json` yourself.
 4. If you made a lasting structural call (a canonical title for a recurring concept, a
-   fold-vs-split ruling), append one line to `staging/DECISIONS.md`.
-5. **Rewrite** `staging/STATE.md` compactly (consolidate, do not append).
+   fold-vs-split ruling), append one line to `$STAGING/DECISIONS.md`.
+5. Unless the invocation prompt forbids it, **rewrite** `$STAGING/STATE.md` compactly
+   (consolidate, do not append).
 6. Stop. Do not start a second unit.
 
 ## Hard constraints (non-negotiable)
@@ -80,10 +83,11 @@ claim) make a TENSION note → add contextual wikilinks → if `--squeeze` flags
     `validate.py` (frontmatter, sections, a link, no provenance).
 
 ## Where things are
-- Staged input: `staging/lit/<id>.md`  ·  Queue: `staging/queue.json`
-- Running state: `staging/STATE.md`  ·  Durable conventions: `staging/DECISIONS.md`
+- Staged input: exact `lit_notes` paths from the invocation, usually `$STAGING/lit/<id>.md`
+  ·  Queue: `$STAGING/queue.json`
+- Running state: `$STAGING/STATE.md`  ·  Durable conventions: `$STAGING/DECISIONS.md`
 - Dedup: read `index_query.py "<claim>"`, write `index_add.py ...` (never open the index)
-- Provenance: `staging/provenance.json` (written by `index_add.py`, keyed by note file)
+- Provenance: `$STAGING/provenance.json` (written by `index_add.py`, keyed by note file)
 - Output vault folder: the **absolute path is given to you in the invocation prompt**
   ("Write all notes under this folder: ..."). It also lives in `$ZK_DIR` (`echo "$ZK_DIR"`
   to resolve). Subfolders: `00 Maps/`, `01 Permanent Notes/`, `02 Examples/`, `03 Reviews/`.

@@ -5,19 +5,22 @@ Shards are contiguous blocks of the queue, which keeps topically-adjacent bookma
 same worker and so reduces cross-worker duplicate concepts. All mutations run under the
 shared state lock, so two workers never grab the same unit.
 
-    python queue_claim.py --worker 0 --of 4 [--reclaim]   # claim next unit (prints unit JSON or {})
-    python queue_claim.py --release ar-1,tw-2             # reset ids claimed->extracted (stall recovery)
+    python queue_claim.py --worker 0 --of 4             # claim next unit (prints unit JSON or {})
+    python queue_claim.py --worker 0 --of 4 --reclaim   # reset this worker's stale claim(s)
+    python queue_claim.py --release ar-1,tw-2           # reset ids claimed->extracted (stall recovery)
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from _lock import state_lock
 
 HERE = Path(__file__).resolve().parent
-Q = HERE / "staging" / "queue.json"
+STAGING = Path(os.environ.get("ZR_STAGING") or (HERE / "staging"))
+Q = STAGING / "queue.json"
 
 
 def _save(q: dict) -> None:
@@ -33,7 +36,7 @@ def main() -> None:
     ap.add_argument("--reclaim", action="store_true", help="reset this worker's stale 'claimed' first")
     ap.add_argument("--release", help="ids to retry: claimed->extracted, bump attempts, fail at cap")
     ap.add_argument("--release-soft", help="ids to retry WITHOUT counting an attempt (rate-limited)")
-    ap.add_argument("--max-synth-attempts", type=int, default=6)
+    ap.add_argument("--max-synth-attempts", type=int, default=12)
     a = ap.parse_args()
 
     with state_lock():
@@ -64,6 +67,10 @@ def main() -> None:
             for it in items:
                 if it.get("worker") == a.worker and it["stage"] == "claimed":
                     it["stage"] = "extracted"
+                    it.pop("worker", None)
+            _save(q)
+            print("{}")
+            return
 
         chosen = None
         for idx, it in enumerate(items):

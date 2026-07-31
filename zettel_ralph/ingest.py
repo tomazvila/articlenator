@@ -35,7 +35,10 @@ from pathlib import Path
 from twitter_articlenator.sources import get_source_for_url
 
 HERE = Path(__file__).resolve().parent
-STAGING = HERE / "staging"
+_staging_env = os.environ.get("ZR_STAGING")
+STAGING = Path(_staging_env) if _staging_env else HERE / "staging"
+if not STAGING.is_absolute():
+    STAGING = (Path.cwd() / STAGING).resolve()
 LIT_DIR = STAGING / "lit"
 QUEUE = STAGING / "queue.json"
 
@@ -255,7 +258,7 @@ async def main() -> None:
         article, err = await fetch_one(it["url"], cookies)
         if article is not None:
             dest = write_lit_note(it, article)
-            it["lit_note"] = str(dest.relative_to(HERE))
+            it["lit_note"] = os.path.relpath(dest, HERE)
             it["stage"] = "extracted"
             it["error"] = None
             consecutive_fail = 0

@@ -5,11 +5,13 @@ A unit is one `extracted` article/video, or all `extracted` tweets sharing a clu
 Prints `{}` when nothing is left to synthesize.
 """
 import json
+import os
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-Q = HERE / "staging" / "queue.json"
+STAGING = Path(os.environ.get("ZR_STAGING") or (HERE / "staging"))
+Q = STAGING / "queue.json"
 
 items = json.loads(Q.read_text())["items"]
 nxt = next((it for it in items if it["stage"] == "extracted"), None)

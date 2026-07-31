@@ -6,27 +6,26 @@
 # staged literature notes, writes/updates permanent notes in the vault, advances
 # queue.json, then exits. The driver gates on validate.py and bails on no progress.
 #
-# Nothing here runs the agent until you invoke it. Requires the `claude` CLI.
+# Nothing here runs the agent until you invoke it. Requires a DeepSeek API key.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STAGING="$HERE/staging"
+STAGING="${ZR_STAGING:-$HERE/staging}"
 QUEUE="$STAGING/queue.json"
 
 # ---- config (override via env) -------------------------------------------- #
 VAULT="${VAULT:-$HOME/Documents/Themis 2.0}"
 ZK_FOLDER="${ZK_FOLDER:-Twitter Bookmarks Zettelkasten}"
 ZK_DIR="$VAULT/$ZK_FOLDER"
+AGENTS_FILE="${AGENTS_FILE:-$HERE/AGENTS.md}"
 MAX_ITERS="${MAX_ITERS:-400}"
-MODEL="${MODEL:-}"  # empty = use the CLI's default model
-# Agent command as an ARRAY (so the space in the vault path survives). --add-dir grants the
-# agent write access to the vault (it lives outside the cwd); bypassPermissions lets the
-# headless agent run its python tools + write notes without interactive prompts.
-# Sandboxed agent: only file edits + python3 helpers (no bash/sh/claude -> no recursion).
-AGENT=(claude -p --add-dir "$VAULT" --allowedTools Read Edit Write "Bash(python3:*)" "Bash(python:*)")
-[ -n "$MODEL" ] && AGENT+=(--model "$MODEL")
+export DEEPSEEK_MODEL="${DEEPSEEK_MODEL:-${MODEL:-deepseek-v4-flash}}"
+# Sandboxed by deepseek_agent.py: file edits are restricted to the harness/staging/vault,
+# and commands are restricted to the Ralph Python helpers.
+AGENT=(python3 "$HERE/deepseek_agent.py")
 
-export VAULT ZK_FOLDER ZK_DIR STAGING QUEUE HERE
+export VAULT ZK_FOLDER ZK_DIR STAGING QUEUE HERE AGENTS_FILE
+export ZR_STAGING="$STAGING"
 
 # Count items READY for synthesis (extracted). `pending` items aren't ingested yet, so they
 # are not the synthesis loop's concern; ingestion (Phase A) turns them into extracted/failed.
@@ -76,7 +75,7 @@ while :; do
   # Fresh-context agent. cd so AGENTS.md relative paths resolve; the work unit is pre-selected
   # (agent never scans the big queue). Prompt via stdin (--add-dir is variadic and would eat a
   # positional prompt arg).
-  PROMPT="Read $HERE/AGENTS.md and follow it exactly. Your pre-selected work unit is: $unit . \
+  PROMPT="Read $AGENTS_FILE and follow it exactly. Your pre-selected work unit is: $unit . \
 Synthesize ONLY this unit, then stop. Write all notes under this folder: $ZK_DIR"
   ( cd "$HERE" && printf '%s' "$PROMPT" | timeout "${AGENT_TIMEOUT:-1800}" "${AGENT[@]}" )
 
