@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}13ft Reader · Articlenator{% endblock %}
+{% block content %}
+<section class="panel">
+    <h1>13ft Reader</h1>
+    <p>Open a quieter view of an article. Paste a link to get started.</p>
+    <form id="ladder-form">
+        <div class="form-group">
+            <label for="ladder-url">Article URL</label>
+            <input id="ladder-url" name="url" type="text" inputmode="url" autocomplete="url"
+                   placeholder="https://example.com/article" required aria-describedby="ladder-help">
+        </div>
+        <div class="button-group">
+            <button id="ladder-submit" type="submit">Read article</button>
+            <button id="ladder-clear" type="button" class="secondary">Clear</button>
+        </div>
+    </form>
+    <p id="ladder-help" class="ladder-help">Uses <a href="https://github.com/wasi-master/13ft" target="_blank" rel="noopener noreferrer">13ft</a> to fetch article text, with a Botasaurus browser retry and archive fallbacks. Some sites may remain unavailable; archived content may be older.</p>
+    <p id="ladder-status" role="status" aria-live="polite"></p>
+    <p id="ladder-error" role="alert" hidden></p>
+</section>
+<article id="ladder-result" class="panel ladder-article" hidden aria-labelledby="ladder-title">
+    <button id="ladder-pdf" type="button">Download PDF</button>
+    <p id="ladder-pdf-status" role="status" aria-live="polite"></p>
+    <a id="ladder-source" target="_blank" rel="noopener noreferrer">Open original ↗</a>
+    <h2 id="ladder-title" tabindex="-1"></h2>
+    <div id="ladder-content"></div>
+</article>
+<script nonce="{{ csp_nonce }}">
+(() => {
+    const form = document.getElementById('ladder-form');
+    const input = document.getElementById('ladder-url');
+    const button = document.getElementById('ladder-submit');
+    const clear = document.getElementById('ladder-clear');
+    const status = document.getElementById('ladder-status');
+    const error = document.getElementById('ladder-error');
+    const result = document.getElementById('ladder-result');
+    const content = document.getElementById('ladder-content');
+    const pdfButton = document.getElementById('ladder-pdf');
+    const pdfStatus = document.getElementById('ladder-pdf-status');
+    let currentArticle = null;
+    pdfButton.addEventListener('click', async () => {
+        if (!currentArticle || pdfButton.disabled) return;
+        pdfButton.disabled = button.disabled = clear.disabled = true;
+        pdfStatus.textContent = 'Creating PDF…';
+        try {
+            const response = await fetch('/api/13ft/pdf', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(currentArticle)
+            });
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || 'Could not create the PDF.');
+            }
+            const blob = await response.blob();
+            const downloadUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            const disposition = response.headers.get('Content-Disposition') || '';
+            const filename = disposition.match(/filename="?([^";]+)"?/);
+            link.download = filename ? filename[1] : 'article.pdf';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000);
+            pdfStatus.textContent = 'PDF downloaded.';
+        } catch (failure) {
+            pdfStatus.textContent = 'Could not download the PDF. Please try again.';
+        } finally {
+            pdfButton.disabled = button.disabled = clear.disabled = false;
+        }
+    });
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        if (button.disabled) return;
+        button.disabled = clear.disabled = true;
+        button.textContent = 'Fetching…';
+        currentArticle = null;
+        pdfStatus.textContent = '';
+        result.hidden = error.hidden = true;
+        status.textContent = 'Fetching article, retrying in a browser if needed, and checking archives. This can take up to a minute…';
+        form.setAttribute('aria-busy', 'true');
+        try {
+            const response = await fetch('/api/13ft', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({url: input.value.trim()})
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Could not fetch this article.');
+            document.getElementById('ladder-title').textContent = data.title;
+            document.getElementById('ladder-source').href = data.url;
+            content.replaceChildren();
+            for (const block of data.blocks) {
+                const tag = ['h1', 'h2', 'h3', 'h4', 'p', 'blockquote', 'pre'].includes(block.tag) ? block.tag : 'p';
+                const element = document.createElement(tag === 'h1' ? 'h3' : tag);
+                element.textContent = block.text;
+                content.appendChild(element);
+            }
+            currentArticle = data;
+            result.hidden = false;
+            status.textContent = 'Article ready.';
+            document.getElementById('ladder-title').focus();
+        } catch (failure) {
+            error.textContent = failure instanceof SyntaxError ? 'Could not load the article. Refresh the page and try again.' : failure.message;
+            error.hidden = false;
+            status.textContent = '';
+        } finally {
+            button.disabled = clear.disabled = false;
+            button.textContent = 'Read article';
+            form.removeAttribute('aria-busy');
+        }
+    });
+    clear.addEventListener('click', () => {
+        form.reset();
+        currentArticle = null;
+        pdfStatus.textContent = '';
+        result.hidden = error.hidden = true;
+        content.replaceChildren();
+        status.textContent = '';
+        input.focus();
+    });
+})();
+</script>
+{% endblock %}

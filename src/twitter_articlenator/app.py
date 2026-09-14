@@ -21,6 +21,7 @@ from .config import get_config
 from .logging import configure_logging
 from .resource_limits import ResourceLimiter
 from .routes import api_bp, auth_bp, channel_bp, pages_bp, transcription_bp
+from .routes.ladder import ladder_bp
 from .routes.auth import register_cli
 from .security import get_csrf_token
 from .version import get_git_commit, get_version_string
@@ -306,6 +307,7 @@ def create_app(
     # Register blueprints
     app.register_blueprint(auth_bp)
     app.register_blueprint(pages_bp)
+    app.register_blueprint(ladder_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(transcription_bp)
     app.register_blueprint(channel_bp)

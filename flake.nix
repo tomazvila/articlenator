@@ -22,10 +22,12 @@
       packages = forAllSystems (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          botasaurusDriver = import ./nix/botasaurus.nix { inherit pkgs; };
 
           # Python with all dependencies - SINGLE SOURCE OF TRUTH
           pythonDeps = ps: with ps; [
             flask
+            botasaurusDriver
             playwright
             weasyprint
             pypdf
@@ -117,6 +119,7 @@
                 pkgs.expat
                 pkgs.dbus
                 pkgs.coreutils
+                pkgs.xorg.xorgserver
                 pkgs.bash
                 pkgs.cacert
                 # Video downloading
@@ -141,6 +144,7 @@
                 pkgs.nodejs_22
                 pkgs.whisper-cpp
                 pkgs.coreutils
+                pkgs.xorg.xorgserver
                 pkgs.bash
               ];
 
@@ -217,6 +221,7 @@
       devShells = forAllSystems (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          botasaurusDriver = import ./nix/botasaurus.nix { inherit pkgs; };
           isDarwin = pkgs.stdenv.isDarwin;
           ytDlp = pkgs.stdenvNoCC.mkDerivation {
             pname = "yt-dlp";
@@ -242,6 +247,7 @@
           pythonWithDeps = pkgs.python3.withPackages (ps: with ps; [
             # Runtime deps
             flask
+            botasaurusDriver
             playwright
             weasyprint
             pypdf
@@ -308,7 +314,7 @@
               pkgs.nodejs_22
               # Transcription engine (whisper.cpp; Metal-accelerated on darwin)
               pkgs.whisper-cpp
-            ];
+            ] ++ pkgs.lib.optionals (!isDarwin) [ pkgs.xorg.xorgserver ];
 
             shellHook = ''
               ${if isDarwin then ''

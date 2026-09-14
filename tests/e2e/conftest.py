@@ -202,6 +202,12 @@ def flask_server(tmp_path_factory):
         env["TWITTER_ARTICLENATOR_YOUTUBE_DOWNLOADER"] = str(fake_ytdlp)
         env["TWITTER_ARTICLENATOR_YOUTUBE_FAKE_LOG"] = str(fake_ytdlp_log)
 
+    # Server output must go to a file, not a PIPE: nobody drains the pipe
+    # during the session, so verbose tests (13ft browser fallback, WeasyPrint
+    # warnings) fill the 64KB buffer and block the server mid-request.
+    server_log_path = tmp_dir / "flask-server.log"
+    server_log = server_log_path.open("wb")
+
     # Start Flask in a subprocess
     proc = subprocess.Popen(
         [
@@ -224,15 +230,18 @@ app.run(host='127.0.0.1', port={port}, debug=False, use_reloader=False)
 """,
         ],
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=server_log,
+        stderr=server_log,
     )
 
     # Wait for server to start
     if not wait_for_server(port):
         proc.terminate()
-        stdout, stderr = proc.communicate(timeout=5)
-        pytest.fail(f"Server failed to start. stdout: {stdout.decode()}, stderr: {stderr.decode()}")
+        proc.wait(timeout=5)
+        server_log.close()
+        pytest.fail(
+            f"Server failed to start. log: {server_log_path.read_text(errors='replace')}"
+        )
 
     with sqlite3.connect(config_dir / "articlenator.sqlite3") as connection:
         user_id = connection.execute(
@@ -253,6 +262,7 @@ app.run(host='127.0.0.1', port={port}, debug=False, use_reloader=False)
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
+    server_log.close()
 
 
 @pytest.fixture(scope="session")

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ title }}</title>
+    <style>
+        {{ pdf_css | safe }}
+        pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+        .source-url { overflow-wrap: anywhere; }
+    </style>
+</head>
+<body>
+    <article>
+        <header><h1 class="title">{{ title }}</h1></header>
+        <main class="content">
+            {% for block in blocks %}
+            <{{ block.tag }}>{{ block.text }}</{{ block.tag }}>
+            {% endfor %}
+        </main>
+        <footer><p class="source-url">Original: <a href="{{ url }}">{{ url }}</a></p></footer>
+    </article>
+</body>
+</html>

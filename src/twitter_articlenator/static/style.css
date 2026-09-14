@@ -1455,3 +1455,15 @@ button.danger:hover {
         transition-duration: 0.01ms !important;
     }
 }
+
+/* 13ft reading view */
+nav a[aria-current="page"] { color: var(--fg-bright); text-decoration: underline; text-underline-offset: 5px; }
+.ladder-help { font-size: .85rem; margin-top: 20px; }
+#ladder-status { margin-top: 12px; }
+#ladder-error { color: var(--red); margin-top: 12px; }
+.ladder-article { overflow-wrap: anywhere; }
+.ladder-article h2 { margin-top: 16px; }
+#ladder-content { color: var(--fg-bright); font-size: 1.05rem; line-height: 1.85; }
+#ladder-content > * { margin: 1em 0; }
+#ladder-content pre { white-space: pre-wrap; font-size: .9rem; }
+#ladder-content blockquote { padding-left: 16px; border-left: 2px solid var(--border); }
