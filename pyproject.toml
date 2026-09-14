@@ -26,3 +26,9 @@ markers = [
 [tool.ruff]
 src = ["src"]
 line-length = 100
+
+[tool.ruff.lint]
+# Ruff 0.16 expanded its default rule set (BLE, S, RUF, I, UP, PLW, ...),
+# which retroactively flags existing code. Pin the rule set CI historically
+# enforced; lifting the lint debt is a separate, deliberate cleanup.
+select = ["E4", "E7", "E9", "F"]
