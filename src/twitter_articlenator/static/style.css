@@ -97,6 +97,11 @@ nav a:hover {
     margin-left: auto;
 }
 
+.nav-sign-in {
+    margin-left: auto;
+    color: var(--cyan);
+}
+
 .logout-form {
     margin: 0;
 }

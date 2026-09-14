@@ -3,6 +3,7 @@
 {% block title %}Setup Twitter Cookies{% endblock %}
 
 {% block content %}
+{% set show_account_sections = current_user or not config.get('AUTH_REQUIRED', True) %}
 <section class="panel">
     <h1>Setup Twitter Cookies</h1>
     <p>To fetch content from Twitter/X, you need to provide your browser cookies.</p>
@@ -56,6 +57,7 @@
     </ol>
 </section>
 
+{% if show_account_sections %}
 <section class="current-cookies panel">
     <h2>Current Cookies</h2>
     <div id="cookies-display" class="cookies-table">
@@ -249,4 +251,15 @@ async function displayCurrentCookies() {
 // Display on page load
 displayCurrentCookies();
 </script>
+{% endif %}
+{% if not show_account_sections %}
+<section class="panel">
+    <h2>Storing Cookies</h2>
+    <p>
+        Cookies are stored encrypted per account. To save, test, or delete cookies for
+        your account, please sign in first.
+    </p>
+    <p><a class="sign-in-hint" href="{{ url_for('auth.login', next=request.path) }}">Sign in to manage cookies</a></p>
+</section>
+{% endif %}
 {% endblock %}

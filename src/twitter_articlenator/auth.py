@@ -300,11 +300,14 @@ def init_auth(app: Flask, store: UserStore) -> None:
 
         if not app.config.get("AUTH_REQUIRED", True):
             return None
-        if user is not None and request.method not in {"GET", "HEAD", "OPTIONS"}:
-            if not is_valid_csrf_request():
-                if request.path.startswith("/api/"):
-                    return jsonify({"error": "CSRF token missing or invalid"}), 403
-                return "CSRF token missing or invalid", 400
+        if (
+            user is not None
+            and request.method not in {"GET", "HEAD", "OPTIONS"}
+            and not is_valid_csrf_request()
+        ):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "CSRF token missing or invalid"}), 403
+            return "CSRF token missing or invalid", 400
         if user is not None or _is_public_endpoint(request.endpoint):
             return None
         if request.path.startswith("/api/"):
@@ -313,7 +316,10 @@ def init_auth(app: Flask, store: UserStore) -> None:
 
 
 def _is_public_endpoint(endpoint: str | None) -> bool:
-    return endpoint in {"auth.login", "api.health", "favicon", "static"}
+    # Public surface: login flow, health probe, static assets, and the setup
+    # guide (static documentation; its account-specific sections gate
+    # themselves in the template and their APIs remain auth-only).
+    return endpoint in {"auth.login", "pages.setup", "api.health", "favicon", "static"}
 
 
 def _safe_request_target() -> str:

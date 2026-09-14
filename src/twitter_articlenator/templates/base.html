@@ -33,6 +33,8 @@
             </form>
             {% else %}
             <span class="nav-brand">Articlenator</span>
+            <a href="/setup">Setup guide</a>
+            {% if config.get('AUTH_REQUIRED', True) %}<a class="nav-sign-in" href="{{ url_for('auth.login', next=request.args.get('next') or (request.path if request.path != '/login' else '/')) }}">Sign in</a>{% endif %}
             {% endif %}
         </nav>
     </header>
