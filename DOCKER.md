@@ -1,10 +1,8 @@
-# Docker & Kubernetes Deployment
+# Docker
 
 ## Building the Docker Image
 
 The Docker image is built using Nix for reproducible builds. It only works on Linux systems.
-
-### On a Linux machine:
 
 ```bash
 # Build the Docker image
@@ -12,20 +10,11 @@ nix build .#docker
 
 # Load the image into Docker
 docker load < result
-
-# Tag for your registry (optional)
-docker tag twitter-articlenator:latest your-registry.com/twitter-articlenator:latest
-docker push your-registry.com/twitter-articlenator:latest
 ```
 
-### Cross-compile from macOS (using remote builder):
-
-```bash
-# If you have a Linux remote builder configured
-nix build .#packages.x86_64-linux.docker --builders 'ssh://your-linux-builder'
-
-# Or use a Linux VM/container
-```
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the actual deployment flow (local
+Docker Compose behind Caddy). The registry-tagging commands below are only
+needed if you want to distribute the image.
 
 ## Running with Docker
 
@@ -51,39 +40,13 @@ docker exec -it twitter-articlenator \
 open http://localhost:5001
 ```
 
-## Kubernetes Deployment
-
-### Quick Start
-
-```bash
-# Create required app secrets first
-FLASK_SECRET_KEY="$(nix develop --command python -c 'import secrets; print(secrets.token_urlsafe(48))')"
-YOUTUBE_COOKIE_KEY="$(nix develop --command python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
-kubectl create secret generic twitter-articlenator-secrets \
-  --from-literal=flask-secret-key="$FLASK_SECRET_KEY" \
-  --from-literal=youtube-cookie-encryption-key="$YOUTUBE_COOKIE_KEY"
-
-# Apply the manifests
-kubectl apply -f k8s/twitter-app.yaml
-
-# Check status
-kubectl get pods -l app=twitter-articlenator
-kubectl logs -l app=twitter-articlenator -f
-```
-
-### Configuration
-
-Edit `k8s/twitter-app.yaml` to customize:
-
-- **Ingress host**: Change `articlenator.example.com` to your domain
-- **Storage**: Adjust PVC size (default: 1Gi)
-- **Resources**: Tune CPU/memory limits based on your cluster
+## Configuration
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TWITTER_ARTICLENATOR_JSON_LOGGING` | `true` | JSON logs for Kubernetes |
+| `TWITTER_ARTICLENATOR_JSON_LOGGING` | `true` | JSON logs for log aggregation |
 | `TWITTER_ARTICLENATOR_OUTPUT_DIR` | `/data/output` | Generated PDFs |
 | `TWITTER_ARTICLENATOR_CONFIG_DIR` | `/data/config` | Server-side cookie metadata and encrypted YouTube cookie storage |
 | `TWITTER_ARTICLENATOR_SECRET_KEY` | required in deployment | Flask session signing key for CSRF/session state |
@@ -103,7 +66,7 @@ The `/data` volume contains the user database plus UUID-namespaced credentials, 
 
 YouTube cookie rotation is done through the YouTube page: upload a new `cookies.txt`,
 verify it, and the previous encrypted blob is overwritten. Do not put YouTube cookies
-in Kubernetes manifests, ConfigMaps, image layers, CI logs, or Git.
+in manifests, image layers, CI logs, or Git.
 
 ## Image Details
 
@@ -115,7 +78,7 @@ in Kubernetes manifests, ConfigMaps, image layers, CI logs, or Git.
 ## Monitoring
 
 The application outputs JSON-structured logs suitable for:
-- Kubernetes log aggregation (Loki, Elasticsearch)
+- Log aggregation (Loki, Elasticsearch)
 - Prometheus metrics (via log parsing)
 
 Example log entry:

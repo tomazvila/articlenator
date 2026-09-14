@@ -1,111 +1,28 @@
 # Project Checkpoint
 
-Last updated: 2026-01-06
+Last updated: 2026-09-14
 
-## Current State: HA Cluster Complete, CI/CD Pending
+## Current State
 
-### Infrastructure (DONE)
+**Single-host Docker Compose deployment, CI on GitHub Actions.**
 
-**3-node HA K3s cluster** with embedded etcd:
+- Articlenator runs on the homelab host as one container behind Caddy at
+  `articlenator.homelab.tomazvi.la`; state in `/srv/articlenator`.
+- The old 3-node K3s cluster (nixos + Raspberry Pi + VPS quorum, Longhorn,
+  Cloudflare tunnel, Tailscale mesh) is retired.
+- CI (`.github/workflows/ci.yml`) runs on every push to `main`: unit,
+  integration, and browser suites, lint + format, flake check, and a container
+  build/smoke job.
+- Deployment is manual and simple: `nix build .#docker`, `docker load`,
+  `docker compose up -d articlenator`. See [DEPLOYMENT.md](DEPLOYMENT.md).
+- Accounts are managed with the in-container CLI
+  (`twitter-articlenator users ...`); data is per-account under `/data`.
 
-| Node | IP (Tailscale) | Role |
-|------|----------------|------|
-| nixos | 100.82.212.53 | control-plane, runs workloads |
-| dressedpi | 100.81.123.70 | control-plane, runs workloads |
-| srv1241853 | 100.82.198.59 | quorum only (no workloads) |
+## Feature Status
 
-**Storage**: Longhorn on SSDs
-- nixos: `/mnt/ssdb/longhorn/`
-- dressedpi: `/mnt/ssd/longhorn/`
-
-**Ingress**: Cloudflare Tunnel (2 replicas with anti-affinity)
-
-**App URL**: https://twitter.tomazvi.la/
-
-**Failover**: Tested and working
-
----
-
-## Next Task: CI/CD Setup
-
-### Goal
-Auto-deploy on push to main with tests
-
-### Architecture
-```
-GitHub Push to main
-        |
-        v
-+------------------------+
-|  nixos (self-hosted    |
-|  GitHub Actions runner)|
-|                        |
-|  1. Run tests (uv)     |
-|  2. Build x86_64 image |
-|  3. SSH to dressedpi   |
-|     to build arm64     |
-|  4. kubectl rollout    |
-+------------------------+
-```
-
-### Blocker
-GitHub Actions self-hosted runner on nixos was **commented out** - started failing.
-
-### To Resume
-
-1. SSH to nixos:
-   ```bash
-   ssh lilvilla@100.82.212.53
-   ```
-
-2. Check runner status:
-   ```bash
-   systemctl status github-runner-*
-   journalctl -u github-runner-* -n 50
-   ```
-
-3. View/fix NixOS config:
-   ```bash
-   vim /etc/nixos/configuration.nix
-   # Find and uncomment github-runner section
-   ```
-
-4. Rebuild:
-   ```bash
-   sudo nixos-rebuild switch --flake /etc/nixos#nixos
-   ```
-
-5. Create workflow file:
-   ```
-   .github/workflows/deploy.yml
-   ```
-
----
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `k8s/twitter-app.yaml` | K8s deployment (PVC, Deployment, Service) |
-| `k8s/longhorn-pvc.yaml` | Longhorn storage claim |
-| `flake.nix` | Nix build for Docker images |
-| `pyproject.toml` | Python deps (flask, playwright, weasyprint) |
-| `DEPLOYMENT.md` | Full cluster setup guide |
-
-## Quick Reference
-
-```bash
-# Check cluster
-kubectl get nodes
-kubectl get pods -o wide
-
-# Check app
-curl https://twitter.tomazvi.la/
-
-# Build Docker image (on each arch)
-nix build .#docker
-sudo k3s ctr images import result
-
-# Restart deployment
-kubectl rollout restart deployment/twitter-articlenator
-```
+- Article → e-reader PDF conversion, bookmarks, video + YouTube downloading,
+  whisper.cpp transcription, channel crawls: live.
+- 13ft reader (`/13ft`) with Botasaurus browser fallback and archive
+  fallbacks: live.
+- Public pages: `/login`, `/setup` guide, `/api/health`; everything else is
+  login-gated.

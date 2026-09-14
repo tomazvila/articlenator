@@ -83,19 +83,18 @@ Configure the caps with:
 
 The limiter is in-process. Run one application replica when these global caps must be authoritative. Persisted channel jobs resumed at startup also acquire transcription capacity; jobs beyond the cap remain resumable but are deferred.
 
-## Kubernetes bootstrap
-Create the secret before applying the manifest:
-```bash
-SESSION_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
-CREDENTIAL_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
-kubectl create secret generic twitter-articlenator-secrets \
-  --from-literal=flask-secret-key="$SESSION_SECRET" \
-  --from-literal=youtube-cookie-encryption-key="$CREDENTIAL_KEY"
-kubectl apply -f k8s/deployment.yaml
+## Deployment bootstrap
+Secrets live in `~/homelab/.env` (never in Git):
 ```
-Create the first administrator in the running pod:
+ARTICLENATOR_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')
+ARTICLENATOR_COOKIE_ENCRYPTION_KEY=$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')
+DOMAIN=homelab.tomazvi.la
+```
+The compose stack (`~/homelab/services/articlenator/compose.yaml`) injects them
+and uses persistent `/srv/articlenator` as `/data`, secure cookies, one trusted
+proxy hop, and the host `articlenator.homelab.tomazvi.la`.
+Create the first administrator in the running container:
 ```bash
-kubectl exec -it deploy/twitter-articlenator -- \
+docker exec -it articlenator \
   twitter-articlenator users create --username admin --admin
 ```
-The supplied deployment uses one replica, persistent `/data`, secure cookies, one trusted proxy hop, and the host `articlenator.homelab.tomazvi.la`.
