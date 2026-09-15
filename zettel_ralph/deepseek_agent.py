@@ -397,6 +397,11 @@ TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+# Transient network faults (SSL EOF, resets) killed whole agent runs. Retry a few
+# times with exponential backoff before giving up.
+TRANSIENT_ATTEMPTS = max(1, int(os.environ.get("DEEPSEEK_RETRIES", "4")))
+TRANSIENT_BACKOFF_CAP_S = 30
+
 TOOL_HANDLERS = {
     "read_file": read_file,
     "list_dir": list_dir,
@@ -446,24 +451,36 @@ def chat_completion(
         body["temperature"] = float(os.environ.get("DEEPSEEK_TEMPERATURE", "0.2"))
 
     endpoint = base_url.rstrip("/") + "/chat/completions"
-    request = urllib.request.Request(
-        endpoint,
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise AgentError(f"DeepSeek API HTTP {exc.code}: {compact_output(detail, 4000)}") from exc
-    except urllib.error.URLError as exc:
-        raise AgentError(f"DeepSeek API connection error: {exc.reason}") from exc
+    last_transient: Exception | None = None
+    for attempt in range(TRANSIENT_ATTEMPTS):
+        if attempt:
+            time.sleep(min(2**attempt, TRANSIENT_BACKOFF_CAP_S))
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise AgentError(
+                f"DeepSeek API HTTP {exc.code}: {compact_output(detail, 4000)}"
+            ) from exc
+        except (urllib.error.URLError, OSError) as exc:
+            # Transient network fault (SSL EOF, reset, timeout, DNS). One dropped
+            # request must not kill a whole agent run; back off and try again.
+            last_transient = exc
+    raise AgentError(
+        f"DeepSeek API connection error after {TRANSIENT_ATTEMPTS} attempts: "
+        f"{getattr(last_transient, 'reason', last_transient)}"
+    ) from last_transient
 
 
 def parse_tool_args(raw: str | dict[str, Any] | None) -> dict[str, Any]:

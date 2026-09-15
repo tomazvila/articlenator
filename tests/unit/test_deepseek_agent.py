@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import ssl
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -62,6 +65,111 @@ def test_load_api_key_reads_file(tmp_path, monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY_FILE", str(key_file))
 
     assert deepseek_agent.load_api_key() == "sk-file"
+
+
+def _chat_kwargs():
+    return {
+        "api_key": "sk-test",
+        "base_url": "https://example.invalid/api/v1",
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "hi"}],
+        "timeout_seconds": 5,
+    }
+
+
+def test_chat_completion_retries_transient_connection_error(monkeypatch):
+    import ssl
+
+    class _FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps(self._payload).encode("utf-8")
+
+    calls = []
+    outcomes = [
+        urllib.error.URLError(ssl.SSLEOFError("EOF occurred in violation")),
+        urllib.error.URLError(ConnectionResetError("connection reset")),
+        {"choices": [{"message": {"content": "ok"}}]},
+    ]
+
+    def fake_urlopen(request, timeout):
+        outcome = outcomes[min(len(calls), len(outcomes) - 1)]
+        calls.append(request)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return _FakeResponse(outcome)
+
+    monkeypatch.setattr(deepseek_agent.urllib.request, "urlopen", fake_urlopen)
+    sleeps = []
+    monkeypatch.setattr(deepseek_agent.time, "sleep", sleeps.append)
+
+    result = deepseek_agent.chat_completion(**_chat_kwargs())
+
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert len(calls) == 3
+    assert sleeps == [2, 4]
+
+
+def test_chat_completion_does_not_retry_http_error(monkeypatch):
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        raise urllib.error.HTTPError(
+            request.full_url, 401, "Unauthorized", hdrs=None, fp=None
+        )
+
+    monkeypatch.setattr(deepseek_agent.urllib.request, "urlopen", fake_urlopen)
+    sleeps = []
+    monkeypatch.setattr(deepseek_agent.time, "sleep", sleeps.append)
+
+    with pytest.raises(deepseek_agent.AgentError, match="HTTP 401"):
+        deepseek_agent.chat_completion(**_chat_kwargs())
+
+    assert len(calls) == 1
+    assert sleeps == []
+
+
+def test_chat_completion_gives_up_after_transient_attempts(monkeypatch):
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        raise urllib.error.URLError(ssl.SSLError("handshake failure"))
+
+    monkeypatch.setattr(deepseek_agent.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(deepseek_agent.time, "sleep", lambda _s: None)
+
+    with pytest.raises(deepseek_agent.AgentError, match="connection error"):
+        deepseek_agent.chat_completion(**_chat_kwargs())
+
+    assert len(calls) == deepseek_agent.TRANSIENT_ATTEMPTS
+
+
+def test_chat_completion_backoff_is_capped(monkeypatch):
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        raise urllib.error.URLError(OSError("network is unreachable"))
+
+    monkeypatch.setattr(deepseek_agent.urllib.request, "urlopen", fake_urlopen)
+    sleeps = []
+    monkeypatch.setattr(deepseek_agent.time, "sleep", sleeps.append)
+
+    with pytest.raises(deepseek_agent.AgentError):
+        deepseek_agent.chat_completion(**_chat_kwargs())
+
+    assert sleeps == sorted(sleeps)
+    assert max(sleeps) <= deepseek_agent.TRANSIENT_BACKOFF_CAP_S
 
 
 def test_allowed_roots_include_staging_and_vault(tmp_path, monkeypatch):
