@@ -19,7 +19,12 @@ ZK_FOLDER="${ZK_FOLDER:-Twitter Bookmarks Zettelkasten}"
 ZK_DIR="$VAULT/$ZK_FOLDER"
 AGENTS_FILE="${AGENTS_FILE:-$HERE/AGENTS.md}"
 MAX_ITERS="${MAX_ITERS:-400}"
-export DEEPSEEK_MODEL="${DEEPSEEK_MODEL:-${MODEL:-deepseek-v4-flash}}"
+# OpenRouter config (reuse pi's key if not explicitly set)
+if [ -z "${DEEPSEEK_API_KEY:-}" ] && [ -f /home/deploy/dotfiles/open-router-deepkseek-api-key.txt ]; then
+  export DEEPSEEK_API_KEY="$(cat /home/deploy/dotfiles/open-router-deepkseek-api-key.txt)"
+fi
+export DEEPSEEK_BASE_URL="${DEEPSEEK_BASE_URL:-https://openrouter.ai/api/v1}"
+export DEEPSEEK_MODEL="${DEEPSEEK_MODEL:-${MODEL:-deepseek/deepseek-v4-flash}}"
 # Sandboxed by deepseek_agent.py: file edits are restricted to the harness/staging/vault,
 # and commands are restricted to the Ralph Python helpers.
 AGENT=(python3 "$HERE/deepseek_agent.py")

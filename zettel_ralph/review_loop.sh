@@ -18,7 +18,12 @@ case "$STAGING" in
   *) STAGING="$(pwd)/$STAGING" ;;
 esac
 # MODEL remains supported as a compatibility alias, but DeepSeek is now the runner.
-export DEEPSEEK_MODEL="${DEEPSEEK_MODEL:-${MODEL:-deepseek-v4-flash}}"
+# OpenRouter config (reuse pi's key if not explicitly set)
+if [ -z "${DEEPSEEK_API_KEY:-}" ] && [ -f /home/deploy/dotfiles/open-router-deepkseek-api-key.txt ]; then
+  export DEEPSEEK_API_KEY="$(cat /home/deploy/dotfiles/open-router-deepkseek-api-key.txt)"
+fi
+export DEEPSEEK_BASE_URL="${DEEPSEEK_BASE_URL:-https://openrouter.ai/api/v1}"
+export DEEPSEEK_MODEL="${DEEPSEEK_MODEL:-${MODEL:-deepseek/deepseek-v4-flash}}"
 REVIEW_MAX_ITERS="${REVIEW_MAX_ITERS:-3000}"
 # Sandboxed by deepseek_agent.py: only allowed roots and Ralph Python helpers.
 AGENT=(python3 "$HERE/deepseek_agent.py")
