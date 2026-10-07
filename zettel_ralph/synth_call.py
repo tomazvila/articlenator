@@ -531,8 +531,63 @@ def _retry_entry_hash(entry: dict[str, Any]) -> str:
     return _retry_hash(raw)
 
 
+RETRY_KIND_REJECTED = "target-rejected"
+RETRY_KIND_UNVERIFIED = "unverified"
+RETRY_OPEN_KINDS = ("unaccounted", "evidence-removed", RETRY_KIND_UNVERIFIED)
+# --form unverified: the two recorded `unverified` answers whose carried bullet still has a pointer
+# (or a missing target) that the operator wants checked again. `a fix removed the Evidence` is the
+# other `unverified` form: it stays with --form evidence-removed.
+RETRY_UNVERIFIED_CLAIM_LINE = "the claim line that carried the bullet changed"
+RETRY_UNVERIFIED_LEDGER = ("the named note quotes nothing near the bullet's passage that matches it",
+                           "no candidate passage to check against")
+# --entry-state: the guarded retry of an entry that ended `needs-repair` or `operator` (the vault
+# still holds the UNCHANGED old note; no stub). It is never inferred: the operator names it.
+RETRY_ENTRY_STATES = ("needs-repair", "operator")
+# The vault states of an old note that a repair unit still repairs (`_repair_unit`).
+REPAIR_UNIT_STATES = ("old-format", "needs-repair", "contract", "stub", "marked-unsupported")
+
+
+def _retry_open_answer_titles(answer: dict[str, Any] | None, kind: str) -> set[str] | None:
+    """The named titles of a recorded answer that is exactly the open form `kind`
+    (`unaccounted`, or `unverified` whose cause is a removed Evidence item); else None."""
+    if not isinstance(answer, dict):
+        return None
+    was = answer.get("was") if isinstance(answer.get("was"), dict) else {}
+    if kind == "unaccounted":
+        if answer.get("decision") != "unaccounted":
+            return None
+    elif kind == "evidence-removed":
+        if answer.get("decision") != "unverified" or not isinstance(answer.get("was"), dict) \
+                or not str(answer.get("why") or "").startswith("a fix removed the Evidence"):
+            return None
+    elif kind == RETRY_KIND_UNVERIFIED:
+        why = str(answer.get("why") or "")
+        if answer.get("decision") != "unverified" or was.get("decision") not in ("kept", "corrected") \
+                or not (why.startswith(RETRY_UNVERIFIED_CLAIM_LINE) or why in RETRY_UNVERIFIED_LEDGER):
+            return None
+        titles = {str(x) for x in (was.get("titles") or [was.get("title")] or []) if x}
+        return titles or None
+    else:
+        return None
+    return {str(x) for x in (was.get("titles") or [was.get("title")] or []) if x}
+
+
+def _retry_unverified_status_ok(status: str) -> bool:
+    """--form unverified: the exact current `_bullet_status` line that allows the retry: a published
+    pointer that is still marked, or a named target that is not published. `open: target waiting`,
+    any unmarked pointer and every other open or dropped line are refused."""
+    return status.endswith(" (unverified)") or status.startswith("open: target not published (")
+
+
+def _retry_unverified_published(zk: Path, titles: set[str]) -> list[str]:
+    """The published targets (rename chain and stub chain followed) of the titles that a recorded
+    `unverified` answer names. Needs `ri.load_renames` first."""
+    return sorted({y for x in titles for y in ri._final_targets(zk, ri._rename_chain(zk, x))})
+
+
 def _retry_pending_conflict(staging: Path, note: str, target: str, video: str,
-                            full_ids: set[str], ignore_key: str = "") -> str:
+                            full_ids: set[str], ignore_key: str = "",
+                            extra_targets: tuple[str, ...] = ()) -> str:
     state = ri._read_json(staging / "repair_state.json", {}) or {}
     for key, batch in (state.get("batches") or {}).items():
         if key == ignore_key or batch.get("status") not in ("running", "waiting"):
@@ -540,6 +595,8 @@ def _retry_pending_conflict(staging: Path, note: str, target: str, video: str,
         if batch.get("vid") == video and note in (batch.get("bullets") or {}):
             return f"active repair batch {key} already owns {note} for {video}"
     relevant = {note, Path(note).name, target, f"{target}.md"}
+    for extra in extra_targets:
+        relevant |= {extra, f"{extra}.md"}
     for meta_path in sorted((staging / "pending-review").glob("*--*/meta.json")):
         meta = ri._read_json(meta_path, {}) or {}
         notes = {str(x) for x in meta.get("notes") or []}
@@ -549,16 +606,46 @@ def _retry_pending_conflict(staging: Path, note: str, target: str, video: str,
     return ""
 
 
+def _retry_note_batch_conflict(staging: Path, note: str, ignore_key: str = "") -> str:
+    """--entry-state: one active retry batch per note, for any video; and a finished retry
+    batch whose entry the planner has not settled yet (`next-batch` settles it) blocks the next."""
+    state = ri._read_json(staging / "repair_state.json", {}) or {}
+    for key, batch in (state.get("batches") or {}).items():
+        if key == ignore_key or note not in (batch.get("bullets") or {}):
+            continue
+        if batch.get("status") in ("running", "waiting"):
+            return f"active repair batch {key} already owns {note}"
+        if batch.get("status") == "done" and (batch.get("retry_rejected") or {}).get("entry_state") \
+                and not batch.get("settled"):
+            return f"retry batch {key} for {note} is finished but not settled yet: run the repair driver once more"
+    return ""
+
+
 def retry_rejected_plan(staging: Path, zk: Path, note: str, video: str, target: str,
-                        bullets: list[str], ignore_batch_key: str = "") -> dict[str, Any]:
-    """Read-only preview for one source-specific retry of already rejected old-note bullets."""
+                        bullets: list[str], ignore_batch_key: str = "",
+                        kind: str = RETRY_KIND_REJECTED, entry_state: str = "") -> dict[str, Any]:
+    """Read-only preview for one source-specific retry of already rejected old-note bullets.
+    `kind` (retry-open): `unaccounted` or `evidence-removed` retry an open answer instead;
+    `target` is then optional and, when given, must be a title that the recorded answer names.
+    `entry_state` (`needs-repair` or `operator`, given explicitly): the entry is not `done` and the
+    vault holds the UNCHANGED old note; the stub guards are replaced by entry guards (see below)."""
+    rejected_kind = kind == RETRY_KIND_REJECTED
+    if not rejected_kind and kind not in RETRY_OPEN_KINDS:
+        raise ri.HarnessError(f"unknown retry kind {kind!r}")
+    cmd = "retry-rejected" if rejected_kind else "retry-open"
+    if kind == RETRY_KIND_UNVERIFIED and entry_state:
+        raise ri.HarnessError("retry-open --form unverified only accepts a done repair entry (no --entry-state)")
+    if entry_state and entry_state not in RETRY_ENTRY_STATES:
+        raise ri.HarnessError(f"unknown entry state {entry_state!r}")
     rel = ri.safe_note_rel(zk, note)
     if rel is None or rel != note:
-        raise ri.HarnessError(f"retry-rejected requires the exact safe vault-relative note path: {note!r}")
-    if not video.startswith("vid-") or not target.strip():
+        raise ri.HarnessError(f"{cmd} requires the exact safe vault-relative note path: {note!r}")
+    if rejected_kind and (not video.startswith("vid-") or not target.strip()):
         raise ri.HarnessError("retry-rejected needs an exact video id and rejected target title")
+    if not rejected_kind and not video.startswith("vid-"):
+        raise ri.HarnessError("retry-open needs an exact video id")
     if not bullets or len(set(bullets)) != len(bullets) or any(not re.fullmatch(r"b[1-9][0-9]*", b) for b in bullets):
-        raise ri.HarnessError("retry-rejected needs unique bullet ids in bN form")
+        raise ri.HarnessError(f"{cmd} needs unique bullet ids in bN form")
 
     state_path = staging / "repair_state.json"
     try:
@@ -567,23 +654,46 @@ def retry_rejected_plan(staging: Path, zk: Path, note: str, video: str, target: 
     except (OSError, ValueError) as exc:
         raise ri.HarnessError(f"cannot read repair_state.json: {exc}") from None
     entry = (state.get("notes") or {}).get(rel)
-    if not isinstance(entry, dict) or entry.get("status") != "done":
-        raise ri.HarnessError("retry-rejected only accepts a done repair entry")
+    if entry_state:
+        if not isinstance(entry, dict) or entry.get("status") != entry_state:
+            raise ri.HarnessError(f"{cmd} --entry-state {entry_state} needs a {entry_state} repair entry")
+    elif not isinstance(entry, dict) or entry.get("status") != "done":
+        raise ri.HarnessError(f"{cmd} only accepts a done repair entry")
     note_path = zk / rel
     if not note_path.is_file():
-        raise ri.HarnessError("retry-rejected parent note is missing from the vault")
+        raise ri.HarnessError(f"{cmd} parent note is missing from the vault")
     note_bytes = note_path.read_bytes()
     fm, _body, _raw = vc.split_frontmatter(note_bytes.decode("utf-8", errors="replace"))
-    if fm.get("status") != "superseded" or fm.get("verification") != "superseded":
-        raise ri.HarnessError("retry-rejected requires a superseded vault stub")
-
-    archive = ri._archived_old(staging, rel)
-    if archive is None or not archive.is_file():
-        raise ri.HarnessError("retry-rejected requires the full archived original note")
-    archive_bytes = archive.read_bytes()
-    archive_sha = _retry_hash(archive_bytes)
-    if archive_sha != entry.get("sha"):
-        raise ri.HarnessError("archived original hash does not match the repair entry sha")
+    if entry_state:
+        # The vault holds the old note itself: it must still be the recorded original, byte for byte
+        # (the planner's `sha` of this entry), and no stub, partial stub or mark may exist.
+        if _retry_hash(note_bytes) != entry.get("sha"):
+            raise ri.HarnessError("the vault note is not byte-identical to the recorded original (entry sha)")
+        if vc.is_stub(fm) or ri._repair_state(zk, rel) not in REPAIR_UNIT_STATES:
+            raise ri.HarnessError(f"{cmd} --entry-state needs an unchanged old note that a repair unit still repairs")
+        if rel in (ri._read_json(staging / ri.PARTIAL, {}) or {}):
+            raise ri.HarnessError("a partial stub is registered for this note")
+        if entry.get("titles") or entry.get("linked_titles"):
+            raise ri.HarnessError("the entry already names a target note")
+        if entry_state == "needs-repair" and int(entry.get("replans") or 0) < 1:
+            raise ri.HarnessError("the normal re-plan of a needs-repair entry has not run yet (repair-groups)")
+        conflict = _retry_note_batch_conflict(staging, rel, ignore_batch_key)
+        if conflict:
+            raise ri.HarnessError(conflict)
+        archive = ri._archived_old(staging, rel)  # optional: used only when it is the recorded original
+        archive = archive if archive is not None and archive.is_file() \
+            and _retry_hash(archive.read_bytes()) == entry.get("sha") else None
+        archive_bytes, archive_sha = note_bytes, _retry_hash(note_bytes)
+    else:
+        if fm.get("status") != "superseded" or fm.get("verification") != "superseded":
+            raise ri.HarnessError(f"{cmd} requires a superseded vault stub")
+        archive = ri._archived_old(staging, rel)
+        if archive is None or not archive.is_file():
+            raise ri.HarnessError(f"{cmd} requires the full archived original note")
+        archive_bytes = archive.read_bytes()
+        archive_sha = _retry_hash(archive_bytes)
+        if archive_sha != entry.get("sha"):
+            raise ri.HarnessError("archived original hash does not match the repair entry sha")
     original_bullets = _numbered_bullets(archive_bytes.decode("utf-8", errors="replace"), Path(rel).name)
     original_map = dict(original_bullets)
     state_bullets = entry.get("bullets") or {}
@@ -593,25 +703,58 @@ def retry_rejected_plan(staging: Path, zk: Path, note: str, video: str, target: 
 
     pending = {str(x).removeprefix("bullet: ").strip() for x in fm.get("superseded_pending") or []}
     full_ids = [f"{Path(rel).name}#{bullet}" for bullet in bullets]
-    if any(full_id not in pending for full_id in full_ids):
+    if not entry_state and any(full_id not in pending for full_id in full_ids):
         raise ri.HarnessError("each requested original bullet must still be superseded_pending in the vault")
     if any(full_id not in state_bullets for full_id in full_ids):
         raise ri.HarnessError("requested bullet is not present in the archived original and repair entry")
     if video not in set(entry.get("sources") or []) | set(entry.get("recorded_sources") or []):
         raise ri.HarnessError("requested video is not a recorded source of this repair entry")
 
+    named_all: set[str] = set()
+    extra_prior: list[str] = []  # --form unverified: published targets that the entry does not list
     rejected: dict[str, dict[str, Any]] = {}
     preserved: dict[str, dict[str, Any]] = {}
+    if entry_state:
+        ri.load_renames(staging)  # rename chains first, or a renamed settled target reads as open
     for full_id in full_ids:
         answers = state_bullets[full_id].get("answers") or {}
         answer = answers.get(video)
-        named = set((answer or {}).get("titles") or ([answer.get("title")] if answer and answer.get("title") else []))
-        if not answer or answer.get("decision") != "target-rejected" or target not in named:
-            raise ri.HarnessError(f"{full_id} for {video} is not target-rejected for the requested target")
+        if entry_state and not ri._bullet_status(zk, entry, full_id, set())[0].startswith("open:"):
+            raise ri.HarnessError(f"{full_id} is not open: another answer already settles it")
+        if rejected_kind:
+            named = set((answer or {}).get("titles") or ([answer.get("title")] if answer and answer.get("title") else []))
+            if not answer or answer.get("decision") != "target-rejected" or target not in named:
+                raise ri.HarnessError(f"{full_id} for {video} is not target-rejected for the requested target")
+        else:
+            named_open = _retry_open_answer_titles(answer, kind)
+            if named_open is None:
+                raise ri.HarnessError(f"{full_id} for {video} is not an open {kind} answer")
+            if target and target not in named_open:
+                raise ri.HarnessError(f"{full_id} for {video} does not name the requested target")
+            # No other source may already settle the bullet: it must still read as open.
+            # Rename chains must be loaded first, or a renamed settled target reads as open.
+            ri.load_renames(staging)
+            status_line = ri._bullet_status(zk, entry, full_id, set())[0]
+            if kind == RETRY_KIND_UNVERIFIED:
+                # The stub lists such a bullet as `bullet:` in superseded_pending (render_pipeline_stub),
+                # so the pending guard above holds. The current state must agree with it.
+                if not _retry_unverified_status_ok(status_line):
+                    raise ri.HarnessError(f"{full_id} status is {status_line!r}: retry-open --form unverified "
+                                          "needs `(unverified)` or `open: target not published`")
+                if any(a_.get("decision") in ("kept", "corrected") for v_, a_ in answers.items() if v_ != video):
+                    raise ri.HarnessError(f"{full_id} is not open: another answer already settles it")
+                published = _retry_unverified_published(zk, named_open)
+                named_all |= set(published)
+                extra_prior += [x for x in published
+                                if x not in (entry.get("titles") or []) and x not in extra_prior]
+            elif not status_line.startswith("open:"):
+                raise ri.HarnessError(f"{full_id} is not open: another answer already settles it")
+            named_all |= named_open
         rejected[full_id.rsplit("#", 1)[-1]] = copy.deepcopy(answer)
         preserved[full_id] = {vid: copy.deepcopy(ans) for vid, ans in answers.items() if vid != video}
 
-    conflict = _retry_pending_conflict(staging, rel, target, video, set(full_ids), ignore_batch_key)
+    conflict = _retry_pending_conflict(staging, rel, target, video, set(full_ids), ignore_batch_key,
+                                       tuple(sorted(named_all)))
     if conflict:
         raise ri.HarnessError(conflict)
     source = lit_file(staging, video)
@@ -622,13 +765,20 @@ def retry_rejected_plan(staging: Path, zk: Path, note: str, video: str, target: 
     guards = {"state_sha256": _retry_hash(state_bytes), "entry_sha256": entry_sha,
               "vault_sha256": _retry_hash(note_bytes), "archive_sha256": archive_sha,
               "source_sha256": source_sha, "source_path": str(source.resolve())}
-    return {"note": rel, "video": video, "target": target, "bullets": list(bullets),
+    plan = {"note": rel, "video": video, "target": target, "bullets": list(bullets),
             "entry_status": entry["status"], "vault_status": str(fm.get("status")),
-            "archive_path": str(archive), "archive_sha256": archive_sha,
+            "archive_path": str(archive) if archive else "", "archive_sha256": archive_sha,
             "source_path": str(source.resolve()), "source_sha256": source_sha,
             "old_bullet_ids": list(original_map), "rejections": rejected,
-            "preserved_answers": preserved, "prior_titles": list(entry.get("titles") or []),
-            "guards": guards}
+            "preserved_answers": preserved,
+            "prior_titles": list(entry.get("titles") or []) + extra_prior, "guards": guards}
+    if not rejected_kind:
+        plan["kind"] = kind
+        plan["named_targets"] = sorted(named_all)
+    if entry_state:
+        plan["entry_state"] = entry_state
+        plan["entry_kind"] = str(entry.get("kind") or "known")
+    return plan
 
 
 @contextlib.contextmanager
@@ -647,34 +797,51 @@ def _retry_driver_lock(staging: Path):
 
 
 def apply_retry_rejected(staging: Path, zk: Path, note: str, video: str, target: str,
-                         bullets: list[str], expected: dict[str, str]) -> dict[str, Any]:
+                         bullets: list[str], expected: dict[str, str],
+                         kind: str = RETRY_KIND_REJECTED, entry_state: str = "") -> dict[str, Any]:
     """Enqueue one guarded retry batch for the existing normal repair driver to consume."""
     with _retry_driver_lock(staging):
         with ri.vault_lock(staging, zk):
             with state_lock(staging):
-                plan = retry_rejected_plan(staging, zk, note, video, target, bullets)
+                plan = retry_rejected_plan(staging, zk, note, video, target, bullets, kind=kind,
+                                           entry_state=entry_state)
                 if expected != plan["guards"]:
                     raise ri.HarnessError("preview guards are stale; preview again before apply")
                 state_path = staging / "repair_state.json"
                 state = ri._read_json(state_path, {}) or {}
                 entry = (state.get("notes") or {}).get(plan["note"]) or {}
                 full_ids = [f"{Path(plan['note']).name}#{b}" for b in plan["bullets"]]
-                key_seed = json.dumps([plan["guards"]["state_sha256"], plan["video"], plan["target"], full_ids],
-                                      ensure_ascii=False, separators=(",", ":"))
+                seed_parts = [plan["guards"]["state_sha256"], plan["video"], plan["target"], full_ids]
+                if kind != RETRY_KIND_REJECTED:
+                    seed_parts.append(kind)  # a distinct key space; the target-rejected seed is unchanged
+                if entry_state:
+                    seed_parts.append("entry-state:" + entry_state)  # again a distinct key space
+                key_seed = json.dumps(seed_parts, ensure_ascii=False, separators=(",", ":"))
                 batch_key = "retry-" + hashlib.sha256(key_seed.encode("utf-8")).hexdigest()[:16]
                 batches = state.setdefault("batches", {})
                 if batch_key in batches:
                     raise ri.HarnessError("this exact retry is already queued")
-                conflict = _retry_pending_conflict(staging, plan["note"], target, video, set(full_ids))
+                conflict = _retry_pending_conflict(staging, plan["note"], target, video, set(full_ids),
+                                                   extra_targets=tuple(plan.get("named_targets") or ()))
                 if conflict:
                     raise ri.HarnessError(conflict)
-                retry_fm, _retry_body, _retry_raw = vc.split_frontmatter(
-                    (zk / plan["note"]).read_text(encoding="utf-8"))
-                pending_ids = {str(x).removeprefix("bullet: ").strip()
-                               for x in retry_fm.get("superseded_pending") or []}
-                batch = {"vid": video, "mode": entry.get("kind") or "known", "notes": [plan["note"]],
-                         "unknown": [], "bullets": {plan["note"]: full_ids}, "status": "running",
-                         "prior_titles": {plan["note"]: list(entry.get("titles") or [])},
+                if entry_state:
+                    # no stub to read: the entry is closed (no later source video), so this call is last
+                    pending_ids: set[str] = set()
+                    # like the planner: a note of unknown source keeps its caution flag in the prompt
+                    as_unknown = plan.get("entry_kind") == "unknown"
+                else:
+                    retry_fm, _retry_body, _retry_raw = vc.split_frontmatter(
+                        (zk / plan["note"]).read_text(encoding="utf-8"))
+                    pending_ids = {str(x).removeprefix("bullet: ").strip()
+                                   for x in retry_fm.get("superseded_pending") or []}
+                    as_unknown = False
+                batch = {"vid": video, "mode": entry.get("kind") or "known",
+                         "notes": [] if as_unknown else [plan["note"]],
+                         "unknown": [plan["note"]] if as_unknown else [],
+                         "bullets": {plan["note"]: full_ids}, "status": "running",
+                         "prior_titles": {plan["note"]: list(plan["prior_titles"]) if kind == RETRY_KIND_UNVERIFIED
+                                          else list(entry.get("titles") or [])},
                          "prior_bullets": {plan["note"]: _bullets_by_title(entry)},
                          "video_notes": _video_notes(state.get("notes") or {}, video, {plan["note"]}),
                          "last": {plan["note"]: set(full_ids) >= pending_ids}, "handed_out": False,
@@ -682,13 +849,21 @@ def apply_retry_rejected(staging: Path, zk: Path, note: str, video: str, target:
                                             "target": target, "bullets": full_ids,
                                             "guards": {k: v for k, v in plan["guards"].items()
                                                        if k != "state_sha256"}}}
+                if kind != RETRY_KIND_REJECTED:
+                    batch["retry_rejected"]["kind"] = kind
+                if entry_state:
+                    batch["retry_rejected"]["entry_state"] = entry_state
                 batches[batch_key] = batch
                 ri._write_json(state_path, state)
             ri.provenance.record(staging, "repair-target-retry-queued", note=plan["note"], video=video,
                                  target=target, bullets=full_ids, batch=batch_key,
+                                 **({} if kind == RETRY_KIND_REJECTED else {"kind": kind}),
+                                 **({"entry_state": entry_state} if entry_state else {}),
                                  archive_sha256=plan["archive_sha256"], source_sha256=plan["source_sha256"])
             return {"queued": True, "batch": batch_key, "note": plan["note"], "video": video,
                     "target": target, "bullets": plan["bullets"], "status": "running",
+                    **({} if kind == RETRY_KIND_REJECTED else {"kind": kind}),
+                    **({"entry_state": entry_state} if entry_state else {}),
                     "next": "run the normal repair_loop.sh; its next-batch and finalize paths consume this batch"}
 
 
@@ -698,7 +873,8 @@ def _validate_queued_retry(staging: Path, zk: Path, retry: dict[str, Any]) -> di
     plan = retry_rejected_plan(staging, zk, str(retry.get("note") or ""),
                                str(retry.get("video") or ""), str(retry.get("target") or ""),
                                [Path(str(x)).name.rsplit("#", 1)[-1] for x in retry.get("bullets") or []],
-                               ignore_batch_key=key)
+                               ignore_batch_key=key, kind=str(retry.get("kind") or RETRY_KIND_REJECTED),
+                               entry_state=str(retry.get("entry_state") or ""))
     guards = retry.get("guards") or {}
     for guard in ("entry_sha256", "vault_sha256", "archive_sha256", "source_sha256", "source_path"):
         if guards.get(guard) != plan["guards"].get(guard):
@@ -3118,6 +3294,7 @@ def next_batch(staging: Path, zk: Path, state_file: Path) -> dict[str, Any] | No
     across calls of the same video."""
     st = ri._read_json(state_file, {}) or {}
     notes, batches = st.get("notes", {}), st.setdefault("batches", {})
+    _settle_operator_retries(staging, notes, batches)
     for key, b in batches.items():
         if b.get("status") in ("running", "waiting") and _batch_closed(notes, b):
             # round 26: every old note of the batch is operator-closed: it is never handed out again
@@ -3198,6 +3375,34 @@ def next_batch(staging: Path, zk: Path, state_file: Path) -> dict[str, Any] | No
     batches[key] = b
     ri._write_json(state_file, st)
     return dict(b, key=key)
+
+
+def _settle_operator_retries(staging: Path, notes: dict[str, Any], batches: dict[str, Any]) -> None:
+    """--entry-state: once per finished retry batch, the entry follows its answers through the
+    NORMAL closing rule (`_close`): a published-target title makes it `done` (then needs_operator.json
+    no longer lists its open bullets); otherwise it stays `needs-repair`/`operator` and its
+    needs_operator.json item is refreshed from the answers. Runs at the start of `next-batch`,
+    after the unit's finalize. A batch whose entry changed state meanwhile (operator-done) is skipped."""
+    for b in batches.values():
+        retry = b.get("retry_rejected") or {}
+        if b.get("status") != "done" or not retry.get("entry_state") or b.get("settled"):
+            continue
+        b["settled"] = True
+        for rel in b.get("bullets") or {}:
+            e = notes.get(rel)
+            if not e or e.get("status") != retry["entry_state"]:
+                continue
+            reg = ri._read_json(staging / "needs_operator.json", []) or []
+            stale = [x for x in reg if x.get("note") == rel and x.get("state") == "needs-repair"]
+            _close(staging, rel, e)
+            reg = ri._read_json(staging / "needs_operator.json", []) or []
+            keep = [x for x in reg if not (x.get("note") == rel and x.get("state") == "needs-repair")]
+            if e.get("status") in ("needs-repair", "operator") and stale:
+                open_ids = e["damaged_bullets"] + e["unverified_bullets"] + e["rejected_bullets"] + e["open_bullets"]
+                keep.append(dict(ri.needs_repair_item(staging, rel, e, open_ids or list(e["bullets"])),
+                                 why=str(stale[0].get("why")), at=ri._now(), refreshed="retry-operator"))
+            if keep != reg:
+                ri._write_json(staging / "needs_operator.json", keep)
 
 
 def _batch_closed(notes: dict[str, Any], b: dict[str, Any]) -> bool:
@@ -3338,6 +3543,16 @@ def record_answers(state_file: Path, batch: dict[str, Any], res: dict[str, Any])
                         "retry_id": retry.get("id"), "phase": "before-retry", "video": vid,
                         "target": retry.get("target"), "answer": copy.deepcopy(prior)})
             bullet["answers"][vid] = d
+        if (batch.get("retry_rejected") or {}).get("kind") == RETRY_KIND_UNVERIFIED and e.get("status") == "done":
+            # --form unverified: a retried bullet may now be a drop or settled. Only the retried bullets
+            # move between the class lists of the done entry (the classes of `_close`); no other bullet
+            # and no other list entry changes, and the status of the entry stays `done`.
+            moved = set(take)
+            cls = ri.classify_bullets(e)
+            for key, cname in (("damaged_bullets", "damaged"), ("unverified_bullets", "unverified"),
+                               ("rejected_bullets", "rejected"), ("open_bullets", "open"),
+                               ("unsupported_bullets", "unsupported")):
+                e[key] = sorted((set(e.get(key) or []) - moved) | (moved & set(cls[cname])))
         for a in res.get("applied", []):
             if a["old"] == rel and a.get("new"):
                 e["titles"] = sorted(set(e.get("titles", [])) | set(a["new"]))
@@ -3505,7 +3720,9 @@ def repair_unit(staging: Path, zk: Path, unit_dir: Path, vid: str, notes: list[s
     retry_plan = None
     if retry_rejected:
         retry_plan = _validate_queued_retry(staging, zk, retry_rejected)
-        if notes != [retry_plan["note"]] or vid != retry_plan["video"] \
+        as_unknown = retry_plan.get("entry_kind") == "unknown"  # only --entry-state (the planner's own split)
+        want_notes, want_unknown = ([], [retry_plan["note"]]) if as_unknown else ([retry_plan["note"]], [])
+        if notes != want_notes or list(unknown or []) != want_unknown or vid != retry_plan["video"] \
                 or (bullets or {}).get(retry_plan["note"]) != retry_rejected.get("bullets"):
             raise ri.HarnessError("repair unit does not exactly match its queued rejected-answer retry")
     _CACHE.clear()
@@ -3535,7 +3752,7 @@ def repair_unit(staging: Path, zk: Path, unit_dir: Path, vid: str, notes: list[s
 def _repair_unit(staging: Path, zk: Path, unit_dir: Path, vid: str, notes: list[str], unknown: list[str],
                  bullets: dict[str, list[str]] | None, prior_titles: dict[str, list[str]],
                  last: dict[str, bool], retry_rejected: dict[str, Any] | None = None) -> dict[str, Any]:
-    keep_states = ("old-format", "needs-repair", "contract", "stub", "marked-unsupported")
+    keep_states = REPAIR_UNIT_STATES
     notes = [r for r in notes if ri.safe_note_rel(zk, r) and ri._repair_state(zk, r) in keep_states]
     unknown = [r for r in unknown if ri.safe_note_rel(zk, r) and ri._repair_state(zk, r) in keep_states]
     info = ri._read_json(unit_dir / "unit.json", {})
@@ -3605,7 +3822,10 @@ def _repair_unit(staging: Path, zk: Path, unit_dir: Path, vid: str, notes: list[
     if retry_rejected:
         # Stable across a wait/crash replay of this exact retry; distinct from any pre-retry
         # cached answer, even though the source/old-note prompt text is otherwise identical.
-        s["request_salt"] = f"retry-rejected:{retry_rejected['id']}"
+        s["request_salt"] = (f"retry-rejected:{retry_rejected['id']}" if retry_rejected.get("kind") not in RETRY_OPEN_KINDS
+                             else f"retry-open:{retry_rejected['id']}")
+        if retry_rejected.get("entry_state"):
+            s["request_salt"] = f"retry-operator:{retry_rejected['id']}"
     messages = [{"role": "system", "content": system_text("repair")}, {"role": "user", "content": user}]
     problems: list[dict[str, Any]] = []
     stopped = ""
@@ -3927,6 +4147,25 @@ def _ledger(expected: dict[str, tuple[str, str]], got: dict[str, dict[str, Any]]
     return ledger, dropped
 
 
+def _rejoin_repairs(parts: list[str], old_of: Any) -> list[str]:
+    """An old-note file name can hold a comma, and `_header` splits the `repairs:` field at
+    commas. Neighbouring pieces are joined again when the joined name is a known old note of
+    this unit (longest match first); every other piece stays as it is."""
+    out: list[str] = []
+    i = 0
+    while i < len(parts):
+        for j in range(len(parts), i + 1, -1):
+            cand = ", ".join(parts[i:j])
+            if old_of(cand):
+                out.append(cand)
+                i = j
+                break
+        else:
+            out.append(parts[i])
+            i += 1
+    return out
+
+
 def apply_repair(zk: Path, unit_dir: Path, notes: list[str], unknown: list[str], parsed: dict[str, Any],
                  prior_titles: dict[str, list[str]] | None = None, last: dict[str, bool] | None = None
                  ) -> dict[str, Any]:
@@ -3950,7 +4189,7 @@ def apply_repair(zk: Path, unit_dir: Path, notes: list[str], unknown: list[str],
         if not n["complete"] or n["truncated"]:
             problems.append({"type": "truncated-note", "title": n["title"][:200]})
             continue
-        targets = [old_of(x) for x in n["repairs"]]
+        targets = [old_of(x) for x in _rejoin_repairs(n["repairs"], old_of)]
         if not targets or any(t is None for t in targets):
             problems.append({"type": "repairs-unknown-note", "title": n["title"][:200], "detail": n["repairs"][:5]})
             targets = [t for t in targets if t is not None]
@@ -4346,10 +4585,27 @@ def main(argv: list[str] | None = None) -> int:
     rr.add_argument("--video", required=True, help="recorded source video id")
     rr.add_argument("--target", required=True, help="exact target title previously rejected for this source")
     rr.add_argument("--bullet", action="append", required=True, help="original bullet id bN; repeat for each one")
+    rr.add_argument("--entry-state", default="", choices=("",) + RETRY_ENTRY_STATES,
+                    help="the entry is needs-repair or operator (vault holds the unchanged old note); never inferred")
     rr.add_argument("--apply", action="store_true", help="enqueue after all preview hashes still match")
     for name in ("state", "entry", "vault", "archive", "source"):
         rr.add_argument(f"--expect-{name}", help=f"expected {name} SHA-256 printed by preview")
     rr.add_argument("--expect-source-path", help="canonical source path printed by preview")
+    ro = sub.add_parser("retry-open", help="preview or enqueue a guarded retry of exact open (unaccounted / "
+                                           "evidence removed / unverified) bullets of a done, superseded old note")
+    ro.add_argument("--staging", type=Path, required=True)
+    ro.add_argument("--vault", type=Path, required=True)
+    ro.add_argument("--note", required=True, help="exact vault-relative old-note path")
+    ro.add_argument("--video", required=True, help="recorded source video id")
+    ro.add_argument("--form", required=True, choices=RETRY_OPEN_KINDS, help="the recorded open answer form")
+    ro.add_argument("--target", default="", help="optional: a title the recorded answer names (checked)")
+    ro.add_argument("--bullet", action="append", required=True, help="original bullet id bN; repeat for each one")
+    ro.add_argument("--entry-state", default="", choices=("",) + RETRY_ENTRY_STATES,
+                    help="the entry is needs-repair or operator (vault holds the unchanged old note); never inferred")
+    ro.add_argument("--apply", action="store_true", help="enqueue after all preview hashes still match")
+    for name in ("state", "entry", "vault", "archive", "source"):
+        ro.add_argument(f"--expect-{name}", help=f"expected {name} SHA-256 printed by preview")
+    ro.add_argument("--expect-source-path", help="canonical source path printed by preview")
     pr = sub.add_parser("probe-reasoning", help="LIVE: one small paid call (a few cents) that reports the "
                                                 "reasoning tokens of the configured setting")
     pr.add_argument("--model", default=None)
@@ -4416,14 +4672,30 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "retry-rejected":
             staging, vault = a.staging.resolve(), a.vault.resolve()
             if not a.apply:
-                print(json.dumps(retry_rejected_plan(staging, vault, a.note, a.video, a.target, a.bullet), indent=1))
+                print(json.dumps(retry_rejected_plan(staging, vault, a.note, a.video, a.target, a.bullet,
+                                                     entry_state=a.entry_state), indent=1))
                 return 0
             guards = {"state_sha256": a.expect_state, "entry_sha256": a.expect_entry,
                       "vault_sha256": a.expect_vault, "archive_sha256": a.expect_archive,
                       "source_sha256": a.expect_source, "source_path": a.expect_source_path}
             if any(not x for x in guards.values()):
                 raise ri.HarnessError("--apply requires all preview guard flags (--expect-state/entry/vault/archive/source/source-path)")
-            print(json.dumps(apply_retry_rejected(staging, vault, a.note, a.video, a.target, a.bullet, guards), indent=1))
+            print(json.dumps(apply_retry_rejected(staging, vault, a.note, a.video, a.target, a.bullet, guards,
+                                                  entry_state=a.entry_state), indent=1))
+            return 0
+        if a.cmd == "retry-open":
+            staging, vault = a.staging.resolve(), a.vault.resolve()
+            if not a.apply:
+                print(json.dumps(retry_rejected_plan(staging, vault, a.note, a.video, a.target, a.bullet,
+                                                     kind=a.form, entry_state=a.entry_state), indent=1))
+                return 0
+            guards = {"state_sha256": a.expect_state, "entry_sha256": a.expect_entry,
+                      "vault_sha256": a.expect_vault, "archive_sha256": a.expect_archive,
+                      "source_sha256": a.expect_source, "source_path": a.expect_source_path}
+            if any(not x for x in guards.values()):
+                raise ri.HarnessError("--apply requires all preview guard flags (--expect-state/entry/vault/archive/source/source-path)")
+            print(json.dumps(apply_retry_rejected(staging, vault, a.note, a.video, a.target, a.bullet, guards,
+                                                  kind=a.form, entry_state=a.entry_state), indent=1))
             return 0
         if a.cmd in ("exchange-status", "exchange-list"):
             if not a.exchange and not a.staging:
