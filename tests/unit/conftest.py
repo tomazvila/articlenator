@@ -9,8 +9,10 @@
 """
 from __future__ import annotations
 
+import atexit
 import hashlib
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -34,6 +36,24 @@ def tree_hash(root: Path = ZR) -> dict[str, str]:
             except OSError:
                 out[p.relative_to(root).as_posix()] = "unreadable"
     return out
+
+
+# One session folder holds every temp folder of the test session (removed at the end;
+# test_r26 SessionTempFolder checks it).
+_SESSION_TMP = tempfile.mkdtemp(prefix="zr-tests-")
+os.environ["TMPDIR"] = _SESSION_TMP
+tempfile.tempdir = _SESSION_TMP
+
+
+def _remove_session_tmp() -> None:
+    shutil.rmtree(_SESSION_TMP, ignore_errors=True)
+
+
+atexit.register(_remove_session_tmp)  # also when the session ends early
+
+
+def pytest_sessionfinish(session, exitstatus):
+    _remove_session_tmp()
 
 
 # The default state folder of real runs; tests must not change it.

@@ -15,8 +15,8 @@
     },
     "prompts/synth_single.md": {
       "single": {
-        "sha256": "8a824f4e9e4560e033623bd53311f8e3ae47b630ed86258f2959e9ec84863043",
-        "words": 4127,
+        "sha256": "3f5879240fe6b4060779837d07ad0d0cb697eb590c65e2d233718ef4fb8bd61e",
+        "words": 4129,
         "includes": [
           {
             "anchor": "frontmatter",
@@ -59,8 +59,8 @@
     },
     "prompts/synth_onecall.md": {
       "single": {
-        "sha256": "3ec4735b9608f9cad79313d4bca0c3963315ca5dbd5c2985f0d6464b643c6dd0",
-        "words": 4058,
+        "sha256": "5c542b156e82d16cbd9d7752de28b34629cd972f2e95ae47f10aee2474d179a6",
+        "words": 4060,
         "includes": [
           {
             "anchor": "transcript-input",
@@ -119,8 +119,8 @@
     },
     "prompts/fix_single.md": {
       "single": {
-        "sha256": "d0f03d44323fc5564ec2e0c50a0a26a30cb5fc4e4a81cce7ba9461eeb28a88f1",
-        "words": 4207,
+        "sha256": "e28f15988b8a22f64e3f9d321f991c14c8966fe10f6341b396a6ca2b71b58e9d",
+        "words": 4209,
         "includes": [
           {
             "anchor": "fix-actions",
@@ -167,8 +167,8 @@
     },
     "prompts/repair_single.md": {
       "single": {
-        "sha256": "5c915d42c8222b1a33bb7304aff3363bb237c84a736b01a03f154ad0513f1ca8",
-        "words": 4557,
+        "sha256": "04fa171b257d014a5263a6087ecbc680e82e2b7ff2f0c16bed3f4517a83d73bd",
+        "words": 4559,
         "includes": [
           {
             "anchor": "repair",
@@ -222,8 +222,8 @@
     },
     "NOTE_CONTRACT.md": {
       "agent": {
-        "sha256": "e5e6c61737046ab5632f59515e7edf108f5636a093c771a4b7098731e1eb837c",
-        "words": 8217,
+        "sha256": "1d846e127b4684891e4e0a1a5d6de1418ed449c335d9d825f07539c7706bc75c",
+        "words": 8219,
         "includes": []
       }
     }

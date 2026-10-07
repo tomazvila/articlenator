@@ -24,7 +24,6 @@ OPEN = {
     "A2_state.py::ExtendCorrectionRefused::test_tag_correction_is_refused": "W18: visible refusal, not fixed",
     "A2_state.py::NeedsOperatorNeverCleared::test_entry_stays_after_the_operator_fixed_it": "W35: not fixed",
     "C_links.py::UnlinkEndToEnd::test_L1_case_variant_link_to_a_waiting_sibling_publishes_dead": "W28: not fixed",
-    "C_links.py::UnlinkEndToEnd::test_L2_unlinked_line_breaks_the_connected_ideas_shape": "W29: not fixed",
     "C_links.py::UnlinkDirect::test_L4_link_in_a_table_row_of_a_map_stays_dead": "W42: not fixed",
     "C_links.py::ValidateAfterV30::test_V30a_embed_of_a_missing_note_is_never_reported": "W43: not fixed",
     "C_links.py::ValidateAfterV30::test_V30b_link_to_a_missing_file_is_never_reported": "W43: not fixed",
