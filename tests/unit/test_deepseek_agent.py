@@ -26,13 +26,17 @@ def test_resolve_allowed_path_rejects_paths_outside_allowed_roots(tmp_path, monk
 
 
 def test_resolve_allowed_path_accepts_configured_vault(tmp_path, monkeypatch):
-    vault = tmp_path / "vault"
-    monkeypatch.setenv("VAULT", str(vault))
+    # Round 5: the read roots are the zettelkasten folders of $ZK_DIR, not the vault root.
+    zk = tmp_path / "vault" / "ZK"
+    monkeypatch.setenv("VAULT", str(zk.parent))
+    monkeypatch.setenv("ZK_DIR", str(zk))
     monkeypatch.setenv("ZR_STAGING", str(tmp_path / "staging"))
 
-    resolved = deepseek_agent.resolve_allowed_path(str(vault / "01 Permanent Notes" / "A.md"))
+    resolved = deepseek_agent.resolve_allowed_path(str(zk / "01 Permanent Notes" / "A.md"))
 
-    assert resolved == (vault / "01 Permanent Notes" / "A.md").resolve()
+    assert resolved == (zk / "01 Permanent Notes" / "A.md").resolve()
+    with pytest.raises(deepseek_agent.AgentError):
+        deepseek_agent.resolve_allowed_path(str(zk.parent / "Other Note.md"))
 
 
 def test_helper_path_rejects_non_helper():
@@ -178,7 +182,17 @@ def test_allowed_roots_include_staging_and_vault(tmp_path, monkeypatch):
     monkeypatch.setenv("ZR_STAGING", str(staging))
     monkeypatch.setenv("VAULT", str(vault))
 
+    zk = vault / "ZK"
+    monkeypatch.setenv("ZK_DIR", str(zk))
     roots = set(map(os.fspath, deepseek_agent.allowed_roots()))
 
-    assert os.fspath(staging.resolve()) in roots
-    assert os.fspath(vault.resolve()) in roots
+    # Round 5 (B2): whole folders are the shadow and the lit folders only. The staging
+    # and the vault root are not read roots; single files and zettelkasten folders are.
+    assert os.fspath(staging.resolve()) not in roots
+    assert os.fspath(vault.resolve()) not in roots
+    assert deepseek_agent.read_allowed((zk / "01 Permanent Notes" / "A.md").resolve())
+    assert deepseek_agent.read_allowed((zk / "Home.md").resolve())
+    assert deepseek_agent.read_allowed((staging / "STATE.md").resolve())
+    assert not deepseek_agent.read_allowed((staging / "queue.json").resolve())
+    assert not deepseek_agent.read_allowed((vault / "Diary.md").resolve())
+    assert not deepseek_agent.read_allowed((zk / "03 Reviews" / "R.md").resolve())

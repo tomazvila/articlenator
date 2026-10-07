@@ -1,37 +1,96 @@
-# prompts/synthesis_transcript.md — transcript-specific overrides
+# prompts/synthesis_transcript.md — steps for one video transcript
 
-You are synthesizing a **video transcript** (Whisper ASR output), not a Twitter
-article/tweet. Follow `prompts/synthesis.md` as the core protocol (decompose → dedupe →
-write → cluster → record → verify → clock out) and `NOTE_TEMPLATE.md` for format, with the
-adjustments below. Everything else (atomic notes, own words, dedup-before-create, tension
-notes, contextual links, no provenance, index/queue helpers, WIP=1) is unchanged.
+`NOTE_CONTRACT.md` defines the note and every rule; the numbers in brackets are its
+sections. Its examples are fictional: never copy their titles, numbers or links.
 
-## Source shape
-- Your work unit is **ONE video** (`kind: "video"`, a single id). There are **no clusters**
-  for transcripts — synthesize the one `lit_notes` file you are given and stop.
-- The note body is a long, **spoken** monologue/discussion: rambly, repetitive, and ASR-
-  transcribed. Treat it as raw material, never as quotable prose.
+## Hard rules
 
-## /decompose — what to keep vs. drop
-- A long video yields **many** atomic claims. Walk the whole transcript; extract every
-  distinct reusable idea/argument/prediction as its own declarative claim. Err strongly
-  toward MORE notes — a single fat note for an hour-long talk is the #1 defect.
-- **Drop pure non-content** (no reusable idea): sponsor reads / ads, "like and subscribe" /
-  channel plugs, intros & sign-offs, greetings and banter, restated repetition, and pure
-  hype. A skipped video must still name, in the `skipped` reason, what was discarded.
-- **Keep opinions and predictions** — a stated view IS a reusable claim (`verification:
-  unverified`). The goal is to not lose the thinking, only the filler.
+1. Write only what the transcript says. No outside knowledge, no invented example. (6)
+2. Copy quotes from the file; never from a damaged or `minor:` loop span; garble stays there. (1, 5.1)
+3. Copy each number with its unit, period and alternatives, in one clause. (5.2)
+4. Keep every hedge and condition the speaker attaches to the claim, in the title too; never add a limit word. (4, 5.3)
+5. The verb matches the speech act: option, prediction and "let's say" stay so. (5.3)
+6. Multi-speaker video: name a speaker only with `speaker_evidence`; mixed voices or unsure: `not stated`. (3)
+7. Title: named step with its number, limit and frame quantity; general title only for a general rule. (4)
+8. A `scope` value is a word from the cited passage, or `not stated`. (2)
+9. Edit an existing note only to fold (7.1); else a NEW note + `note_link.py`. (7.3, 7.4)
+10. Links: `[[Home]]`, a note of this unit, or an `index_query.py` result; never itself. (5.1)
+11. One note per tool call; rename with `move_file`, never a second file. (12)
+12. Run `verify_claims.py` before clock-out. Fix turn: fix only the named items, or `delete_draft`; no new `--notes`. (12)
 
-## ASR caveat (important)
-- Whisper mis-hears **proper nouns, product names, numbers, and jargon**. Do **not** treat
-  any specific figure, name, or quote as authoritative. Capture the *idea*; if a claim hinges
-  on an exact number/name that looks ASR-garbled, phrase it qualitatively (e.g. "a large
-  majority" rather than a suspicious precise percent) or omit the shaky specific.
-- Never paste transcript spans — spoken text reworded is still the collector's fallacy.
-  Rewrite each claim as crisp declarative English.
+Wrong → right (fictional):
+- "maybe two easy sessions a week if your fingers hurt": "Recommends Two Easy Sessions A
+  Week" → "Says Maybe Two Easy Sessions A Week If Your Fingers Hurt".
+- "I row three steady pieces a week": `equipment: "rowing machine"` → `equipment: "not stated"`.
+- "from three sessions a week, at most one hard": "Advises Few Hard Sessions", period
+  `not stated` → "Allows At Most One Hard Session Of Three Per Week", period `per week`.
 
-## Everything else
-Dedup via `index_query.py`, fold/create/tension exactly as `synthesis.md` says; one broad
-domain tag + ≥1 fine topic tag; build an MOC at the ~5-note squeeze point; `index_add.py`
-records provenance by note file; `queue_mark.py --stage synthesized`; rewrite `STATE.md`;
-stop after the one video.
+## Tools
+
+- You run only `pwd` and `python3 <helper>` with the flags shown below (`python3
+  <helper> --help` lists a helper's flags). `python3 -c`, shell commands and other
+  scripts are refused.
+- Your writes go to a shadow work folder. Nothing reaches the vault until the checks
+  pass (contract 12). Read and write notes by their vault path
+  (`01 Permanent Notes/<Title>.md`). Rename with `move_file`; remove a draft of this
+  unit with `delete_draft`.
+
+## Steps
+
+1. **Read.** Transcript frontmatter (only `asr_quality` decides, contract 1), then the
+   whole text. In a conversation, mark who speaks each passage.
+2. **Find claims.** A rule, recommendation, option, prediction, observation or quantity
+   that a reader applies to training. Keep each claim with its conditions; one note per
+   named step. Skip anecdotes, banter, unreadable and damaged spans, and record each
+   skip:
+
+   ```
+   python3 queue_mark.py --ids vid-<id> --skip-passage "<first 8 words>" --at MM:SS --reason "<why>"
+   ```
+
+3. **Write each note** (one tool call per note): Evidence quotes first, then `sources`,
+   `scope` with `modality`, title, lead and Details from the quotes only,
+   `verification: unverified`.
+4. **Dedup.**
+
+   ```
+   python3 index_query.py "<claim>" --speaker "<speaker>" --skill "<skill>" --level "<level>" --equipment "<equipment>" --basis "<basis>" --modality "<modality>"
+   ```
+
+   Fold only when `fold_check.fold_allowed` is true and no quantity changes (contract
+   7.1). Else keep your new note and link (kinds in the table of contract 7.2):
+
+   ```
+   python3 note_link.py --from "01 Permanent Notes/<new>.md" --to "01 Permanent Notes/<other>.md" --kind related
+   ```
+
+   Use `--kind disagreement` only when your note has `## Disagreement`;
+   `--kind supersedes-candidate` only when the other note has no `sources:`.
+5. **Record** each note you created or changed:
+
+   ```
+   python3 index_add.py --title "<H1>" --file "01 Permanent Notes/<H1>.md" --gist "<lead>" --tags "calisthenics,<topic>" --source vid-<id> --speaker "<speaker>" --skill "<skill>" --level "<level>" --equipment "<equipment>" --basis "<basis>" --modality "<modality>"
+   ```
+
+   Exit code 3 = refused: undo the fold, keep a new note, link the two.
+6. **Self-check** each note, fix what the report names, run again:
+
+   ```
+   python3 verify_claims.py "01 Permanent Notes/<Title>.md" --lit "$ZR_STAGING/lit"
+   ```
+
+   The table at the end of contract 12 says what to do for each checker result. Then
+   read the note once more against hard rules 4 to 8.
+7. **Clock out** with your final note titles and every existing note you folded into
+   (several calls in one unit add up; an unlisted shadow note is discarded):
+
+   ```
+   python3 queue_mark.py --ids vid-<id> --stage synthesized --notes "<Title A>;<Title B>"
+   ```
+
+   No note at all: `python3 queue_mark.py --ids vid-<id> --stage skipped --reason "<why>"`.
+
+Fix turns and review after you finish: contract 12, steps 5 and 6. A fix turn, a
+repair turn or a `REVIEW REPAIR TURN.` message lists NOTE, TRANSCRIPT FILE(S),
+FAILURES or REJECTED ITEMS, and CITED PASSAGES: read nothing else, fix exactly the
+listed items or `delete_draft` the note.

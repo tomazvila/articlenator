@@ -8,6 +8,21 @@ from pathlib import Path
 _config_instance: "Config | None" = None
 
 
+def _resolve_whisper_prompt(value: str) -> str | None:
+    """Return the whisper prompt for a setting value.
+
+    "calisthenics" gives the built-in glossary. Other text is used as is.
+    """
+    value = value.strip()
+    if not value:
+        return None
+    if value.casefold() == "calisthenics":
+        from .sources.asr_tools import DEFAULT_CALISTHENICS_VOCABULARY, vocabulary_prompt
+
+        return vocabulary_prompt(DEFAULT_CALISTHENICS_VOCABULARY)
+    return value
+
+
 class Config:
     """Application configuration."""
 
@@ -96,6 +111,14 @@ class Config:
         )
         whisper_threads_env = os.environ.get("TWITTER_ARTICLENATOR_WHISPER_THREADS")
         self._whisper_threads = int(whisper_threads_env) if whisper_threads_env else None
+        # Initial prompt for whisper (domain vocabulary). The value
+        # "calisthenics" gives the built-in calisthenics glossary. Empty means
+        # no prompt.
+        self._whisper_prompt = _resolve_whisper_prompt(
+            os.environ.get("TWITTER_ARTICLENATOR_WHISPER_PROMPT", "")
+        )
+        # Spoken language for whisper ("en", "bg", ...). Empty means "auto".
+        self._whisper_language = os.environ.get("TWITTER_ARTICLENATOR_WHISPER_LANGUAGE") or None
         self._transcription_dir = Path(
             os.environ.get(
                 "TWITTER_ARTICLENATOR_TRANSCRIPTION_DIR",
@@ -211,6 +234,16 @@ class Config:
     def whisper_threads(self) -> int | None:
         """Thread count for whisper.cpp, or None for its default."""
         return self._whisper_threads
+
+    @property
+    def whisper_prompt(self) -> str | None:
+        """Initial prompt (domain vocabulary) for whisper.cpp, or None."""
+        return self._whisper_prompt
+
+    @property
+    def whisper_language(self) -> str | None:
+        """Spoken language code for whisper.cpp, or None for auto-detect."""
+        return self._whisper_language
 
     @property
     def transcription_dir(self) -> Path:

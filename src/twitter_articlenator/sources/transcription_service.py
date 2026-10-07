@@ -29,8 +29,14 @@ def build_job(
     chunk_seconds: int | None = None,
     language: str | None = None,
     cookie_store: YouTubeCookieStore | None = None,
+    prompt: str | None = None,
 ) -> TranscriptionJob:
-    """Construct a TranscriptionJob backed by whisper.cpp + yt-dlp + ffmpeg."""
+    """Construct a TranscriptionJob backed by whisper.cpp + yt-dlp + ffmpeg.
+
+    ``prompt`` is the whisper initial prompt (domain vocabulary). If it is
+    None, the job uses ``config.whisper_prompt``. The job fails at its start if
+    the model file is missing; it never uses another model.
+    """
     config = config or get_config()
     legacy_cookie_file = resolve_cookie_file(config) if cookie_store is None else None
     downloader_bin = config.youtube_downloader_bin
@@ -41,6 +47,7 @@ def build_job(
         whisper_bin=config.whisper_bin,
         threads=config.whisper_threads,
         timeout_seconds=timeout,
+        prompt=prompt if prompt is not None else config.whisper_prompt,
     )
 
     def audio_provider(url: str, dest_dir: Path):
@@ -70,5 +77,5 @@ def build_job(
         audio_provider=audio_provider,
         chunker=chunker,
         chunk_seconds=chunk_seconds or config.transcription_chunk_seconds,
-        language=language,
+        language=language if language is not None else config.whisper_language,
     )

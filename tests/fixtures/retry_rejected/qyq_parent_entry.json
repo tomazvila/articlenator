@@ -1,0 +1,385 @@
+{
+  "note": "01 Permanent Notes/Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md",
+  "entry": {
+    "sha": "3a565b2720480668048903c87dc5134e5346fb2550f4dfb0d71d4216eb103041",
+    "status": "done",
+    "pos": 4,
+    "titles": [
+      "Radoslav Radev Reports That As A World-Class Athlete He Cannot Hold The Pike-To-Straddle Planche With Relaxed Lats",
+      "Radoslav Radev Says That For The Planche The Right Muscles Matter And Strength Does Not, With A 150 Or 200 Kg Bench Press As His Example",
+      "Radoslav Radev Says That He Cannot Lift His Legs In The Planche If He Pushes Without Squeezing The Lats",
+      "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche",
+      "Radoslav Radev Says That Not Activating The Lats, A Relaxed Core And Legs Not Connected To The Upper Body Are Three Mistakes That Stop The Planche"
+    ],
+    "bullets": {
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b1": {
+        "text": "The planche requires coordinated engagement of the lats, core, glutes, and legs in a specific tension pattern that general pressing exercises do not train.",
+        "answers": {
+          "vid-G331KArPXnI": {
+            "decision": "unverified",
+            "was": {
+              "decision": "corrected",
+              "title": "Radoslav Radev Says That Not Activating The Lats, A Relaxed Core And Legs Not Connected To The Upper Body Are Three Mistakes That Stop The Planche",
+              "titles": [
+                "Radoslav Radev Says That Not Activating The Lats, A Relaxed Core And Legs Not Connected To The Upper Body Are Three Mistakes That Stop The Planche"
+              ],
+              "cited": [
+                [
+                  "vid-G331KArPXnI",
+                  438,
+                  "a1612d103123"
+                ],
+                [
+                  "vid-G331KArPXnI",
+                  497,
+                  "dc477b4670d1"
+                ]
+              ],
+              "claim_lines": [
+                [
+                  "Radoslav Radev Says That Not Activating The Lats, A Relaxed Core And Legs Not Connected To The Upper Body Are Three Mistakes That Stop The Planche",
+                  "- He says that if you do not squeeze the core, you cannot achieve the planche, and it does not matter how strong you are. [src: vid-G331KArPXnI @ 07:18]"
+                ],
+                [
+                  "Radoslav Radev Says That Not Activating The Lats, A Relaxed Core And Legs Not Connected To The Upper Body Are Three Mistakes That Stop The Planche",
+                  "- He says you never achieve the planche until you squeeze the glutes and the lower back. [src: vid-G331KArPXnI @ 08:17]"
+                ]
+              ]
+            },
+            "why": "the claim line that carried the bullet changed"
+          },
+          "vid-yM5j7jHhKLA": {
+            "decision": "unaccounted",
+            "was": {
+              "decision": "corrected",
+              "title": "Radoslav Radev Says In The Planche Lean Hold The Legs Have To Stay Pressed Together All The Time And The Core Has To Stay Squeezed All The Time",
+              "titles": [
+                "Radoslav Radev Says In The Planche Lean Hold The Legs Have To Stay Pressed Together All The Time And The Core Has To Stay Squeezed All The Time",
+                "Radoslav Radev Says To Squeeze The Lats And Push The Chest To Do The Protraction In The Planche Lean Hold"
+              ],
+              "cited": [
+                [
+                  "vid-yM5j7jHhKLA",
+                  136,
+                  "fecfe84d98c7"
+                ]
+              ]
+            },
+            "why": "the named note was not written"
+          },
+          "vid-qYQHJEH7zMA": {
+            "decision": "target-rejected",
+            "titles": [
+              "Radoslav Radev Predicts Strong Enough Planche Trainees With A Perfect Program Can Stay Stuck Forever If Attempt Technique And Muscle Activation Are Bad"
+            ],
+            "was": "corrected"
+          }
+        }
+      },
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b2": {
+        "text": "The most common mistake is assuming that stronger shoulders automatically mean a better planche; in reality, the shoulder is rarely the bottleneck for planche progression—most trainees who fail at the planche do so because of poor lat engagement, core activation, or leg tension, not weak shoulders.",
+        "answers": {
+          "vid-G331KArPXnI": {
+            "decision": "corrected",
+            "title": "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche",
+            "titles": [
+              "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche",
+              "Radoslav Radev Says That Not Activating The Lats, A Relaxed Core And Legs Not Connected To The Upper Body Are Three Mistakes That Stop The Planche"
+            ],
+            "cited": [
+              [
+                "vid-G331KArPXnI",
+                343,
+                "5af4555dd36a"
+              ]
+            ],
+            "claim_lines": [
+              [
+                "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche",
+                "- He says the idea \"if i have strong shoulders i will do everything\" is not right. [src: vid-G331KArPXnI @ 05:43]"
+              ]
+            ]
+          }
+        }
+      },
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b3": {
+        "text": "A trainee who can bench press a very heavy weight may still fail at the planche because their nervous system has not learned to fire the lats and core simultaneously while the arms remain straight.",
+        "answers": {
+          "vid-G331KArPXnI": {
+            "decision": "corrected",
+            "title": "Radoslav Radev Says That For The Planche The Right Muscles Matter And Strength Does Not, With A 150 Or 200 Kg Bench Press As His Example",
+            "titles": [
+              "Radoslav Radev Says That For The Planche The Right Muscles Matter And Strength Does Not, With A 150 Or 200 Kg Bench Press As His Example"
+            ],
+            "cited": [
+              [
+                "vid-G331KArPXnI",
+                298,
+                "37a4ea527539"
+              ]
+            ],
+            "claim_lines": [
+              [
+                "Radoslav Radev Says That For The Planche The Right Muscles Matter And Strength Does Not, With A 150 Or 200 Kg Bench Press As His Example",
+                "Radoslav Radev says that it does not matter how strong you are for the planche, and he gives a bench press of 150 or 200 kg as an example. [src: vid-G331KArPXnI @ 04:58]"
+              ],
+              [
+                "Radoslav Radev Says That For The Planche The Right Muscles Matter And Strength Does Not, With A 150 Or 200 Kg Bench Press As His Example",
+                "- He says it does not matter how strong you are, for example if you can bench press 150 or 200 kg. [src: vid-G331KArPXnI @ 04:58]"
+              ],
+              [
+                "Radoslav Radev Says That For The Planche The Right Muscles Matter And Strength Does Not, With A 150 Or 200 Kg Bench Press As His Example",
+                "- He says that someone who can do 20 push-ups can have better results on planche because that person uses the right muscles, the right activation. [src: vid-G331KArPXnI @ 04:58]"
+              ]
+            ]
+          }
+        }
+      },
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b4": {
+        "text": "The limiting factor in planche progression is often muscle activation and coordination, not the raw force production capacity of the shoulders and triceps.",
+        "answers": {
+          "vid-G331KArPXnI": {
+            "decision": "corrected",
+            "title": "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche",
+            "titles": [
+              "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche"
+            ],
+            "cited": [
+              [
+                "vid-G331KArPXnI",
+                343,
+                "5af4555dd36a"
+              ]
+            ],
+            "claim_lines": [
+              [
+                "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche",
+                "- He says the idea \"if i have strong shoulders i will do everything\" is not right. [src: vid-G331KArPXnI @ 05:43]"
+              ]
+            ]
+          }
+        }
+      },
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b5": {
+        "text": "This is why isolation exercises like dumbbell presses for the shoulders are insufficient preparation for the planche—they train the prime movers but not the stabilizing coordination pattern.",
+        "answers": {
+          "vid-G331KArPXnI": {
+            "decision": "corrected",
+            "title": "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche",
+            "titles": [
+              "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche"
+            ],
+            "cited": [
+              [
+                "vid-G331KArPXnI",
+                320,
+                "476acb815a46"
+              ]
+            ],
+            "claim_lines": [
+              [
+                "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche",
+                "- He gives the dumbbell presses for the shoulder as an example: the other muscles are not squeezed properly during the exercise. [src: vid-G331KArPXnI @ 05:20]"
+              ]
+            ]
+          }
+        }
+      },
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b6": {
+        "text": "The belief that strong shoulders alone would unlock the planche is incorrect; most of the time the problem is not the shoulders but the failure to activate the correct full-body coordination pattern.",
+        "answers": {
+          "vid-G331KArPXnI": {
+            "decision": "corrected",
+            "title": "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche",
+            "titles": [
+              "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche"
+            ],
+            "cited": [
+              [
+                "vid-G331KArPXnI",
+                335,
+                "bd51d5cdf634"
+              ]
+            ],
+            "claim_lines": [
+              [
+                "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche",
+                "Radoslav Radev says that most of the time the problem is not your shoulder, even if the exercises make your shoulders stronger. [src: vid-G331KArPXnI @ 05:35]"
+              ],
+              [
+                "Radoslav Radev Says That Most Of The Time The Problem Is Not The Shoulder For The Planche",
+                "- He says you make your shoulders stronger, but the problem is not your shoulder most of the time. [src: vid-G331KArPXnI @ 05:35]"
+              ]
+            ]
+          }
+        }
+      },
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b7": {
+        "text": "Many trainees who stall on the planche due to technique mistakes conclude they are not strong enough and switch to weighted pull-ups, weighted dips, or random new exercises from saved Instagram videos, when the real bottleneck is muscle activation and technique, not strength or exercise selection.",
+        "answers": {
+          "vid-G331KArPXnI": {
+            "decision": "dropped",
+            "reason": "not in this transcript"
+          },
+          "vid-yM5j7jHhKLA": {
+            "decision": "dropped",
+            "reason": "not in this transcript"
+          },
+          "vid-qYQHJEH7zMA": {
+            "decision": "target-rejected",
+            "titles": [
+              "Radoslav Radev Predicts Strong Enough Planche Trainees With A Perfect Program Can Stay Stuck Forever If Attempt Technique And Muscle Activation Are Bad"
+            ],
+            "was": "corrected"
+          }
+        }
+      },
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b8": {
+        "text": "Even a world-class athlete cannot compensate for poor technique with strength alone: a world-class calisthenics athlete could not hold the straddle planche with relaxed lats, proving that technique errors are absolute blockers that no amount of strength can bypass.",
+        "answers": {
+          "vid-G331KArPXnI": {
+            "decision": "unverified",
+            "was": {
+              "decision": "corrected",
+              "title": "Radoslav Radev Says That He Cannot Lift His Legs In The Planche If He Pushes Without Squeezing The Lats",
+              "titles": [
+                "Radoslav Radev Says That He Cannot Lift His Legs In The Planche If He Pushes Without Squeezing The Lats"
+              ],
+              "cited": [
+                [
+                  "vid-G331KArPXnI",
+                  378,
+                  "74de007d148e"
+                ]
+              ],
+              "claim_lines": [
+                [
+                  "Radoslav Radev Says That He Cannot Lift His Legs In The Planche If He Pushes Without Squeezing The Lats",
+                  "Radoslav Radev says that on his own level he cannot lift his legs when he pushes without squeezing the lats. [src: vid-G331KArPXnI @ 06:18]"
+                ],
+                [
+                  "Radoslav Radev Says That He Cannot Lift His Legs In The Planche If He Pushes Without Squeezing The Lats",
+                  "- He says he can do tuck and \"advance\", but he cannot do the straddle without the lats. [src: vid-G331KArPXnI @ 06:18]"
+                ]
+              ]
+            },
+            "why": "the claim line that carried the bullet changed"
+          },
+          "vid-yM5j7jHhKLA": {
+            "decision": "dropped",
+            "reason": "not in this transcript"
+          },
+          "vid-qYQHJEH7zMA": {
+            "decision": "corrected",
+            "title": "Radoslav Radev Reports That As A World-Class Athlete He Cannot Hold The Pike-To-Straddle Planche With Relaxed Lats",
+            "titles": [
+              "Radoslav Radev Reports That As A World-Class Athlete He Cannot Hold The Pike-To-Straddle Planche With Relaxed Lats"
+            ],
+            "cited": [
+              [
+                "vid-qYQHJEH7zMA",
+                385,
+                "3585c92b4ec2"
+              ]
+            ],
+            "claim_lines": [
+              [
+                "Radoslav Radev Reports That As A World-Class Athlete He Cannot Hold The Pike-To-Straddle Planche With Relaxed Lats",
+                "Radev reports that, as a world-class athlete, he cannot hold the pike-to-straddle planche progression with relaxed lats. [src: vid-qYQHJEH7zMA @ 06:25]"
+              ],
+              [
+                "Radoslav Radev Reports That As A World-Class Athlete He Cannot Hold The Pike-To-Straddle Planche With Relaxed Lats",
+                "- He says he cannot hold the progression without squeezing his lat. [src: vid-qYQHJEH7zMA @ 06:25]"
+              ]
+            ]
+          }
+        }
+      },
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b9": {
+        "text": "The three most common technique mistakes that stall planche progress are: (1) relaxed core that destroys protraction, (2) relaxed lats that shorten effective arm length, and (3) leaning forward and down instead of forward and up, which drops the body too low. All three are activation/technique errors, not strength deficits.",
+        "answers": {
+          "vid-G331KArPXnI": {
+            "decision": "corrected",
+            "title": "Radoslav Radev Says That Not Activating The Lats, A Relaxed Core And Legs Not Connected To The Upper Body Are Three Mistakes That Stop The Planche",
+            "titles": [
+              "Radoslav Radev Says That Not Activating The Lats, A Relaxed Core And Legs Not Connected To The Upper Body Are Three Mistakes That Stop The Planche",
+              "Radoslav Radev Says That He Cannot Lift His Legs In The Planche If He Pushes Without Squeezing The Lats"
+            ],
+            "cited": [
+              [
+                "vid-G331KArPXnI",
+                359,
+                "4122409b40e7"
+              ]
+            ],
+            "claim_lines": [
+              [
+                "Radoslav Radev Says That Not Activating The Lats, A Relaxed Core And Legs Not Connected To The Upper Body Are Three Mistakes That Stop The Planche",
+                "Radoslav Radev names three technique mistakes that he says stop you from achieving the planche. [src: vid-G331KArPXnI @ 05:59]"
+              ],
+              [
+                "Radoslav Radev Says That Not Activating The Lats, A Relaxed Core And Legs Not Connected To The Upper Body Are Three Mistakes That Stop The Planche",
+                "- He says there are three things in your technique that you will never achieve planche if you do them. [src: vid-G331KArPXnI @ 05:59]"
+              ]
+            ]
+          }
+        }
+      },
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b10": {
+        "text": "Wrong technique is the primary cause of planche stagnation even when the trainee has a perfect program, adequate training volume, and sufficient strength—trainees who train hard with good programming but wrong muscle engagement can remain stuck on the tuck planche for five months or more, unable to reach the advanced tuck, because the technique error is an absolute blocker that no amount of correct programming can bypass.",
+        "answers": {
+          "vid-G331KArPXnI": {
+            "decision": "dropped",
+            "reason": "not in this transcript"
+          },
+          "vid-yM5j7jHhKLA": {
+            "decision": "dropped",
+            "reason": "not in this transcript"
+          },
+          "vid-qYQHJEH7zMA": {
+            "decision": "target-rejected",
+            "titles": [
+              "Radoslav Radev Predicts Strong Enough Planche Trainees With A Perfect Program Can Stay Stuck Forever If Attempt Technique And Muscle Activation Are Bad"
+            ],
+            "was": "corrected"
+          }
+        }
+      }
+    },
+    "recorded_sources": [
+      "vid-G331KArPXnI",
+      "vid-yM5j7jHhKLA",
+      "vid-qYQHJEH7zMA",
+      "vid-aXwZ_WI1vSw"
+    ],
+    "kind": "known",
+    "sources": [
+      "vid-G331KArPXnI",
+      "vid-yM5j7jHhKLA",
+      "vid-qYQHJEH7zMA",
+      "vid-aXwZ_WI1vSw"
+    ],
+    "asked": [
+      "vid-G331KArPXnI",
+      "vid-yM5j7jHhKLA",
+      "vid-yM5j7jHhKLA",
+      "vid-qYQHJEH7zMA"
+    ],
+    "unverified_bullets": [
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b1",
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b7"
+    ],
+    "damaged_bullets": [],
+    "rejected_bullets": [
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b7",
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b10"
+    ],
+    "open_bullets": [],
+    "unsupported_bullets": [],
+    "reopened": [
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b1",
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b10",
+      "Correct Muscle Activation Patterns Matter More Than Raw General Strength For Planche Performance.md#b7"
+    ]
+  }
+}

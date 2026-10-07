@@ -1,3 +1,5 @@
 """Twitter Article to PDF Converter."""
 
-__version__ = "0.2.10"
+from .version import __version__
+
+__all__ = ["__version__"]

@@ -8,6 +8,9 @@ shared state lock, so two workers never grab the same unit.
     python queue_claim.py --worker 0 --of 4             # claim next unit (prints unit JSON or {})
     python queue_claim.py --worker 0 --of 4 --reclaim   # reset this worker's stale claim(s)
     python queue_claim.py --release ar-1,tw-2           # reset ids claimed->extracted (stall recovery)
+
+Ready stages: `extracted` first, then `incomplete` (a run that ended by limit, timeout or
+error; run_integrity.py sets it and counts attempts).
 """
 from __future__ import annotations
 
@@ -21,6 +24,7 @@ from _lock import state_lock
 HERE = Path(__file__).resolve().parent
 STAGING = Path(os.environ.get("ZR_STAGING") or (HERE / "staging"))
 Q = STAGING / "queue.json"
+READY_STAGES = ("extracted", "incomplete")  # never `held` (degraded transcript) or `claimed`
 
 
 def _save(q: dict) -> None:
@@ -30,7 +34,7 @@ def _save(q: dict) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(allow_abbrev=False)
     ap.add_argument("--worker", type=int)
     ap.add_argument("--of", type=int)
     ap.add_argument("--reclaim", action="store_true", help="reset this worker's stale 'claimed' first")
@@ -47,8 +51,10 @@ def main() -> None:
         if a.release or a.release_soft:
             soft = bool(a.release_soft)
             rel = {x.strip() for x in (a.release_soft or a.release).split(",") if x.strip()}
+            released = []
             for it in items:
-                if it["id"] in rel and it["stage"] == "claimed":
+                if it["id"] in rel and it["stage"] in ("claimed", "incomplete"):
+                    released.append(it["id"])
                     it.pop("worker", None)
                     if soft:
                         it["stage"] = "extracted"  # transient (rate limit) - don't penalize
@@ -60,7 +66,7 @@ def main() -> None:
                         else:
                             it["stage"] = "extracted"
             _save(q)
-            print("{}")
+            print(json.dumps({"released": released}))
             return
 
         if a.reclaim:
@@ -73,9 +79,12 @@ def main() -> None:
             return
 
         chosen = None
-        for idx, it in enumerate(items):
-            if idx * a.of // total == a.worker and it["stage"] == "extracted":
-                chosen = it
+        for ready in READY_STAGES:
+            for idx, it in enumerate(items):
+                if idx * a.of // total == a.worker and it["stage"] == ready:
+                    chosen = it
+                    break
+            if chosen is not None:
                 break
 
         if chosen is None:

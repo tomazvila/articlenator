@@ -1,0 +1,205 @@
+=====CLAIMS=====
+C1 | 00:00 | intro: the topic of the video is finger strength without injuries
+C2 | 01:40 | leave at least 48 hours between two hard finger sessions
+C3 | 01:47 | the days in between are for easy mileage on big holds
+C4 | 03:10 | after about six weeks most people add one grade (prediction)
+C5 | 03:40 | no one-arm hangs before 20 seconds two-armed on the 20 millimeter edge
+C6 | 04:05 | a fourth session in the off-season is an option
+C7 | 04:30 | example: skipped warm-up hangs and a pulley injury; warm up properly
+=====NOTE: Tomas Brink Advises His Athletes To Leave At Least 48 Hours Between Two Hard Finger Sessions | claims: C2,C3=====
+---
+type: permanent note
+created: 2026-10-04
+status: expanded
+tags: [calisthenics, finger-training, zettelkasten, permanent-note]
+sources:
+  - id: vid-EXAMPLE0002
+    url: https://www.youtube.com/watch?v=EXAMPLE0002
+    speaker: "Tomas Brink"
+    channel: "Tomas Brink Climbing"
+scope:
+  skill: "hard finger sessions"
+  level: "my athletes"
+  equipment: "not stated"
+  basis: "general rule"
+  modality: "recommendation"
+  quantities:
+    - value: "at least 48 hours"
+      period: "not stated"
+verification: unverified
+---
+
+# Tomas Brink Advises His Athletes To Leave At Least 48 Hours Between Two Hard Finger Sessions
+
+Tomas Brink tells his athletes to leave at least 48 hours between two hard finger sessions. [src: vid-EXAMPLE0002 @ 01:40]
+
+## Details
+
+- He tells his athletes to leave at least 48 hours between two hard finger sessions. [src: vid-EXAMPLE0002 @ 01:40]
+- The days in between are for easy mileage on big holds. [src: vid-EXAMPLE0002 @ 01:47]
+
+## Evidence
+
+- vid-EXAMPLE0002 @ 01:40 (Tomas Brink): "I tell my athletes to leave at least 48 hours between two hard finger sessions."
+- vid-EXAMPLE0002 @ 01:47 (Tomas Brink): "The days in between are for easy mileage on big holds."
+
+
+## Connected Ideas
+
+- [[Mara Kell Allows Hard Finger Sessions On Back To Back Days If They Stay Under 20 Minutes]] — other speaker, different value.
+- [[Tomas Brink Predicts That Most People Add One Grade After About Six Weeks On His Plan]] — another note from the same video.
+=====NOTE: Tomas Brink Predicts That Most People Add One Grade After About Six Weeks On His Plan | claims: C4=====
+---
+type: permanent note
+created: 2026-10-04
+status: expanded
+tags: [calisthenics, finger-training, zettelkasten, permanent-note]
+sources:
+  - id: vid-EXAMPLE0002
+    url: https://www.youtube.com/watch?v=EXAMPLE0002
+    speaker: "Tomas Brink"
+    channel: "Tomas Brink Climbing"
+scope:
+  skill: "hardest boulder"
+  level: "most people"
+  equipment: "not stated"
+  basis: "general rule"
+  modality: "prediction"
+  quantities:
+    - value: "about six weeks"
+      period: "not stated"
+verification: unverified
+---
+
+# Tomas Brink Predicts That Most People Add One Grade After About Six Weeks On His Plan
+
+Tomas Brink predicts that after about six weeks on his plan, most people will add one grade to their hardest boulder. [src: vid-EXAMPLE0002 @ 03:10]
+
+## Details
+
+- After about six weeks on this plan, he says most people will add one grade to their hardest boulder. [src: vid-EXAMPLE0002 @ 03:10]
+
+## Evidence
+
+- vid-EXAMPLE0002 @ 03:10 (Tomas Brink): "After about six weeks on this plan, most people will add one grade to their hardest boulder."
+
+## Connected Ideas
+
+- [[Tomas Brink Advises His Athletes To Leave At Least 48 Hours Between Two Hard Finger Sessions]] — another note from the same video.
+=====NOTE: Tomas Brink Requires 20 Seconds Two-Armed On The 20 Millimeter Edge Before One-Arm Hangs | claims: C5=====
+---
+type: permanent note
+created: 2026-10-04
+status: expanded
+tags: [calisthenics, finger-training, zettelkasten, permanent-note]
+sources:
+  - id: vid-EXAMPLE0002
+    url: https://www.youtube.com/watch?v=EXAMPLE0002
+    speaker: "Tomas Brink"
+    channel: "Tomas Brink Climbing"
+scope:
+  skill: "one-arm hangs"
+  level: "not stated"
+  equipment: "20 millimeter edge"
+  basis: "general rule"
+  modality: "requirement"
+  quantities:
+    - value: "20 seconds two-armed"
+      period: "not stated"
+verification: unverified
+---
+
+# Tomas Brink Requires 20 Seconds Two-Armed On The 20 Millimeter Edge Before One-Arm Hangs
+
+Tomas Brink says not to start one-arm hangs until you can hold 20 seconds two-armed on the 20 millimeter edge. [src: vid-EXAMPLE0002 @ 03:40]
+
+## Details
+
+- Do not start one-arm hangs until you can hold 20 seconds two-armed on the 20 millimeter edge. [src: vid-EXAMPLE0002 @ 03:40]
+
+## Evidence
+
+- vid-EXAMPLE0002 @ 03:40 (Tomas Brink): "Do not start one-arm hangs until you can hold 20 seconds two-armed on the 20 millimeter edge."
+
+## Connected Ideas
+
+- [[Tomas Brink Predicts That Most People Add One Grade After About Six Weeks On His Plan]] — another note from the same video.
+=====NOTE: Tomas Brink Says A Fourth Session In The Off-Season Is An Option | claims: C6=====
+---
+type: permanent note
+created: 2026-10-04
+status: expanded
+tags: [calisthenics, finger-training, zettelkasten, permanent-note]
+sources:
+  - id: vid-EXAMPLE0002
+    url: https://www.youtube.com/watch?v=EXAMPLE0002
+    speaker: "Tomas Brink"
+    channel: "Tomas Brink Climbing"
+scope:
+  skill: "a fourth session"
+  level: "not stated"
+  equipment: "not stated"
+  basis: "general rule"
+  modality: "option"
+  quantities: []
+verification: unverified
+---
+
+# Tomas Brink Says A Fourth Session In The Off-Season Is An Option
+
+Tomas Brink says you can add a fourth session in the off-season if you want. [src: vid-EXAMPLE0002 @ 04:05]
+
+## Details
+
+- You can add a fourth session in the off-season if you want. [src: vid-EXAMPLE0002 @ 04:05]
+
+## Evidence
+
+- vid-EXAMPLE0002 @ 04:05 (Tomas Brink): "You can add a fourth session in the off-season if you want."
+
+## Connected Ideas
+
+- [[Tomas Brink Advises His Athletes To Leave At Least 48 Hours Between Two Hard Finger Sessions]] — the same plan, rest between hard sessions.
+=====NOTE: Tomas Brink Advises Warming Up Properly Before Hangs | claims: C7=====
+---
+type: permanent note
+created: 2026-10-04
+status: expanded
+tags: [calisthenics, finger-training, zettelkasten, permanent-note]
+sources:
+  - id: vid-EXAMPLE0002
+    url: https://www.youtube.com/watch?v=EXAMPLE0002
+    speaker: "Tomas Brink"
+    channel: "Tomas Brink Climbing"
+scope:
+  skill: "warm up"
+  level: "not stated"
+  equipment: "not stated"
+  basis: "general rule"
+  modality: "recommendation"
+  quantities: []
+verification: unverified
+---
+
+# Tomas Brink Advises Warming Up Properly Before Hangs
+
+Tomas Brink says "So warm up properly." [src: vid-EXAMPLE0002 @ 04:50]
+
+## Details
+
+- He advises to warm up properly. [src: vid-EXAMPLE0002 @ 04:50]
+
+## Evidence
+
+- vid-EXAMPLE0002 @ 04:30 (Tomas Brink): "Let's say you skip the warm-up hangs, that's when a pulley goes."
+- vid-EXAMPLE0002 @ 04:50 (Tomas Brink): "So warm up properly."
+
+## Example From The Source
+
+His example: "Let's say you skip the warm-up hangs, that's when a pulley goes." [src: vid-EXAMPLE0002 @ 04:30]
+
+## Connected Ideas
+
+- [[Tomas Brink Requires 20 Seconds Two-Armed On The 20 Millimeter Edge Before One-Arm Hangs]] — another rule of the same plan.
+=====SKIPPED=====
+C1 | not a transferable training claim

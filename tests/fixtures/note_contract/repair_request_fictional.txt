@@ -1,0 +1,36 @@
+=====OLD NOTE: Rest And Warm-Up Rules For Hangboard Training.md=====
+---
+type: permanent note
+created: 2026-06-01
+status: expanded
+tags: [calisthenics, finger-training, zettelkasten, permanent-note]
+---
+
+# Rest And Warm-Up Rules For Hangboard Training
+
+Rest and warm-up keep fingers healthy.
+
+## Details
+- Leave 24 hours between hard finger sessions.
+- Easy days are for mileage on big holds.
+- Warm up properly, because skipped warm-up hangs cost a pulley.
+- A warm-up hang lasts 30 seconds.
+- Cold fingers lose strength.
+
+## Grounded Example
+A climber who rests two days gets stronger.
+
+## Connected Ideas
+- [[Home]]
+
+BULLETS OF Rest And Warm-Up Rules For Hangboard Training.md:
+Rest And Warm-Up Rules For Hangboard Training.md#b1 | Leave 24 hours between hard finger sessions.
+  candidates: [01:40] "I tell my athletes to leave at least 48 hours between two hard finger sessions." | [01:47] "The days in between are for easy mileage on big holds." | [04:50] "So warm up properly."
+Rest And Warm-Up Rules For Hangboard Training.md#b2 | Easy days are for mileage on big holds.
+  candidates: [01:47] "The days in between are for easy mileage on big holds." | [01:40] "I tell my athletes to leave at least 48 hours between two hard finger sessions." | [00:00] "Welcome back. Today, finger strength without injuries."
+Rest And Warm-Up Rules For Hangboard Training.md#b3 | Warm up properly, because skipped warm-up hangs cost a pulley.
+  candidates: [04:30] "Let's say you skip the warm-up hangs, that's when a pulley goes." | [04:50] "So warm up properly." | [03:40] "Do not start one-arm hangs until you can hold 20 seconds two-armed on the 20 millimeter edge."
+Rest And Warm-Up Rules For Hangboard Training.md#b4 | A warm-up hang lasts 30 seconds.
+  candidates: [04:30] "Let's say you skip the warm-up hangs, that's when a pulley goes." | [04:50] "So warm up properly." | [03:40] "Do not start one-arm hangs until you can hold 20 seconds two-armed on the 20 millimeter edge."
+Rest And Warm-Up Rules For Hangboard Training.md#b5 | Cold fingers lose strength.
+  candidates: [04:50] "So warm up properly." | [04:30] "Let's say you skip the warm-up hangs, that's when a pulley goes." | [01:30] "Your fingers need a couple of days to recover after a hard session."

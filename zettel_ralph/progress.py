@@ -65,12 +65,17 @@ def _measure(synth: int, extr: int, failed: int, pend: int, total: int):
 
 def main() -> None:
     items = json.loads(Q.read_text())["items"]
-    text = [it for it in items if it["kind"] != "video"]
+    # The transcript pipeline has only videos; count them when no text item exists.
+    text = [it for it in items if it["kind"] != "video"] or items
     total = len(text) or 1
     synth = sum(1 for it in text if it["stage"] == "synthesized")
     extr = sum(1 for it in text if it["stage"] == "extracted")
     failed = sum(1 for it in text if it["stage"] == "failed")
     pend = sum(1 for it in text if it["stage"] == "pending")
+    incomplete = sum(1 for it in text if it["stage"] == "incomplete")
+    held = sum(1 for it in text if it["stage"] == "held")
+    pending_review = sum(1 for it in text if it["stage"] == "pending-review")
+    quarantined = sum(len(it.get("quarantined_notes", [])) for it in text)
     notes = len(list((VAULT / "01 Permanent Notes").glob("*.md"))) if VAULT.exists() else 0
     mocs = len(list((VAULT / "00 Maps").glob("*.md"))) if VAULT.exists() else 0
 
@@ -83,7 +88,17 @@ def main() -> None:
     tag = "active work; wall-clock gated by session-limit resets" if pend == 0 else "to ingest+synthesize"
     print(f"Overall pipeline  {bar} {frac * 100:.0f}%")
     print(f"  text items {total} (videos excluded) · synthesized {synth} · ingested-queued {extr} "
-          f"· pending {pend} · failed {failed}")
+          f"· pending {pend} · failed {failed} · incomplete {incomplete} · held {held} · pending review {pending_review} · quarantined notes {quarantined}")
+    for it in text:
+        if it["stage"] == "held":
+            reasons = it.get("hold_reasons") or [it.get("error") or "no reason recorded"]
+            print(f"  held {it['id']}: " + "; ".join(str(r) for r in reasons))
+    replaced = [it["id"] for it in text if it.get("transcript_replaced_at")]
+    if replaced:
+        print(f"  transcript replaced after synthesis (notes need re-verification): {', '.join(replaced)}")
+    runs = sorted((STAGING / "runs").glob("*/summary.json"))
+    if runs:
+        print(f"  last run summary: {runs[-1]}")
     print(f"  vault: {notes} permanent notes · {mocs} MOCs · ETA {active} ({tag})")
 
 

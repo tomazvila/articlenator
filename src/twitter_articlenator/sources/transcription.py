@@ -8,6 +8,7 @@ A transcription job is a directory on disk:
         chunks/chunk_0000.wav  # fixed-length audio chunks
         chunks/chunk_0000.json # per-chunk transcript (segments, global time)
         transcript.txt|.vtt|.json
+        asr.json               # model really used, prompt, quality check result
 
 Because every step writes its state to ``manifest.json`` with an atomic
 replace, a job interrupted by a network drop, a crash, or a full server
@@ -27,6 +28,14 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 import structlog
+
+from .asr_tools import (
+    Seg,
+    assess_transcript,
+    build_sidecar,
+    model_label,
+    write_json_atomic,
+)
 
 log = structlog.get_logger()
 
@@ -122,6 +131,7 @@ class ChunkState:
     end: float
     status: str = STATUS_PENDING
     output: str | None = None  # relative path to the chunk transcript JSON
+    model: str | None = None  # model label that transcribed this chunk
 
 
 @dataclass
@@ -131,7 +141,14 @@ class Manifest:
     job_id: str
     url: str
     status: str = STATUS_PENDING
+    # The model label is set from the model file that the transcriber really
+    # loads (see ``asr_tools.model_label``). Old manifests can hold a constant
+    # label here; ``model_file`` is None for those, so readers must not trust them.
     model: str = ""
+    model_file: str | None = None
+    prompt: str | None = None
+    asr_quality: str | None = None
+    asr_issues: list[str] = field(default_factory=list)
     language: str | None = None
     chunk_seconds: float = 600.0
     duration: float | None = None
@@ -143,7 +160,11 @@ class Manifest:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Manifest":
-        chunks = [ChunkState(**c) for c in data.get("chunks", [])]
+        chunk_fields = set(ChunkState.__dataclass_fields__)
+        chunks = [
+            ChunkState(**{k: v for k, v in c.items() if k in chunk_fields})
+            for c in data.get("chunks", [])
+        ]
         known = {f for f in cls.__dataclass_fields__ if f != "chunks"}
         return cls(chunks=chunks, **{k: v for k, v in data.items() if k in known})
 
@@ -210,8 +231,18 @@ def segments_to_vtt(segments: list[Segment]) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
+def _transcriber_attr(transcriber: object, name: str) -> object:
+    return getattr(transcriber, name, None)
+
+
 class TranscriptionJob:
-    """Drive a resumable transcription job rooted at ``job_dir``."""
+    """Drive a resumable transcription job rooted at ``job_dir``.
+
+    The model label comes from the transcriber (``model_path`` or
+    ``model_name`` attribute). If the transcriber does not expose one and the
+    caller gives no ``model``, the label is ``unknown``. The job never writes
+    a constant model name.
+    """
 
     def __init__(
         self,
@@ -222,7 +253,7 @@ class TranscriptionJob:
         chunker: Chunker,
         chunk_seconds: float = 600.0,
         language: str | None = None,
-        model: str = "large-v3",
+        model: str | None = None,
     ) -> None:
         self.dir = Path(job_dir)
         self.transcriber = transcriber
@@ -230,7 +261,15 @@ class TranscriptionJob:
         self.chunker = chunker
         self.chunk_seconds = chunk_seconds
         self.language = language
-        self.model = model
+        model_path = _transcriber_attr(transcriber, "model_path")
+        self.model_file = Path(str(model_path)).name if model_path else None
+        self.model = (
+            model
+            or _transcriber_attr(transcriber, "model_name")
+            or (model_label(str(model_path)) if model_path else None)
+            or "unknown"
+        )
+        self.prompt = _transcriber_attr(transcriber, "prompt")
 
     @property
     def manifest_path(self) -> Path:
@@ -256,6 +295,8 @@ class TranscriptionJob:
                 job_id=self.dir.name,
                 url=url,
                 model=self.model,
+                model_file=self.model_file,
+                prompt=self.prompt if isinstance(self.prompt, str) else None,
                 language=self.language,
                 chunk_seconds=self.chunk_seconds,
             )
@@ -278,6 +319,11 @@ class TranscriptionJob:
             on_progress(payload)
 
         try:
+            # Fail before any download if the model file is missing. There is
+            # no fallback to another model.
+            check = _transcriber_attr(self.transcriber, "check")
+            if callable(check):
+                check()
             self._ensure_audio(manifest, progress)
             self._ensure_chunk_plan(manifest)
             self._transcribe_chunks(manifest, progress)
@@ -349,6 +395,7 @@ class TranscriptionJob:
             )
             # Checkpoint: mark done only after the output is safely on disk.
             state.output = output_rel
+            state.model = self.model
             state.status = STATUS_COMPLETE
             self._save(manifest)
             progress("chunk_complete", chunk_index=state.index)
@@ -363,6 +410,25 @@ class TranscriptionJob:
             chunk_lists.append([Segment(**s) for s in raw])
 
         segments = stitch_segments(chunk_lists)
+
+        # Record the model that really transcribed the chunks. Chunks from an
+        # older run have no label; a resume with another model gives a mix.
+        chunk_models = sorted({c.model or "unknown" for c in manifest.chunks})
+        manifest.model = chunk_models[0] if len(chunk_models) == 1 else "mixed"
+        if manifest.model != self.model:
+            manifest.model_file = None
+
+        report = assess_transcript(
+            None,
+            segments=[Seg(s.start, s.end, s.text) for s in segments],
+            duration=manifest.duration,
+        )
+        if len(chunk_models) > 1:
+            report.issues.insert(0, "chunks used different models: " + ", ".join(chunk_models))
+            report.quality = "degraded"
+        manifest.asr_quality = report.quality
+        manifest.asr_issues = list(report.issues)
+
         _atomic_write_text(self.dir / "transcript.txt", segments_to_text(segments) + "\n")
         _atomic_write_text(self.dir / "transcript.vtt", segments_to_vtt(segments))
         _atomic_write_text(
@@ -375,12 +441,28 @@ class TranscriptionJob:
                     "title": manifest.title,
                     "duration": manifest.duration,
                     "model": manifest.model,
+                    "model_file": manifest.model_file,
+                    "prompt": manifest.prompt,
+                    "asr_quality": manifest.asr_quality,
+                    "asr_issues": manifest.asr_issues,
                     "segments": [asdict(s) for s in segments],
                 },
                 indent=2,
             ),
         )
+        model_path = _transcriber_attr(self.transcriber, "model_path")
+        write_json_atomic(
+            self.dir / "asr.json",
+            build_sidecar(
+                model_path=str(model_path) if model_path and manifest.model_file else None,
+                prompt=manifest.prompt,
+                language=manifest.language,
+                report=report,
+                timestamps=True,
+                extra={"model": manifest.model, "chunk_models": chunk_models},
+            ),
+        )
         manifest.status = STATUS_COMPLETE
         manifest.error = None
         self._save(manifest)
-        progress("complete")
+        progress("complete", asr_quality=report.quality)

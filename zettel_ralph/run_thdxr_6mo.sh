@@ -15,6 +15,8 @@ ZK_DIR="$VAULT/$ZK_FOLDER"
 NWORKERS="${NWORKERS:-4}"
 
 export ZR_STAGING="$STAGING" VAULT ZK_FOLDER ZK_DIR NWORKERS
+export ZR_CONTENT=text
+STARTED="$(date +%s)"
 
 if [ -z "${X_COOKIES:-}" ] && [ -f "$HERE/staging/cookies.sh" ]; then
   # Local sensitive file, if present. The script never prints its contents.
@@ -43,7 +45,7 @@ else
   echo "using existing queue: $STAGING/queue.json"
 fi
 
-python3 "$HERE/cluster.py"
+python3 "$HERE/cluster.py" || { echo "cluster.py failed (rc=$?)" >&2; exit 1; }
 
 for pass in $(seq 1 "${SYNTH_PASSES:-60}"); do
   ready="$(python3 - "$STAGING/queue.json" <<'PY'
@@ -54,8 +56,20 @@ PY
 )"
   [ "$ready" -eq 0 ] && break
   echo "synthesis pass $pass (${ready} ready)"
-  bash "$HERE/loop_parallel.sh" || true
+  bash "$HERE/loop_parallel.sh"
+  prc=$?
+  if [ "$prc" -ne 0 ]; then
+    echo "synthesis pass $pass exited with rc=$prc - stopping before the review" >&2
+    exit "$prc"
+  fi
 done
 
-bash "$HERE/review_loop.sh" || true
-python3 "$HERE/progress.py" || true
+bash "$HERE/review_loop.sh"
+rrc=$?
+[ "$rrc" -ne 0 ] && echo "review loop exited with rc=$rrc" >&2
+python3 "$HERE/progress.py" || echo "progress.py failed" >&2
+# shellcheck source=run_lib.sh
+. "$HERE/run_lib.sh"
+zr_report_runs "$STAGING" "$STARTED"
+src=$?
+[ "$rrc" -eq 0 ] && [ "$src" -eq 0 ]

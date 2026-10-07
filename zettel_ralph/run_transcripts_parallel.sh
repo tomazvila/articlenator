@@ -7,6 +7,10 @@
 #   nix develop
 #   NWORKERS=6 bash zettel_ralph/run_transcripts_parallel.sh
 #
+# Ingest runs a transcript quality check. A degraded transcript (whisper loop, missing
+# speech) gets queue stage 'held' and is not synthesized. To queue it anyway, add
+# --allow-degraded (or set ALLOW_DEGRADED=1). See staging/ingest_report.json.
+#
 # Resumable: re-running reclaims any shard a crashed worker left 'claimed' and continues.
 set -uo pipefail
 
@@ -24,13 +28,32 @@ export ZK_FOLDER="${ZK_FOLDER:-Video Transcripts Zettelkasten}"
 export AGENTS_FILE="$HERE/AGENTS_transcript.md"
 export NWORKERS="${NWORKERS:-6}"
 
-echo "== Phase A: ingest local video transcripts =="
-python3 "$HERE/ingest_transcripts.py" "$@"
+echo "== Phase A: ingest local video transcripts -> $ZR_STAGING =="
+python3 "$HERE/ingest_transcripts.py" "$@" || { echo "ingest failed (rc=$?) - stopping before synthesis" >&2; exit 1; }
 
-echo "== Phase B (parallel: $NWORKERS workers): synthesis -> $ZK_FOLDER =="
+STARTED="$(date +%s)"
+# shellcheck source=run_lib.sh
+. "$HERE/run_lib.sh"
+export ZR_CONTENT=video
+
+echo "== Phase B: synthesis -> $ZK_FOLDER =="
 bash "$HERE/loop_parallel.sh"
+brc=$?
+# 0 = all units done; 2 = iteration cap; 3 = no progress (API down?). Any other value
+# than 0 stops the run before the review.
+if [ "$brc" -ne 0 ]; then
+  echo "synthesis loop exited with rc=$brc - no review on a failed synthesis run" >&2
+  zr_report_runs "$ZR_STAGING" "$STARTED"
+  exit "$brc"
+fi
 
-echo "== Phase C: review Ralph loop (MOCs, Home, dedup cleanup, strict validate) =="
+echo "== Phase C: review Ralph loop =="
 bash "$HERE/review_loop.sh"
+rrc=$?
+[ "$rrc" -ne 0 ] && echo "review loop exited with rc=$rrc (final strict validation failed or iteration cap)" >&2
 
-echo "== done =="
+echo "== run summaries =="
+zr_report_runs "$ZR_STAGING" "$STARTED"
+src=$?
+echo "== done (synthesis rc=$brc, review rc=$rrc, summaries rc=$src) =="
+[ "$brc" -eq 0 ] && [ "$rrc" -eq 0 ] && [ "$src" -eq 0 ]

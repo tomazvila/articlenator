@@ -1,0 +1,89 @@
+=====NOTE: Tomas Brink Advises His Athletes To Leave At Least 48 Hours Between Two Hard Finger Sessions | repairs: Rest And Warm-Up Rules For Hangboard Training.md | bullets: b1,b2,b3=====
+---
+type: permanent note
+created: 2026-10-04
+status: expanded
+tags: [calisthenics, finger-training, zettelkasten, permanent-note]
+sources:
+  - id: vid-EXAMPLE0002
+    url: https://www.youtube.com/watch?v=EXAMPLE0002
+    speaker: "Tomas Brink"
+    channel: "Tomas Brink Climbing"
+scope:
+  skill: "hard finger sessions"
+  level: "my athletes"
+  equipment: "not stated"
+  basis: "general rule"
+  modality: "recommendation"
+  quantities:
+    - value: "at least 48 hours"
+      period: "not stated"
+verification: unverified
+---
+
+# Tomas Brink Advises His Athletes To Leave At Least 48 Hours Between Two Hard Finger Sessions
+
+Tomas Brink tells his athletes to leave at least 48 hours between two hard finger sessions. [src: vid-EXAMPLE0002 @ 01:40]
+
+## Details
+
+- He tells his athletes to leave at least 48 hours between two hard finger sessions. [src: vid-EXAMPLE0002 @ 01:40]
+- The days in between are for easy mileage on big holds. [src: vid-EXAMPLE0002 @ 01:47]
+
+## Evidence
+
+- vid-EXAMPLE0002 @ 01:40 (Tomas Brink): "I tell my athletes to leave at least 48 hours between two hard finger sessions."
+- vid-EXAMPLE0002 @ 01:47 (Tomas Brink): "The days in between are for easy mileage on big holds."
+
+
+## Connected Ideas
+
+- [[Mara Kell Allows Hard Finger Sessions On Back To Back Days If They Stay Under 20 Minutes]] — other speaker, different value.
+- [[Tomas Brink Predicts That Most People Add One Grade After About Six Weeks On His Plan]] — another note from the same video.
+=====NOTE: Tomas Brink Advises Warming Up Properly Before Hangs | repairs: Rest And Warm-Up Rules For Hangboard Training.md | bullets: b3=====
+---
+type: permanent note
+created: 2026-10-04
+status: expanded
+tags: [calisthenics, finger-training, zettelkasten, permanent-note]
+sources:
+  - id: vid-EXAMPLE0002
+    url: https://www.youtube.com/watch?v=EXAMPLE0002
+    speaker: "Tomas Brink"
+    channel: "Tomas Brink Climbing"
+scope:
+  skill: "warm up"
+  level: "not stated"
+  equipment: "not stated"
+  basis: "general rule"
+  modality: "recommendation"
+  quantities: []
+verification: unverified
+---
+
+# Tomas Brink Advises Warming Up Properly Before Hangs
+
+Tomas Brink says "So warm up properly." [src: vid-EXAMPLE0002 @ 04:50]
+
+## Details
+
+- He advises to warm up properly. [src: vid-EXAMPLE0002 @ 04:50]
+
+## Evidence
+
+- vid-EXAMPLE0002 @ 04:30 (Tomas Brink): "Let's say you skip the warm-up hangs, that's when a pulley goes."
+- vid-EXAMPLE0002 @ 04:50 (Tomas Brink): "So warm up properly."
+
+## Example From The Source
+
+His example: "Let's say you skip the warm-up hangs, that's when a pulley goes." [src: vid-EXAMPLE0002 @ 04:30]
+
+## Connected Ideas
+
+- [[Tomas Brink Requires 20 Seconds Two-Armed On The 20 Millimeter Edge Before One-Arm Hangs]] — another rule of the same plan.
+=====BULLETS=====
+Rest And Warm-Up Rules For Hangboard Training.md#b1 | corrected in Tomas Brink Advises His Athletes To Leave At Least 48 Hours Between Two Hard Finger Sessions
+Rest And Warm-Up Rules For Hangboard Training.md#b2 | kept in Tomas Brink Advises His Athletes To Leave At Least 48 Hours Between Two Hard Finger Sessions
+Rest And Warm-Up Rules For Hangboard Training.md#b3 | kept in Tomas Brink Advises His Athletes To Leave At Least 48 Hours Between Two Hard Finger Sessions; Tomas Brink Advises Warming Up Properly Before Hangs
+Rest And Warm-Up Rules For Hangboard Training.md#b4 | dropped: not in this transcript
+Rest And Warm-Up Rules For Hangboard Training.md#b5 | dropped: not in this transcript

@@ -33,7 +33,7 @@ from _lock import state_lock
 
 HERE = Path(__file__).resolve().parent
 WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]")
-REVIEW_PASSES = frozenset({"atomicity", "linking", "source-free"})
+REVIEW_PASSES = frozenset({"source-check", "atomicity", "linking", "source-free"})
 RETIREMENT_JOURNAL = ".retire-note-transaction.json"
 
 
@@ -124,7 +124,12 @@ def _vault_note(vault: Path, note: str, *, must_exist: bool = True) -> Path:
 
 
 def provenance_report(staging: Path, note: str) -> dict[str, Any]:
-    provenance = _read_json(staging / "provenance.json")
+    """Sources of one note from provenance.json plus the harness log provenance.jsonl."""
+    import provenance as provenance_store
+
+    if not (staging / "provenance.json").exists() and not provenance_store.jsonl_path(staging).exists():
+        raise MaintenanceError(f"no provenance.json or provenance.jsonl under {staging}")
+    provenance = provenance_store.merged_map(staging)
     key = _note_key(list(provenance), note)
     sources = provenance.get(key, [])
     if not isinstance(sources, list):
@@ -434,6 +439,15 @@ def retire_note(vault: Path, staging: Path, note: str, *, apply: bool = False) -
                 shutil.copy2(note_path, retired_path)
             _atomic_write_json(index_path, current_index)
             _atomic_write_json(provenance_path, current_provenance)
+            # provenance.jsonl is append-only: record the retirement, never delete lines.
+            import provenance as provenance_store
+
+            provenance_store.append_jsonl(
+                provenance_store.jsonl_path(staging),
+                {"ts": provenance_store.now_iso(), "event": "note-retired", "note": str(relative)},
+                staging,
+                lock=False,  # this block already holds state_lock(staging)
+            )
             if note_path.exists():
                 note_path.unlink()
             journal_path.unlink()
@@ -508,31 +522,31 @@ def _vault(value: str | None) -> Path:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    provenance = commands.add_parser("provenance", help="show source IDs recorded for one note")
+    provenance = commands.add_parser("provenance", help="show source IDs recorded for one note", allow_abbrev=False)
     provenance.add_argument("--staging")
     provenance.add_argument("--note", required=True)
 
-    links = commands.add_parser("links", help="show incoming, outgoing, and reciprocal links")
+    links = commands.add_parser("links", help="show incoming, outgoing, and reciprocal links", allow_abbrev=False)
     links.add_argument("--vault")
     links.add_argument("--note", required=True)
 
-    squeeze = commands.add_parser("squeeze", help="list topics awaiting a Map of Content")
+    squeeze = commands.add_parser("squeeze", help="list topics awaiting a Map of Content", allow_abbrev=False)
     squeeze.add_argument("--report", required=True, help="JSON emitted by validate.py --squeeze")
 
-    retire = commands.add_parser("retire-note", help="archive a note and remove staging metadata")
+    retire = commands.add_parser("retire-note", help="archive a note and remove staging metadata", allow_abbrev=False)
     retire.add_argument("--vault")
     retire.add_argument("--staging")
     retire.add_argument("--note", required=True)
     retire.add_argument("--apply", action="store_true", help="perform the planned removal")
 
-    status = commands.add_parser("review-status", help="show one review-queue entry")
+    status = commands.add_parser("review-status", help="show one review-queue entry", allow_abbrev=False)
     status.add_argument("--staging")
     status.add_argument("--note", required=True)
 
-    mark = commands.add_parser("review-mark", help="mark one review pass complete")
+    mark = commands.add_parser("review-mark", help="mark one review pass complete", allow_abbrev=False)
     mark.add_argument("--staging")
     mark.add_argument("--note", required=True)
     mark.add_argument("--pass", dest="review_pass", required=True, choices=sorted(REVIEW_PASSES))

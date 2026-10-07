@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ..config import Config, get_config
 from ..pdf.generator import PACKAGING_COMBINED, generate_pdfs
+from .asr_tools import model_label, require_model_file
 from .base import Article
 from .channel_transcription import ChannelJob
 from .transcription_service import build_job, resolve_cookie_file
@@ -33,12 +34,17 @@ def build_channel_job(
     published_after: str | None = None,
     title_contains: str | None = None,
     cookie_store: YouTubeCookieStore | None = None,
+    asr_prompt: str | None = None,
 ) -> ChannelJob:
     """Construct a ChannelJob backed by yt-dlp + the per-video whisper pipeline.
 
     ``published_after`` (YYYYMMDD) limits enumeration to videos uploaded on/after
     that date; ``title_contains`` keeps only videos whose title contains the
     string (case-insensitive). Both are optional and combinable.
+
+    ``asr_prompt`` is the whisper initial prompt for every video of this job.
+    If it is None, the job uses ``config.whisper_prompt``. The job stops with
+    an error in its manifest if the model file is missing.
     """
     config = config or get_config()
     legacy_cookie_file = resolve_cookie_file(config) if cookie_store is None else None
@@ -64,8 +70,13 @@ def build_channel_job(
             timeout_seconds=CHANNEL_ENUMERATION_TIMEOUT,
         )
 
+    prompt = asr_prompt if asr_prompt is not None else config.whisper_prompt
+
     def transcriber_factory(video_dir: Path):
-        return build_job(video_dir, config=config, cookie_store=cookie_store)
+        return build_job(video_dir, config=config, cookie_store=cookie_store, prompt=prompt)
+
+    def preflight() -> None:
+        require_model_file(config.whisper_model_path, setting="TWITTER_ARTICLENATOR_WHISPER_MODEL")
 
     def pdf_builder(articles: list[Article], pkg: str) -> list[Path]:
         return generate_pdfs(articles, output_dir=job_dir, packaging=pkg)
@@ -78,4 +89,7 @@ def build_channel_job(
         packaging=packaging,
         published_after=published_after,
         title_contains=title_contains,
+        preflight=preflight,
+        asr_model=model_label(config.whisper_model_path),
+        asr_prompt=prompt,
     )

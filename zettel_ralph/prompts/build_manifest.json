@@ -1,0 +1,231 @@
+{
+  "version": 1,
+  "prompts": {
+    "prompts/inventory_single.md": {
+      "single": {
+        "sha256": "bf718f97142f1d06899952b3a68cafeeac5f7b532d7c4f13deb6fd9d27373141",
+        "words": 759,
+        "includes": [
+          {
+            "anchor": "transcript-input",
+            "heading": "1. Transcript input"
+          }
+        ]
+      }
+    },
+    "prompts/synth_single.md": {
+      "single": {
+        "sha256": "8a824f4e9e4560e033623bd53311f8e3ae47b630ed86258f2959e9ec84863043",
+        "words": 4127,
+        "includes": [
+          {
+            "anchor": "frontmatter",
+            "heading": "2. Note frontmatter"
+          },
+          {
+            "anchor": "speaker",
+            "heading": "3. Speaker"
+          },
+          {
+            "anchor": "title",
+            "heading": "4. Title"
+          },
+          {
+            "anchor": "body",
+            "heading": "5. Body"
+          },
+          {
+            "anchor": "must-not-contain",
+            "heading": "6. What a note must not contain"
+          },
+          {
+            "anchor": "disagreement",
+            "heading": "7.3 Disagreement"
+          },
+          {
+            "anchor": "no-note",
+            "heading": "10. No note and skip records"
+          },
+          {
+            "anchor": "quote-match",
+            "heading": "11. Quote match rule"
+          },
+          {
+            "anchor": "note-skeleton",
+            "heading": "15. Note skeleton"
+          }
+        ]
+      }
+    },
+    "prompts/synth_onecall.md": {
+      "single": {
+        "sha256": "3ec4735b9608f9cad79313d4bca0c3963315ca5dbd5c2985f0d6464b643c6dd0",
+        "words": 4058,
+        "includes": [
+          {
+            "anchor": "transcript-input",
+            "heading": "1. Transcript input"
+          },
+          {
+            "anchor": "frontmatter",
+            "heading": "2. Note frontmatter"
+          },
+          {
+            "anchor": "speaker",
+            "heading": "3. Speaker"
+          },
+          {
+            "anchor": "title",
+            "heading": "4. Title"
+          },
+          {
+            "anchor": "body",
+            "heading": "5. Body"
+          },
+          {
+            "anchor": "must-not-contain",
+            "heading": "6. What a note must not contain"
+          },
+          {
+            "anchor": "disagreement",
+            "heading": "7.3 Disagreement"
+          },
+          {
+            "anchor": "no-note",
+            "heading": "10. No note and skip records"
+          },
+          {
+            "anchor": "quote-match",
+            "heading": "11. Quote match rule"
+          },
+          {
+            "anchor": "note-skeleton",
+            "heading": "15. Note skeleton"
+          }
+        ]
+      }
+    },
+    "prompts/repair_drop_check.md": {
+      "single": {
+        "sha256": "79c04d6ba66019ab50f732f3cba6fcd582dc86af76a2698c2d238d3a43e1e523",
+        "words": 463,
+        "includes": [
+          {
+            "anchor": "note-skeleton",
+            "heading": "15. Note skeleton"
+          }
+        ]
+      }
+    },
+    "prompts/fix_single.md": {
+      "single": {
+        "sha256": "d0f03d44323fc5564ec2e0c50a0a26a30cb5fc4e4a81cce7ba9461eeb28a88f1",
+        "words": 4207,
+        "includes": [
+          {
+            "anchor": "fix-actions",
+            "heading": "12.1 Check results and what to do"
+          },
+          {
+            "anchor": "review-verdicts",
+            "heading": "9. Review verdicts"
+          },
+          {
+            "anchor": "frontmatter",
+            "heading": "2. Note frontmatter"
+          },
+          {
+            "anchor": "speaker",
+            "heading": "3. Speaker"
+          },
+          {
+            "anchor": "title",
+            "heading": "4. Title"
+          },
+          {
+            "anchor": "body",
+            "heading": "5. Body"
+          },
+          {
+            "anchor": "must-not-contain",
+            "heading": "6. What a note must not contain"
+          },
+          {
+            "anchor": "disagreement",
+            "heading": "7.3 Disagreement"
+          },
+          {
+            "anchor": "quote-match",
+            "heading": "11. Quote match rule"
+          },
+          {
+            "anchor": "note-skeleton",
+            "heading": "15. Note skeleton"
+          }
+        ]
+      }
+    },
+    "prompts/repair_single.md": {
+      "single": {
+        "sha256": "5c915d42c8222b1a33bb7304aff3363bb237c84a736b01a03f154ad0513f1ca8",
+        "words": 4557,
+        "includes": [
+          {
+            "anchor": "repair",
+            "heading": "13. Repairing an old note (for repair runs; synthesis skips this section)"
+          },
+          {
+            "anchor": "transcript-input",
+            "heading": "1. Transcript input"
+          },
+          {
+            "anchor": "frontmatter",
+            "heading": "2. Note frontmatter"
+          },
+          {
+            "anchor": "speaker",
+            "heading": "3. Speaker"
+          },
+          {
+            "anchor": "title",
+            "heading": "4. Title"
+          },
+          {
+            "anchor": "body",
+            "heading": "5. Body"
+          },
+          {
+            "anchor": "must-not-contain",
+            "heading": "6. What a note must not contain"
+          },
+          {
+            "anchor": "disagreement",
+            "heading": "7.3 Disagreement"
+          },
+          {
+            "anchor": "quote-match",
+            "heading": "11. Quote match rule"
+          },
+          {
+            "anchor": "note-skeleton",
+            "heading": "15. Note skeleton"
+          }
+        ]
+      }
+    },
+    "prompts/source_check.md": {
+      "single": {
+        "sha256": "f43d7a3adc39f90ea22922ab313f6edbd896e688fd07852b876aea9a4ae956d1",
+        "words": 676,
+        "includes": []
+      }
+    },
+    "NOTE_CONTRACT.md": {
+      "agent": {
+        "sha256": "e5e6c61737046ab5632f59515e7edf108f5636a093c771a4b7098731e1eb837c",
+        "words": 8217,
+        "includes": []
+      }
+    }
+  }
+}

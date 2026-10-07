@@ -1,68 +1,72 @@
-# NOTE_TEMPLATE.md — exact output format (single source of truth)
+# NOTE_TEMPLATE.md — folders, tweet/article notes, MOCs, Home
 
-`validate.py`, `prompts/synthesis.md`, and `prompts/review.md` all defer to this file.
-Formats mirror the proven `Andrew Torba AI Programming Zettelkasten`.
+**Video transcript notes are defined only in `NOTE_CONTRACT.md`** (format, rules, fold
+rule, disagreement, repair). This file does not repeat that format. It gives the folder
+layout, the tweet/article note format, the MOC format and the Home format.
 
 ## Folder layout (inside `"$ZK_DIR"`)
 ```
-Home.md                     type: index
-00 Maps/MOC <Topic>.md      type: map note
+Home.md                               type: index
+00 Maps/MOC <Topic>.md                type: map note
 01 Permanent Notes/<Claim Title>.md   type: permanent note
-02 Examples/Grounded Examples.md      type: example index
 03 Reviews/<Pass> Summary.md          type: review
 ```
 
-## Permanent note (the unit of work)
+(`02 Examples/` is an old folder. Do not write to it.)
+
+## Permanent note from a tweet or an article
 ```markdown
 ---
 type: permanent note
 created: 2026-06-22
 status: expanded
-verification: unverified   # OPTIONAL: unverified (1 source/contested) | corroborated (>=2 sources)
+verification: unverified
 tags:
-  - <broad-domain>        # exactly one: ai | markets | geopolitics | language-learning | ...
-  - <fine-topic>          # >=1 fine topic tag (MOCs form around these): e.g. agent-harnesses
+  - <broad-domain>        # exactly one: ai | markets | geopolitics | calisthenics | ...
+  - <fine-topic>          # >=1 fine topic tag (MOCs form around these)
   - zettelkasten
   - permanent-note
 ---
 
-# <A Declarative Claim, Title Case, Unique, == filename>
+# <A Claim With Its Conditions, Title Case, Unique, == filename>
 
-<One sentence stating the claim in your own words.>
+<One sentence stating the claim and its conditions.>
 
 ## Why This Matters
-<1–2 sentences on the real consequence/stakes. Never restate the title or write
-"`X` matters because…".>
+<Only a consequence that the source states. If the source states none, omit this section.>
 
 ## Details
-- <Supporting point, own words.>
-- <Supporting point.>
-- <Nuance, condition, or counter-case.>
+- <Supporting point from the source.>
+- <Condition or limit that the source states.>
 
-## Grounded Example
-<A concrete, specific instance that makes the claim tangible. No quotes.>
+## Example From The Source
+<Only if the source gives a concrete example. If not, omit this section.>
 
 ## Connected Ideas
-- [[Another Permanent Note]] — <why it connects: the link context sentence.>
-- [[A Contrasting Note]] — <how it tensions or qualifies this one.>
+- [[Another Permanent Note]] — <why it connects.>
 - [[MOC <Topic>]]
 ```
 
-### Rules for permanent notes
-- **One claim.** If you wrote two claims, make two notes. Atomic notes stay short
-  (~3–6 Details bullets, body well under ~220 words); `validate.py` warns on fat notes.
-- **Grounded Example is mandatory** (a hard vault standard). If the source has no concrete
-  instance, construct a plausible specific scenario — never empty, never a restatement.
-- **Links:** ≥1 resolvable wikilink; prefer a `— why it connects` clause (an intentional
-  improvement over the source vault's bare links). A bare link is allowed; link spam is not.
-- **Own words** — never paste or lightly reword source text.
-- **No provenance** in the body or frontmatter. (Source IDs go to `provenance.json`.)
-- `status`: `expanded` when first written; review passes may promote to `reviewed`.
-- Link to at least one `[[MOC <Topic>]]` once that MOC exists.
+Rules for tweet and article notes:
+- One claim with its conditions per note.
+- Only the source: no mechanism, number, explanation or example that it does not contain.
+- Numbers as in the source, with unit and period. Never convert, round or combine.
+- ≥1 resolvable wikilink with a context clause. A linked note is not a source.
+- Source ids go to the index through `index_add.py --source <id>`; no `x.com`,
+  `twitter.com` or `t.co` URLs in the body.
+- `verification: unverified` when written. `status: expanded`; the mechanical review
+  pass sets `reviewed`.
 
-## Tension note (when two sources contradict)
-Use when a claim contradicts an existing note. Never fold a contradiction into an asserting
-note. The title names the disagreement; the body holds both sides fairly.
+### Fold (old rule, tweets and articles only)
+When `index_query.py --kind tweet` returns a note with the SAME claim (not only shared
+words, same domain): add the new detail as a bullet under `## Details` or as a Connected
+Ideas link, and run `index_add.py --title "<that note>" --file "<its path>" --source <id>
+--claim-inc`. If the note now holds two claims, split it. `claim_count` does not change
+`verification`.
+
+### Tension note (tweets and articles)
+When a claim contradicts an existing note, never fold it in. Write a tension note:
+
 ```markdown
 ---
 type: permanent note
@@ -76,28 +80,30 @@ tags:
   - tension
 ---
 
-# <Claim A And Claim Not-A Are Both Argued; The Disagreement Turns On X>
+# <Source A Says X; Source B Says Not-X For <Scope>>
 
-Two defensible positions exist on <topic>; which holds depends on <the axis X>.
-
-## Why This Matters
-<Why the disagreement matters / what it changes downstream.>
+Two sources disagree on <topic> for <scope>.
 
 ## Details
-- The case for A: <own words.>
-- The case for not-A: <own words.>
-- The crux: <the assumption or evidence that decides between them.>
-
-## Grounded Example
-<A concrete situation where the axis X tips the answer one way.>
+- Source A: <its claim, its conditions, its numbers as written.>
+- Source B: <its claim, its conditions, its numbers as written.>
 
 ## Connected Ideas
-- [[Note Asserting A]] — <its position and its strongest support.>
-- [[Note Asserting Not-A]] — <its position and where it conflicts.>
-- [[MOC <Topic>]]
+- [[Note Asserting A]] — <its position.>
+- [[Note Asserting Not-A]] — <its position.>
 ```
 
+Never average two values. Never decide which side is correct.
+
 ## MOC / map note (built at the ~5-note squeeze point)
+
+Rules (also `NOTE_CONTRACT.md` section 8):
+- Notes from more than one speaker or author: one `##` heading per speaker.
+- Notes that disagree: a pair under `## Disagreements`, with both speaker names.
+- A MOC line repeats or shortens the note title. It never merges claims of two speakers
+  into one sentence and never adds a claim.
+- One speaker only: sub-theme headings are allowed; the first line names the speaker.
+
 ```markdown
 ---
 type: map note
@@ -111,16 +117,19 @@ tags:
 
 # MOC <Topic>
 
-Entry point for notes in this topic.
+Entry point for notes in this topic. Notes are grouped by speaker.
 
-## <Sub-theme>
-- [[Note A]] — <one-line context.>
-- [[Note B]] — <one-line context.>
+## <Speaker A>
+- [[Note A1]] — <one-line context.>
+
+## <Speaker B>
+- [[Note B1]] — <one-line context.>
+
+## Disagreements
+- [[Note A1]] (<Speaker A>) vs [[Note B1]] (<Speaker B>) — <the quantity or rule that differs.>
 ```
 
-## Home.md (two-level domain index — list MOCs grouped by domain, NOT every note)
-A multi-domain corpus would make a flat "list every note" Home unreadable. Home lists
-domains → their MOCs only; never individual permanent notes.
+## Home.md (two-level domain index — MOCs grouped by domain, NOT every note)
 ```markdown
 ---
 type: index
@@ -129,26 +138,14 @@ status: reviewed
 tags: [zettelkasten, index]
 ---
 
-# Twitter Bookmarks Knowledge Base
+# <Vault Name>
 
-Reusable Zettelkasten concepts distilled from bookmarked threads and articles,
-written source-free with no raw provenance backlinks.
+<One sentence on what the vault holds. For a video vault: notes from video transcripts,
+each with its speaker, its video and verbatim evidence.>
 
-## AI & Agents
-- [[MOC Agent Harnesses]]
-- [[MOC Context Engineering]]
+## <Domain 1>
+- [[MOC <Topic>]]
 
-## Markets
-- [[MOC Semiconductor Supply Chain]]
-
-## Geopolitics
+## <Domain 2>
 - [[MOC <Topic>]]
 ```
-
-## Folding a claim into an existing note (dedup path)
-When `index_query.py` returns a matching concept:
-- Add the new nuance as a bullet under `## Details`, or a new `## Connected Ideas` link
-  with context — do **not** create a near-duplicate note.
-- Record the source with `index_add.py --title "<that note>" --file "<its path>"
-  --source <id> --claim-inc`; once `claim_count >= 2` promote `verification: corroborated`.
-- If the existing note now carries two distinct claims, **split it** (atomicity wins).

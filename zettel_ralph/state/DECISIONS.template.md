@@ -11,9 +11,11 @@ short — only rulings that should bind future iterations. One line each.
 - <e.g. valuation calls per ticker are folded into one note per company, not per tweet>
 
 ## Cross-cutting patterns
-- Opposing claims use the tension-note pattern (NOTE_TEMPLATE.md), never silent folding.
-- Single-source/contested claims are `verification: unverified` until a 2nd independent
-  source folds in.
+- Video notes: `NOTE_CONTRACT.md` is the rule. It overrides any line in this file.
+  Disagreements go into the NEW note's `## Disagreement` plus `note_link.py`.
+- Tweet/article notes: opposing claims use the tension-note pattern (NOTE_TEMPLATE.md),
+  never silent folding.
+- Every note is written with `verification: unverified`. Only the harness changes it.
 
 ## Intentional divergences from the source (Andrew Torba) vault — decided, do not "fix"
 - Links MAY carry a `— why it connects` clause (the source vault uses bare links). Bare
@@ -23,6 +25,8 @@ short — only rulings that should bind future iterations. One line each.
 
 ## Tag vocabulary — two levels (keep consistent)
 - Broad domains (exactly one per note): ai, agents, markets, finance, semiconductors,
-  hardware, software, geopolitics, language-learning, health, personal, crypto, science.
+  hardware, software, geopolitics, language-learning, health, personal, crypto, science,
+  calisthenics.
 - Fine topics (>=1 per note; MOCs form around these): e.g. agent-harnesses,
-  context-engineering, valuation, export-controls, spaced-repetition, ...
+  context-engineering, valuation, export-controls, spaced-repetition, isometric-volume,
+  training-frequency, training-to-failure, planche-progression, front-lever, ...

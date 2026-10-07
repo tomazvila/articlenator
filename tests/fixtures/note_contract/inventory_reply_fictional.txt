@@ -1,0 +1,11 @@
+=====CLAIMS=====
+C1 | 00:00 | intro: the video is about finger strength without injuries | other
+C2 | 01:40 | leave at least 48 hours between two hard finger sessions (advice to his athletes) | recommendation
+C3 | 01:47 | the days in between are for easy mileage on big holds | recommendation
+C4 | 03:10 | after about six weeks on this plan most people add one grade | prediction
+C5 | 03:40 | no one-arm hangs before 20 seconds two-armed on the 20 millimeter edge | benchmark
+C6 | 04:05 | a fourth session in the off-season is an option | option
+C7 | 04:30 | let's say you skip the warm-up hangs, then a pulley goes | anecdote
+C8 | 04:50 | warm up properly | recommendation
+=====SPEAKERS=====
+S1 | Tomas Brink | solo | "Welcome back. Today, finger strength without injuries." 00:00

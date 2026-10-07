@@ -14,6 +14,7 @@ from pathlib import Path
 
 import structlog
 
+from .asr_tools import model_label, require_model_file
 from .transcription import AudioInfo, ChunkSpec, Segment
 
 log = structlog.get_logger()
@@ -208,7 +209,12 @@ def parse_whisper_json(json_path: Path) -> list[Segment]:
 
 
 class WhisperCppTranscriber:
-    """Transcribe audio chunks by shelling out to whisper.cpp's ``whisper-cli``."""
+    """Transcribe audio chunks by shelling out to whisper.cpp's ``whisper-cli``.
+
+    ``prompt`` is an optional initial prompt (``--prompt``). Use it for domain
+    vocabulary, for example exercise names. ``model_name`` is the label of the
+    model file, so the job manifest records the model that really ran.
+    """
 
     def __init__(
         self,
@@ -217,15 +223,27 @@ class WhisperCppTranscriber:
         whisper_bin: str = "whisper-cli",
         threads: int | None = None,
         timeout_seconds: int = 14400,
+        prompt: str | None = None,
+        model_setting: str = "TWITTER_ARTICLENATOR_WHISPER_MODEL",
     ) -> None:
         self.model_path = Path(model_path)
         self.whisper_bin = whisper_bin
         self.threads = threads
         self.timeout_seconds = timeout_seconds
+        self.prompt = prompt or None
+        self.model_setting = model_setting
+
+    @property
+    def model_name(self) -> str:
+        """Label of the configured model file (for example ``large-v3``)."""
+        return model_label(self.model_path)
+
+    def check(self) -> None:
+        """Raise ``WhisperModelMissingError`` if the model file does not exist."""
+        require_model_file(self.model_path, setting=self.model_setting)
 
     def transcribe(self, audio_path: Path, *, language: str | None = None) -> list[Segment]:
-        if not self.model_path.exists():
-            raise FileNotFoundError(f"whisper model not found: {self.model_path}")
+        self.check()
 
         output_prefix = audio_path.with_suffix("")
         cmd = [
@@ -243,6 +261,8 @@ class WhisperCppTranscriber:
         ]
         if self.threads:
             cmd.extend(["-t", str(self.threads)])
+        if self.prompt:
+            cmd.extend(["--prompt", self.prompt])
 
         # Decode tolerantly: whisper-cli can emit non-UTF-8 bytes for music /
         # no-speech audio, which would otherwise crash a strict decode.

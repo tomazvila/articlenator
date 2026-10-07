@@ -24,6 +24,10 @@ INGEST_ATTEMPTS="${INGEST_ATTEMPTS:-40}"
 SYNTH_PASSES="${SYNTH_PASSES:-60}"
 BACKOFF="${BACKOFF:-30}"
 export VAULT ZK_FOLDER ZK_DIR NWORKERS HERE STAGING
+export ZR_CONTENT=text
+STARTED="$(date +%s)"
+# shellcheck source=run_lib.sh
+. "$HERE/run_lib.sh"
 
 log() { echo "[$(date '+%F %T')] $*"; }
 
@@ -54,7 +58,7 @@ if [ -z "${SKIP_INGEST:-}" ]; then
     before="$(count pending)"
     [ "$before" -eq 0 ] && { log "ingest: nothing pending"; break; }
     log "ingest attempt $a/$INGEST_ATTEMPTS ($before non-video pending)"
-    python3 "$HERE/ingest.py" --bookmarks "$BOOKMARKS" || true
+    python3 "$HERE/ingest.py" --bookmarks "$BOOKMARKS" || log "ingest.py exited with rc=$? (the stale counter below decides)"
     after="$(count pending)"
     if [ "$after" -ge "$before" ]; then
       stale=$((stale + 1))
@@ -70,18 +74,31 @@ else
 fi
 
 # --- Phase A2: cluster (deterministic, idempotent) --- #
-log "clustering tweets"; python3 "$HERE/cluster.py" || true
+log "clustering tweets"
+python3 "$HERE/cluster.py" || { log "cluster.py failed (rc=$?) - stopping"; exit 1; }
 
 # --- Phase B: parallel synthesis; re-run until nothing is ready (crash recovery) --- #
 for a in $(seq 1 "$SYNTH_PASSES"); do
   ready="$(count extracted claimed)"
   [ "$ready" -eq 0 ] && { log "synthesis: complete"; break; }
   log "synthesis pass $a/$SYNTH_PASSES ($ready items ready)"
-  NWORKERS="$NWORKERS" bash "$HERE/loop_parallel.sh" || true
+  NWORKERS="$NWORKERS" bash "$HERE/loop_parallel.sh"
+  prc=$?
+  if [ "$prc" -ne 0 ]; then
+    log "synthesis pass $a exited with rc=$prc - stopping before the review; see the run summary"
+    zr_report_runs "$STAGING" "$STARTED"
+    exit "$prc"
+  fi
 done
 
 # --- Phase C: review (item-batched, resumable) --- #
-log "review phase"; bash "$HERE/review_loop.sh" || true
+log "review phase"
+bash "$HERE/review_loop.sh"
+rrc=$?
+[ "$rrc" -ne 0 ] && log "review loop exited with rc=$rrc"
 
 log "=== run complete ==="
-python3 "$HERE/progress.py" || true
+python3 "$HERE/progress.py" || log "progress.py failed"
+zr_report_runs "$STAGING" "$STARTED"
+src=$?
+[ "$rrc" -eq 0 ] && [ "$src" -eq 0 ]

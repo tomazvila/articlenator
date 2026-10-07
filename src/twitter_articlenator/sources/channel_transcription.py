@@ -52,6 +52,9 @@ Enumerator = Callable[[str], ChannelInfo]
 TranscriberFactory = Callable[[Path], TranscriptionJob]
 PdfBuilder = Callable[[list[Article], str], list[Path]]
 ProgressCallback = Callable[[dict], None]
+# Runs once before enumeration; raises to stop the job (for example, a missing
+# whisper model file). The error is saved in the manifest.
+Preflight = Callable[[], None]
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
@@ -66,6 +69,14 @@ class VideoEntry:
     status: str = STATUS_PENDING
     error: str | None = None
     upload_date: str | None = None  # YYYYMMDD when known
+    duration: float | None = None  # seconds, from enumeration when known
+    # Operator override: speakers in this video, main speaker first. Ingest
+    # uses the channel owner when this is None.
+    speakers: list[str] | None = None
+    # Copied from the per-video transcription manifest when the video is done.
+    asr_model: str | None = None
+    asr_quality: str | None = None
+    asr_issues: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -81,6 +92,14 @@ class ChannelManifest:
     packaging: str = PACKAGING_COMBINED
     published_after: str | None = None  # YYYYMMDD date-window filter, if any
     title_contains: str | None = None  # case-insensitive title filter, if any
+    # Main speaker of the channel. Ingest uses ``channel_title`` when None.
+    channel_owner: str | None = None
+    # Maps a speaker name form to its display name, for example
+    # {"saša venos": "SasaVenos"}.
+    speaker_aliases: dict[str, str] = field(default_factory=dict)
+    # Whisper settings for this job (recorded for audit).
+    asr_model: str | None = None
+    asr_prompt: str | None = None
     videos: list[VideoEntry] = field(default_factory=list)
     pdf_files: list[str] = field(default_factory=list)
     error: str | None = None
@@ -178,6 +197,9 @@ class ChannelJob:
         packaging: str = PACKAGING_COMBINED,
         published_after: str | None = None,
         title_contains: str | None = None,
+        preflight: Preflight | None = None,
+        asr_model: str | None = None,
+        asr_prompt: str | None = None,
     ) -> None:
         self.dir = Path(job_dir)
         self.enumerator = enumerator
@@ -186,6 +208,9 @@ class ChannelJob:
         self.packaging = packaging
         self.published_after = published_after
         self.title_contains = title_contains
+        self.preflight = preflight
+        self.asr_model = asr_model
+        self.asr_prompt = asr_prompt
 
     @property
     def manifest_path(self) -> Path:
@@ -241,6 +266,12 @@ class ChannelJob:
             on_progress(payload)
 
         try:
+            if self.preflight is not None:
+                self.preflight()
+            if self.asr_model is not None:
+                manifest.asr_model = self.asr_model
+            if self.asr_prompt is not None:
+                manifest.asr_prompt = self.asr_prompt
             self._ensure_enumerated(manifest, progress)
             self._transcribe_videos(manifest, progress)
             self._render_pdfs(manifest, progress)
@@ -264,7 +295,13 @@ class ChannelJob:
         manifest.channel_handle = info.channel_handle
         manifest.channel_id = info.channel_id
         manifest.videos = [
-            VideoEntry(video_id=v.video_id, title=v.title, url=v.url, upload_date=v.upload_date)
+            VideoEntry(
+                video_id=v.video_id,
+                title=v.title,
+                url=v.url,
+                upload_date=v.upload_date,
+                duration=getattr(v, "duration", None),
+            )
             for v in info.videos
         ]
         self._save(manifest)
@@ -289,10 +326,13 @@ class ChannelJob:
 
             try:
                 job = self.transcriber_factory(self._video_dir(entry.video_id))
-                job.run(entry.url)
+                result = job.run(entry.url)
                 entry.status = STATUS_COMPLETE
                 entry.error = None
-                progress("video_complete", video_id=entry.video_id)
+                entry.asr_model = getattr(result, "model", None) or None
+                entry.asr_quality = getattr(result, "asr_quality", None)
+                entry.asr_issues = list(getattr(result, "asr_issues", None) or [])
+                progress("video_complete", video_id=entry.video_id, asr_quality=entry.asr_quality)
             except Exception as exc:  # noqa: BLE001 - one bad video must not sink the batch
                 entry.status = STATUS_ERROR
                 entry.error = str(exc)
