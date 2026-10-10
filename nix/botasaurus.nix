@@ -25,16 +25,33 @@ let
     };
     doCheck = false;
   };
+  # The driver imports botasaurus_humancursor (WebCursor) to click Cloudflare
+  # challenges when get(..., bypass_cloudflare=True) meets one, but its
+  # package metadata does not declare it. Without it the bypass fails with
+  # ModuleNotFoundError (found in hermes on 2026-10-10).
+  humanCursor = ps.buildPythonPackage {
+    pname = "botasaurus-humancursor";
+    version = "4.0.83";
+    pyproject = true;
+    build-system = [ ps.setuptools ];
+    dependencies = with ps; [ numpy pytweening ];
+    src = pkgs.fetchurl {
+      url = "https://files.pythonhosted.org/packages/58/26/c86c94daf6cde237a24e60fbbbe4d7f1c0e5e0a84c4e591dd21c74df59d7/botasaurus_humancursor-4.0.83.tar.gz";
+      sha256 = "28db7af683e4ff85059bbe259c254e1dcd21d116afbe3af6d91557db7915c8a9";
+    };
+    # It imports botasaurus_driver, so its import is checked in the driver.
+    doCheck = false;
+  };
 in ps.buildPythonPackage {
   pname = "botasaurus-driver";
   version = "4.0.101";
   pyproject = true;
   build-system = [ ps.setuptools ];
-  dependencies = with ps; [ requests deprecated psutil websocket-client pyvirtualdisplay proxyAuthentication ];
+  dependencies = with ps; [ requests deprecated psutil websocket-client pyvirtualdisplay proxyAuthentication humanCursor ];
   src = pkgs.fetchurl {
     url = "https://files.pythonhosted.org/packages/4e/0d/3de4b1810e4d5a213e0df563da10e870783a206c6c422fd7799a9001aaa0/botasaurus_driver-4.0.101.tar.gz";
     sha256 = "4f66a974724354bcb4ad89ec33da2876521eab3b22cfea5e19e673fc9db5fe28";
   };
-  pythonImportsCheck = [ "botasaurus_driver" ];
+  pythonImportsCheck = [ "botasaurus_driver" "botasaurus_humancursor" ];
   doCheck = false;
 }
