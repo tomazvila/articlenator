@@ -464,4 +464,4 @@ class Minors(_ReviewEnv):
         self.assertTrue(os.environ["ZR_STATE_DIR"].startswith(tempfile.gettempdir()))
 
     def test_version(self) -> None:
-        self.assertIn('version = "0.5.19"', (ZR.parent / "pyproject.toml").read_text())
+        self.assertIn('version = "0.5.20"', (ZR.parent / "pyproject.toml").read_text())

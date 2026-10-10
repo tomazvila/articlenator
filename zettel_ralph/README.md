@@ -570,6 +570,39 @@ python3 zettel_ralph/batch_channel.py --channel @SasaVenos --manifest-only --ref
 - `--kill-stale-whisper` keeps the old behavior (kill every `whisper-cli` on the host).
   It is now off by default because it also stopped other jobs.
 
+### Book ingest (`ingest_books.py`)
+
+`ingest_books.py` turns PDF and EPUB books into the Phase-A contract. It writes one
+`lit/<id>.md` note and one `queue.json` item (`kind: article`, `stage: extracted`) for each
+unit. The synthesis loop uses `--kind article` for these items.
+
+```sh
+nix develop --command python3 zettel_ralph/ingest_books.py --staging DIR BOOK... \
+  [--max-words 7000] [--min-words 800] [--meta meta.json]
+```
+
+- **EPUB split.** The OPF spine gives the order. The nav document or NCX gives the titles.
+  A spine file without a nav title joins the unit before it.
+- **PDF split.** The outline gives the chapters. The adapter picks the shallowest outline
+  depth where at most 20 percent of the words sit in sections above 1.5 times
+  `--max-words`. A PDF without an outline splits into page windows. The note then has
+  `split_method: page-window`.
+- **Size.** A chapter above `--max-words` splits into parts at heading or paragraph
+  boundaries (`part`, `part_count`). A section below `--min-words` joins its neighbor.
+- **Skipped sections.** Copyright, contents, index, acknowledgments, about the author,
+  bibliography and similar sections are skipped. The JSON summary lists them.
+- **Ids.** `book-<slug of author and title, 40 characters>-c<NN>[-p<M>]`. The ids are
+  stable between runs.
+- **Metadata.** The order is `--meta` (file path to `{"title","author"}`), then the EPUB or
+  PDF metadata, then the file name pattern `<Author> - <Title>.<ext>`.
+- **Failures.** A book that does not parse (corrupt file, scanned PDF with no text layer)
+  gets a `failed` queue item with the reason. The adapter does not run OCR.
+- **Rerun.** A book with items in `queue.json` is not parsed again. The stage of each item
+  stays as it is. A failed book is tried again on the next run.
+- **Known limits.** The text comes from `pypdf`. Figure text, side bars and decorative
+  headings can stay in the body. A hyphen at a line end is always removed, so a real
+  compound word can lose its hyphen.
+
 ### Drivers
 
 `run_radoslav_radev.sh` and `run_channel_sthenics.sh` run synthesis with
